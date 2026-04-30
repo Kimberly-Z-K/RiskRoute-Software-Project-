@@ -90,13 +90,13 @@ const ForgotPassword = ({ navigation }) => {
           <Text style={styles.title}>Forgot{'\n'}Password</Text>
 
           {/* IMAGE */}
-          <View style={styles.logoContainer}>
+          {/* <View style={styles.logoContainer}>
             <Image
               source={require('../assets/truck-illustration.png')}
               style={styles.logo}
               resizeMode="contain"
             />
-          </View>
+          </View> */}
 
           {/* DESCRIPTION */}
           <Text style={styles.description}>

@@ -22,6 +22,7 @@ export default function Login({ navigation }) {
 
   const handleLogin = () => {
     console.log({ email, password });
+    navigation.navigate('MainTabs');
   };
 
   const handleSignUpPress = () => {
@@ -31,6 +32,7 @@ export default function Login({ navigation }) {
   const handleForgotPassword = () => {
   navigation.navigate('ForgotPassword'); // make sure this screen exists
 };
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
