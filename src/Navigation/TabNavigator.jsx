@@ -3,6 +3,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 
 import Home from "../../Screens/index"; 
+import Profile from "../../Screens/Profile";
+import Notifications from "../../Screens/Notifications";
 
 const Tab = createBottomTabNavigator();
 
@@ -13,7 +15,6 @@ export default function TabNavigator() {
         headerShown: false,
         tabBarShowLabel: false,
 
-        //Tab floating style 
         tabBarStyle: {
           position: "absolute",
           bottom: 20,
@@ -33,6 +34,8 @@ export default function TabNavigator() {
         },
       }}
     >
+
+      {/* HOME */}
       <Tab.Screen
         name="Home"
         component={Home}
@@ -46,6 +49,37 @@ export default function TabNavigator() {
           ),
         }}
       />
+
+      {/* NOTIFICATIONS */}
+      <Tab.Screen
+        name="Notifications"
+        component={Notifications}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <Ionicons
+              name={focused ? "notifications" : "notifications-outline"}
+              size={24}
+              color={focused ? "#007bff" : "#888"}
+            />
+          ),
+        }}
+      />
+
+      {/* PROFILE */}
+      <Tab.Screen
+        name="Profile"
+        component={Profile}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <Ionicons
+              name={focused ? "person" : "person-outline"}
+              size={24}
+              color={focused ? "#007bff" : "#888"}
+            />
+          ),
+        }}
+      />
+
     </Tab.Navigator>
   );
 }
