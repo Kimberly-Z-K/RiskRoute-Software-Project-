@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
+import {supabase} from '../lib/supabase';
 
 export default function SignUP({ navigation }) {
 
@@ -37,17 +38,89 @@ export default function SignUP({ navigation }) {
     }
   };
 
-  const handleSignUp = () => {
-    console.log({
-      role,
-      name,
-      surname,
+const handleSignUp = async () => {
+  try {
+    // validation
+    if (!email || !password || !name || !surname || !role) {
+      alert('Please fill in all required fields');
+      return;
+    }
+
+    if (role === 'Driver' && (!phoneNo || !license)) {
+      alert('Driver must include phone number and license');
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({
       email,
-      phoneNo,
-      license,
       password,
+       options: {
+          data: {
+            full_name: name,
+            phone_number: phoneNo,
+          },
+        },
     });
-  };
+
+    if (error) throw error;
+
+    const user = data.user;
+
+    // insert into tables
+    const { error: userError } = await supabase
+      .from('users')
+      .insert([
+        {
+          user_id: user.id,
+          user_name: name + ' ' + surname,
+          user_role: role,
+          email: email,
+        },
+      ]);
+
+    if (userError) throw userError;
+
+    //drivers table
+    if (role === 'Driver') {
+      const { error: driverError } = await supabase
+        .from('drivers')
+        .insert([
+          {
+            driver_id: user.id,
+            license_number: license,
+            phone: phoneNo,
+            driver_username: name + ' ' + surname,
+            email: email,
+          },
+        ]);
+
+      if (driverError) throw driverError;
+    }
+
+    //managers table
+    if (role === 'Manager') {
+      await supabase.from('managers').insert([
+        { 
+          user_id: user.id ,
+          manager_username: name + ' ' + surname,
+        }
+      ]);
+    }
+
+    //admin table
+    if (role === 'Admin') {
+      await supabase.from('admins').insert([{ user_id: user.id }]);
+    }
+
+    alert('Account created successfully');
+
+    //navigate to login
+    navigation.navigate('Login');
+
+  } catch (err) {
+    alert(err.message);
+  }
+};
 
   const handleLoginPress = () => {
     navigation.navigate('Login');

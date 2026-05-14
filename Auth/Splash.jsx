@@ -37,7 +37,7 @@ export default function Splash({ navigation }) {
 
     // 🔄 Navigate to SignUp
     const timer = setTimeout(() => {
-      navigation.navigate('SignUP'); // 👈 YOU wanted navigate
+      navigation.navigate('Login'); // 👈 YOU wanted navigate
     }, 4500);
 
     return () => clearTimeout(timer);

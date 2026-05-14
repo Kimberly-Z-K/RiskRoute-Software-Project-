@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
+import {supabase} from '../lib/supabase';
 
 export default function Login({ navigation }) {
 
@@ -20,10 +21,30 @@ export default function Login({ navigation }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleLogin = () => {
-    console.log({ email, password });
+const handleLogin = async () => {
+  try {
+    // validation
+    if (!email || !password) {
+      alert('Please enter email and password');
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) throw error;
+
+    alert('Login successful');
+
+    //navigate to main app
     navigation.navigate('MainTabs');
-  };
+
+  } catch (err) {
+    alert(err.message);
+  }
+};
 
   const handleSignUpPress = () => {
     navigation.navigate('SignUP');
