@@ -1,9 +1,9 @@
 import React from 'react';
-import { Zap, Clock, CloudRain, AlertTriangle, MapPin, Play } from 'lucide-react';
+import { Zap } from 'lucide-react';
+
 
 const SimulationControls = ({ params = { delay: 30, weather: 'moderate', accident: false, roadClosure: false }, setParams, onRunSimulation }) => {
   
-  // Safe handler functions
   const handleDelayChange = (e) => {
     if (setParams) {
       setParams({ ...params, delay: parseInt(e.target.value) || 0 });
@@ -35,18 +35,13 @@ const SimulationControls = ({ params = { delay: 30, weather: 'moderate', acciden
   };
   
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl p-5 shadow-sm border border-gray-200">
-      <h2 className="font-semibold text-lg mb-4 flex items-center gap-2">
-        <Zap className="w-5 h-5 text-purple-600" /> 
-        What-If Scenario Controls
-      </h2>
+    <div className="bg-white rounded-xl p-5 border border-gray-200">
+      <h2 className="font-bold text-lg mb-4 text-gray-900">What-If Simulation</h2>
       
       <div className="space-y-4">
-        {/* Delay Slider */}
         <div>
-          <label className="text-sm font-medium block mb-2 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-blue-500" />
-            Delay (minutes): {params.delay || 0} min
+          <label className="text-sm font-medium block mb-2 text-gray-700">
+            Delay (minutes): <span className="font-semibold">{params.delay || 0}</span>
           </label>
           <input 
             type="range" 
@@ -56,42 +51,34 @@ const SimulationControls = ({ params = { delay: 30, weather: 'moderate', acciden
             onChange={handleDelayChange} 
             className="w-full"
           />
-          <div className="flex justify-between text-xs mt-1">
-            <span>0 min</span>
-            <span>60 min</span>
-            <span>120 min</span>
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>0</span>
+            <span>60</span>
+            <span>120</span>
           </div>
         </div>
         
-        {/* Weather Selection */}
         <div>
-          <label className="text-sm font-medium block mb-2 flex items-center gap-2">
-            <CloudRain className="w-4 h-4 text-blue-500" />
-            Weather Severity
-          </label>
+          <label className="text-sm font-medium block mb-2 text-gray-700">Weather</label>
           <select 
-            className="w-full p-2 border rounded-lg dark:bg-gray-700" 
+            className="w-full p-2 border border-gray-300 rounded-md text-sm" 
             value={params.weather || 'moderate'} 
             onChange={handleWeatherChange}
           >
-            <option value="clear">Clear / Sunny</option>
-            <option value="moderate">Moderate Rain / Wind</option>
-            <option value="severe">Severe Storm / Heavy Rain</option>
+            <option value="clear">Clear</option>
+            <option value="moderate">Moderate Rain</option>
+            <option value="severe">Severe Storm</option>
           </select>
         </div>
         
-        {/* Checkboxes */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <label className="flex items-center gap-2">
             <input 
               type="checkbox" 
               checked={params.accident || false} 
               onChange={handleAccidentChange} 
             />
-            <span className="text-sm flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" />
-              Accident on route
-            </span>
+            <span className="text-sm text-gray-700">Accident</span>
           </label>
           
           <label className="flex items-center gap-2">
@@ -100,24 +87,21 @@ const SimulationControls = ({ params = { delay: 30, weather: 'moderate', acciden
               checked={params.roadClosure || false} 
               onChange={handleRoadClosureChange} 
             />
-            <span className="text-sm flex items-center gap-1">
-              <MapPin className="w-3 h-3" />
-              Road closure
-            </span>
+            <span className="text-sm text-gray-700">Road closure</span>
           </label>
         </div>
         
-        {/* Run Button */}
         <button 
           onClick={handleRunSimulation} 
-          className="w-full bg-purple-600 text-white py-2.5 rounded-lg font-medium hover:bg-purple-700 transition flex items-center justify-center gap-2"
+          className="w-full bg-purple-600 text-white py-2 rounded-md font-medium hover:bg-purple-700 transition flex items-center justify-center gap-2"
         >
-          <Play className="w-4 h-4" />
+          <Zap className="w-4 h-4" />
           Run Simulation
         </button>
       </div>
     </div>
   );
 };
+
 
 export default SimulationControls;

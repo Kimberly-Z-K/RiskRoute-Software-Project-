@@ -2,7 +2,6 @@ import React from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 
 const StatCard = ({ title, value, icon: Icon, color, trend, subtitle, change, changeType }) => {
-  // Determine trend icon and color
   const getTrendIcon = () => {
     if (changeType === 'up') return <TrendingUp className="w-3 h-3" />;
     if (changeType === 'down') return <TrendingDown className="w-3 h-3" />;
@@ -10,30 +9,28 @@ const StatCard = ({ title, value, icon: Icon, color, trend, subtitle, change, ch
   };
 
   const getTrendColor = () => {
-    if (changeType === 'up') return 'text-green-600 dark:text-green-400';
-    if (changeType === 'down') return 'text-red-600 dark:text-red-400';
-    return 'text-gray-500 dark:text-gray-400';
+    if (changeType === 'up') return 'text-green-600';
+    if (changeType === 'down') return 'text-red-500';
+    return 'text-gray-400';
   };
 
-  // Format value if it's a number
   const formatValue = () => {
-    if (typeof value === 'number') {
-      return value.toLocaleString();
-    }
+    if (typeof value === 'number') return value.toLocaleString();
     return value;
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5 border border-gray-100 dark:border-gray-700 hover:shadow-lg transition-all duration-300 group cursor-pointer">
+    <div className="bg-white rounded-2xl p-4 border border-gray-100 hover:shadow-md transition-shadow duration-200 relative overflow-hidden">
       <div className="flex justify-between items-start">
-        {/* Left side - Text content */}
+        {/* Left side */}
         <div className="flex-1">
-          <p className="text-sm text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wide">
+          {/* Section label style — small, muted, uppercase, tracked */}
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
             {title}
           </p>
-          
+
           <div className="mt-2 flex items-baseline gap-2 flex-wrap">
-            <p className="text-3xl font-bold text-gray-800 dark:text-white">
+            <p className="text-3xl font-semibold text-gray-800">
               {formatValue()}
             </p>
             {change && (
@@ -43,41 +40,38 @@ const StatCard = ({ title, value, icon: Icon, color, trend, subtitle, change, ch
               </span>
             )}
           </div>
-          
+
           {subtitle && (
-            <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            <p className="text-xs text-gray-400 mt-1">
               {subtitle}
             </p>
           )}
-          
+
           {trend && !change && (
-            <p className="text-xs mt-2 text-gray-500 dark:text-gray-400 flex items-center gap-1">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500"></span>
+            <p className="text-xs mt-2 text-gray-400 flex items-center gap-1.5">
+              <span className="inline-block w-2 h-2 rounded-full bg-green-500 flex-shrink-0"></span>
               {trend}
             </p>
           )}
         </div>
-        
-        {/* Right side - Icon */}
-        <div className={`p-3 rounded-xl ${color} group-hover:scale-110 transition-transform duration-300 shadow-sm`}>
-          <Icon className="w-5 h-5 text-white" />
+
+        {/* Right side — icon in rounded square with gray styling */}
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-gray-50">
+          <Icon className="w-5 h-5 text-gray-600" />
         </div>
       </div>
-      
-      {/* Progress bar for certain metrics (optional) */}
+
+      {/* Progress bar */}
       {title === 'Active Vehicles' && (
-        <div className="mt-3">
-          <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-1.5">
-            <div 
-              className="bg-blue-500 h-1.5 rounded-full transition-all duration-500"
+        <div className="mt-4">
+          <div className="w-full bg-gray-100 rounded-full h-1">
+            <div
+              className="bg-blue-400 h-1 rounded-full transition-all duration-500"
               style={{ width: `${(value / 50) * 100}%` }}
             />
           </div>
         </div>
       )}
-      
-      {/* Hover effect indicator */}
-      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-blue-500 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-b-xl"></div>
     </div>
   );
 };

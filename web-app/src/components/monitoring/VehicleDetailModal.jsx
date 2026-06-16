@@ -1,167 +1,160 @@
 import React from 'react';
 import { X, Truck, MapPin, Clock, User, AlertTriangle, CheckCircle, Navigation, Phone, History, Fuel, Gauge, Shield } from 'lucide-react';
 
+
 const getStatusColor = (status) => {
   switch(status) {
-    case 'on-time': return { bg: 'bg-green-500', text: 'text-green-600', light: 'bg-green-100 dark:bg-green-900/30' };
-    case 'delayed': return { bg: 'bg-yellow-500', text: 'text-yellow-600', light: 'bg-yellow-100 dark:bg-yellow-900/30' };
-    case 'at-risk': return { bg: 'bg-red-500', text: 'text-red-600', light: 'bg-red-100 dark:bg-red-900/30' };
-    default: return { bg: 'bg-gray-500', text: 'text-gray-600', light: 'bg-gray-100 dark:bg-gray-700' };
+    case 'on-time': return { bg: 'bg-green-500', text: 'text-green-700', bgLight: 'bg-green-100' };
+    case 'delayed': return { bg: 'bg-yellow-500', text: 'text-yellow-700', bgLight: 'bg-yellow-100' };
+    case 'at-risk': return { bg: 'bg-red-500', text: 'text-red-700', bgLight: 'bg-red-100' };
+    default: return { bg: 'bg-gray-500', text: 'text-gray-700', bgLight: 'bg-gray-100' };
   }
 };
+
 
 const VehicleDetailModal = ({ vehicle, onClose }) => {
   if (!vehicle) return null;
   
   const statusStyle = getStatusColor(vehicle.status);
+  const statusText = vehicle.status === 'on-time' ? 'On Time' : vehicle.status === 'delayed' ? 'Delayed' : 'At Risk';
   
   return (
-    // Fixed overlay with high z-index
     <div 
-      className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999]"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]"
       onClick={onClose}
-      style={{ zIndex: 9999 }}
     >
-      {/* Modal Container */}
       <div 
-        className="bg-white dark:bg-gray-800 rounded-xl max-w-md w-full p-6 m-4 shadow-2xl relative"
+        className="bg-white rounded-2xl max-w-md w-full m-4 shadow-xl relative"
         onClick={e => e.stopPropagation()}
-        style={{ zIndex: 10000 }}
       >
         {/* Header */}
-        <div className="flex justify-between items-center mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+        <div className="px-6 py-4 flex justify-between items-center border-b border-gray-200">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-lg ${statusStyle.light}`}>
+            <div className={`p-2 ${statusStyle.bgLight} rounded-full`}>
               <Truck className={`w-5 h-5 ${statusStyle.text}`} />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">
-                Vehicle {vehicle.id}
-              </h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Trip Details</p>
+              <h3 className="font-bold text-gray-900">Vehicle {vehicle.id}</h3>
+              <p className="text-sm text-gray-500">Trip Details</p>
             </div>
           </div>
           <button 
             onClick={onClose} 
-            className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            className="text-gray-400 hover:text-gray-600 transition-colors"
           >
-            <X className="w-5 h-5 text-gray-500" />
+            <X className="w-5 h-5" />
           </button>
         </div>
         
         {/* Content */}
-        <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+        <div className="px-6 py-4">
           {/* Driver */}
-          <div className="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
-            <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
-              <User className="w-4 h-4" />
-              Driver:
-            </span>
-            <span className="font-medium text-gray-900 dark:text-white">{vehicle.driver}</span>
+          <div className="flex items-center gap-3 mb-4">
+            <User className="w-4 h-4 text-gray-400" />
+            <div className="flex-1">
+              <p className="text-sm text-gray-500 mb-0.5">Driver</p>
+              <p className="font-medium text-gray-900">{vehicle.driver}</p>
+            </div>
           </div>
           
           {/* Status */}
-          <div className="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
-            <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
-              <Shield className="w-4 h-4" />
-              Status:
-            </span>
-            <span className={`px-2 py-0.5 rounded-full text-white text-xs ${statusStyle.bg}`}>
-              {vehicle.status === 'on-time' ? 'On Time' : vehicle.status === 'delayed' ? 'Delayed' : 'At Risk'}
-            </span>
+          <div className="flex items-center gap-3 mb-4">
+            <Shield className="w-4 h-4 text-gray-400" />
+            <div className="flex-1">
+              <p className="text-sm text-gray-500 mb-0.5">Status</p>
+              <span className={`inline-block px-3 py-1 ${statusStyle.bg} text-white text-sm rounded-md font-medium`}>
+                {statusText}
+              </span>
+            </div>
           </div>
           
           {/* Route */}
-          <div className="py-2 border-b border-gray-100 dark:border-gray-700">
-            <div className="flex items-start gap-2 mb-1">
-              <Navigation className="w-4 h-4 text-gray-400 mt-0.5" />
-              <span className="text-sm text-gray-500 dark:text-gray-400">Current Route:</span>
+          <div className="flex items-start gap-3 mb-4">
+            <Navigation className="w-4 h-4 text-gray-400 mt-0.5" />
+            <div className="flex-1">
+              <p className="text-sm text-gray-500 mb-0.5">Current Route</p>
+              <p className="font-medium text-gray-900">{vehicle.route}</p>
             </div>
-            <p className="text-sm font-medium text-gray-900 dark:text-white ml-6">{vehicle.route}</p>
           </div>
           
-          {/* ETA */}
-          <div className="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
-            <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              ETA:
-            </span>
-            <span className="font-medium text-gray-900 dark:text-white">{vehicle.eta}</span>
-          </div>
-          
-          {/* Speed */}
-          <div className="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
-            <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
-              <Gauge className="w-4 h-4" />
-              Speed:
-            </span>
-            <span className="font-medium text-gray-900 dark:text-white">{vehicle.speed || 65} km/h</span>
+          {/* ETA & Speed - side by side */}
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-400" />
+              <div>
+                <p className="text-sm text-gray-500 mb-0.5">ETA</p>
+                <p className="font-medium text-gray-900">{vehicle.eta}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-gray-400" />
+              <div>
+                <p className="text-sm text-gray-500 mb-0.5">Speed</p>
+                <p className="font-medium text-gray-900">{vehicle.speed || 65} km/h</p>
+              </div>
+            </div>
           </div>
           
           {/* Fuel */}
-          <div className="py-2 border-b border-gray-100 dark:border-gray-700">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                <Fuel className="w-4 h-4" />
-                Fuel:
-              </span>
-              <span className="font-medium text-gray-900 dark:text-white">{vehicle.fuelLevel || vehicle.fuel || 85}%</span>
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Fuel className="w-4 h-4 text-gray-400" />
+              <p className="text-sm text-gray-500">Fuel</p>
+              <p className="font-medium text-gray-900 ml-auto">{vehicle.fuelLevel || vehicle.fuel || 85}%</p>
             </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+            <div className="w-full bg-gray-100 rounded-full h-2">
               <div 
-                className="bg-green-500 h-1.5 rounded-full"
+                className="bg-green-500 h-2 rounded-full"
                 style={{ width: `${vehicle.fuelLevel || vehicle.fuel || 85}%` }}
               />
             </div>
           </div>
           
           {/* Progress */}
-          <div className="py-2 border-b border-gray-100 dark:border-gray-700">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                <MapPin className="w-4 h-4" />
-                Route Progress:
-              </span>
-              <span className="font-medium text-gray-900 dark:text-white">{vehicle.progress || 65}%</span>
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <MapPin className="w-4 h-4 text-gray-400" />
+              <p className="text-sm text-gray-500">Route Progress</p>
+              <p className="font-medium text-gray-900 ml-auto">{vehicle.progress || 65}%</p>
             </div>
-            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+            <div className="w-full bg-gray-100 rounded-full h-2">
               <div 
-                className="bg-blue-500 h-1.5 rounded-full"
+                className="bg-blue-500 h-2 rounded-full"
                 style={{ width: `${vehicle.progress || 65}%` }}
               />
             </div>
           </div>
           
           {/* Alerts */}
-          <div className="py-2">
-            <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2 mb-2">
-              <AlertTriangle className="w-4 h-4" />
-              Active Alerts:
-            </span>
-            <div className="mt-1">
-              {vehicle.alerts && vehicle.alerts.length ? (
-                vehicle.alerts.map((alert, idx) => (
-                  <span key={idx} className="inline-block bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-xs px-2 py-1 rounded mr-1 mt-1">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="w-4 h-4 text-gray-400" />
+              <p className="text-sm text-gray-500">Active Alerts</p>
+            </div>
+            {vehicle.alerts && vehicle.alerts.length ? (
+              <div className="flex gap-2 flex-wrap">
+                {vehicle.alerts.map((alert, idx) => (
+                  <span key={idx} className="bg-red-100 text-red-700 text-sm px-3 py-1 rounded-md">
                     {alert}
                   </span>
-                ))
-              ) : (
-                <span className="text-green-600 dark:text-green-400 text-sm flex items-center gap-1">
-                  <CheckCircle className="w-3 h-3" />
-                  No active alerts
-                </span>
-              )}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-green-600">
+                <CheckCircle className="w-4 h-4" />
+                <p className="text-sm">No active alerts</p>
+              </div>
+            )}
           </div>
         </div>
         
-        {/* Buttons */}
-        <div className="flex gap-2 mt-5 pt-3 border-t border-gray-200 dark:border-gray-700">
-          <button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition-colors flex items-center justify-center gap-2">
+        {/* Footer Buttons */}
+        <div className="px-6 py-4 border-t border-gray-200 flex gap-3">
+          <button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-md font-medium transition-colors flex items-center justify-center gap-2">
             <Phone className="w-4 h-4" />
             Contact Driver
           </button>
-          <button className="flex-1 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 py-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center gap-2">
+          <button className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 rounded-md font-medium transition-colors flex items-center justify-center gap-2">
             <History className="w-4 h-4" />
             View History
           </button>
@@ -170,5 +163,6 @@ const VehicleDetailModal = ({ vehicle, onClose }) => {
     </div>
   );
 };
+
 
 export default VehicleDetailModal;
