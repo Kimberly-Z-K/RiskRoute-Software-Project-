@@ -1,9 +1,9 @@
+import React from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 
-import Home from "../../Screens/index";
+import Home from "../../Screens/index"; 
 import Profile from "../../Screens/Profile";
-import Location from "../../Screens/Location";
 import Notifications from "../../Screens/Notifications";
 
 const Tab = createBottomTabNavigator();
@@ -49,22 +49,6 @@ export default function TabNavigator() {
           ),
         }}
       />
-
-      {/* LOCATION */}
-      <Tab.Screen
-        name="Location"
-        component={Location}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <Ionicons
-              name={focused ? "location" : "location-outline"}
-              size={24}
-              color={focused ? "#007bff" : "#888"}
-            />
-          ),
-        }}
-      />
-
 
       {/* NOTIFICATIONS */}
       <Tab.Screen
