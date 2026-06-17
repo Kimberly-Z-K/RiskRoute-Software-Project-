@@ -10,14 +10,14 @@ export default function Splash({ navigation }) {
 
   useEffect(() => {
 
-    // 🚚 Truck slides in
+  
     Animated.timing(truckX, {
       toValue: 0,
       duration: 1200,
       useNativeDriver: true,
     }).start();
 
-    // ✨ Text fades in
+    
     setTimeout(() => {
       Animated.timing(fade, {
         toValue: 1,
@@ -26,7 +26,7 @@ export default function Splash({ navigation }) {
       }).start();
     }, 800);
 
-    // 📊 Loading bar fills
+    
     setTimeout(() => {
       Animated.timing(loading, {
         toValue: 1,
@@ -35,9 +35,9 @@ export default function Splash({ navigation }) {
       }).start();
     }, 1000);
 
-    // 🔄 Navigate to SignUp
+   
     const timer = setTimeout(() => {
-      navigation.navigate('SignUP'); // 👈 YOU wanted navigate
+      navigation.navigate('SignUP'); 
     }, 4500);
 
     return () => clearTimeout(timer);
@@ -48,7 +48,6 @@ export default function Splash({ navigation }) {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0A0E1F" />
 
-      {/* 🚚 Truck GIF */}
       <Animated.View style={{ transform: [{ translateX: truckX }] }}>
         <Image
           source={require('../assets/Truck driver.gif')}
@@ -56,7 +55,7 @@ export default function Splash({ navigation }) {
         />
       </Animated.View>
 
-      {/* 📝 Title */}
+     
       <Animated.View style={{ opacity: fade }}>
         <Text style={styles.title}>Risk Route</Text>
         <Text style={styles.subtitle}>
@@ -64,7 +63,7 @@ export default function Splash({ navigation }) {
         </Text>
       </Animated.View>
 
-      {/* 📊 Loading bar */}
+     
       <View style={styles.loadingTrack}>
         <Animated.View
           style={[

@@ -9,7 +9,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 
-const RiskRouteScreen = () => {
+const RiskRouteScreen = ({ navigation }) => {
   const riskLevel = "Low";
 
   const getRiskColor = () => {
@@ -24,13 +24,72 @@ const RiskRouteScreen = () => {
   };
 
   return (
-    <LinearGradient colors={["#4facfe", "#00f2fe"]} style={styles.container}>
+    <LinearGradient colors={["#c0daf1", "#a0e2e6"]} style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerText}>Risk Route</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+
+       {/* overwiew buttons */}
+        <View style={styles.overviewCard}>
+          <Text style={styles.heading}>📊 Today's Overview</Text>
+
+          {/* Action Buttons */}
+          <View style={styles.actionRow}>
+
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => navigation.navigate("Location")}
+            >
+              <Ionicons name="navigate" size={18} color="#fff" />
+              <Text style={styles.actionText}>Navigate</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionBtn}>
+              <Ionicons name="car" size={18} color="#fff" />
+              <Text style={styles.actionText}>Fuel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionBtn}>
+              <Ionicons name="help-circle" size={18} color="#fff" />
+              <Text style={styles.actionText}>Support</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.actionBtn}>
+              <Ionicons name="notifications" size={18} color="#fff" />
+              <Text style={styles.actionText}>Alerts</Text>
+            </TouchableOpacity>
+
+          </View>
+
+          {/* Stats Grid */}
+          <View style={styles.statsGrid}>
+
+            <View style={styles.statBox}>
+              <Text style={styles.statTitle}>Trips Done</Text>
+              <Text style={styles.statValue}>12 / 15</Text>
+            </View>
+
+            <View style={styles.statBox}>
+              <Text style={styles.statTitle}>KM Driven</Text>
+              <Text style={styles.statValue}>248 km</Text>
+            </View>
+
+            <View style={styles.statBox}>
+              <Text style={styles.statTitle}>Fuel Spent</Text>
+              <Text style={styles.statValue}>R 1,240</Text>
+            </View>
+
+            <View style={styles.statBox}>
+              <Text style={styles.statTitle}>Deliveries</Text>
+              <Text style={styles.statValue}>18 / 25</Text>
+            </View>
+
+          </View>
+        </View>
+
         {/* Trip Summary */}
         <View style={styles.card}>
           <Text style={styles.heading}>🚛Trip Summary</Text>
@@ -43,51 +102,56 @@ const RiskRouteScreen = () => {
           </Text>
 
           <View style={styles.mapPreview}>
-            <Ionicons name="map" size={28} color="#888" />
+            <Ionicons name="map" size={28} color="white" />
             <Text style={styles.mapText}>Route Preview</Text>
           </View>
         </View>
 
-        {/* Alerts & Actions */}
-        <View style={styles.card}>
-          <Text style={styles.heading}>⚠️Alerts</Text>
+        
 
-          <View style={styles.alertBox}>
-            <Ionicons name="warning" size={18} color="#fff" />
-            <Text style={styles.alertText}> Weather advisory ahead (12km)</Text>
-          </View>
+         {/* Vehicle Status */}
+<View style={styles.vehicleCard}>
 
-          <View style={styles.buttonRow}>
-            <TouchableOpacity style={styles.secondaryButton}>
-              <Ionicons name="checkmark-circle" size={18} color="#333" />
-              <Text style={styles.secondaryText}> Check-in</Text>
-            </TouchableOpacity>
+  <Text style={styles.vehicleTitle}>🚗 Vehicle Status</Text>
 
-            <TouchableOpacity style={styles.primaryButton}>
-              <Ionicons name="navigate" size={18} color="#fff" />
-              <Text style={styles.buttonText}> Navigate</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+  <Text style={styles.vehicleName}>Toyota Quantum</Text>
+  <Text style={styles.vehicleSub}>2023 · Diesel · GPS Active</Text>
 
-        {/* Trip Details */}
-        <View style={styles.card}>
-          <Text style={styles.heading}>🛣️Route Details</Text>
+  {/* Number Plate */}
+  <View style={styles.plateOuter}>
+    <Text style={styles.plateText}>GP 22-34 FM</Text>
+  </View>
 
-          <View style={styles.mapLarge}>
-            <Ionicons name="location" size={32} color="#666" />
-            <Text style={styles.mapText}>Full Route & Safety Overview</Text>
-          </View>
+  {/* Fuel */}
+  <Text style={styles.label}>Fuel</Text>
+  <View style={styles.barBackground}>
+    <View style={[styles.barFill, { width: "38%", backgroundColor: "#f4a300" }]} />
+  </View>
+  <Text style={styles.percentText}>38%</Text>
 
-          <Text style={styles.detail}>⚠️ Incident nearby</Text>
-          <Text style={styles.detail}>➡️ Use alternate route via N2</Text>
-        </View>
+  {/* Engine */}
+  <Text style={styles.label}>Engine</Text>
+  <View style={styles.barBackground}>
+    <View style={[styles.barFill, { width: "90%", backgroundColor: "#2ecc71" }]} />
+  </View>
+  <Text style={styles.percentText}>Good</Text>
+
+  {/* Tyres */}
+  <Text style={styles.label}>Tyres</Text>
+  <View style={styles.barBackground}>
+    <View style={[styles.barFill, { width: "75%", backgroundColor: "#3498db" }]} />
+  </View>
+  <Text style={styles.percentText}>75%</Text>
+
+</View>
+
       </ScrollView>
     </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
+
   container: { flex: 1 },
 
   header: {
@@ -107,7 +171,7 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: "#ffffffee",
+    backgroundColor: "#000068",
     borderRadius: 20,
     padding: 16,
     marginBottom: 16,
@@ -117,6 +181,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
     marginBottom: 10,
+    color: "white",
   },
 
   detail: {
@@ -133,7 +198,7 @@ const styles = StyleSheet.create({
 
   mapPreview: {
     height: 110,
-    backgroundColor: "#f0f0f0",
+    backgroundColor: "#113065",
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
@@ -201,10 +266,139 @@ const styles = StyleSheet.create({
   },
 
   secondaryText: {
-    color: "#333",
+    color: "white",
     fontWeight: "600",
     marginLeft: 5,
   },
+
+  
+
+  overviewCard: {
+    backgroundColor: "#000050",
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 16,
+  },
+
+  actionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 10,
+    marginBottom: 15,
+  },
+
+  actionBtn: {
+    backgroundColor: "#113065",
+    padding: 10,
+    borderRadius: 12,
+    alignItems: "center",
+    width: "23%",
+  },
+
+  actionText: {
+    color: "#fff",
+    fontSize: 10,
+    marginTop: 4,
+    fontWeight: "600",
+  },
+
+  statsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+
+  statBox: {
+    backgroundColor: "#113065",
+    width: "48%",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+
+  statTitle: {
+    color: "#bbb",
+    fontSize: 12,
+  },
+
+  statValue: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginTop: 5,
+  },
+  vehicleCard: {
+  backgroundColor: "#fff",
+  borderRadius: 18,
+  padding: 16,
+  marginBottom: 16,
+},
+
+vehicleTitle: {
+  color: "#0B1F3A",
+  fontSize: 16,
+  fontWeight: "bold",
+  marginBottom: 10,
+},
+
+vehicleName: {
+  color: "#0B1F3A",
+  fontSize: 18,
+  fontWeight: "bold",
+},
+
+vehicleSub: {
+  color: "#666",
+  fontSize: 13,
+  marginBottom: 10,
+},
+
+/* number plate styling*/
+plateOuter: {
+  borderWidth: 2,
+  borderColor: "#0b60f4",
+  backgroundColor: "#fff",
+  paddingVertical: 6,
+  paddingHorizontal: 12,
+  alignSelf: "flex-start",
+  borderRadius: 6,
+  marginBottom: 14,
+},
+
+plateText: {
+  color: "#0b60f4",
+  fontWeight: "bold",
+  letterSpacing: 1,
+},
+
+
+label: {
+  color: "#0B1F3A",
+  fontSize: 12,
+  marginTop: 8,
+  marginBottom: 4,
+  fontWeight: "600",
+},
+
+
+barBackground: {
+  height: 8,
+  width: "100%",
+  backgroundColor: "#E6EAF0",
+  borderRadius: 10,
+  overflow: "hidden",
+},
+
+barFill: {
+  height: "100%",
+  borderRadius: 10,
+},
+
+percentText: {
+  fontSize: 12,
+  color: "#555",
+  marginTop: 4,
+},
 });
 
 export default RiskRouteScreen;

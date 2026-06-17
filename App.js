@@ -5,6 +5,7 @@ import Login from './Auth/Login';
 import SignUp from './Auth/SignUP';
 import Splash from './Auth/Splash';
 import ForgotPassword from './Auth/ForgotPass';
+import Location from './Screens/Location';
 import TabNavigator from './src/Navigation/TabNavigator';
 
 
@@ -18,6 +19,7 @@ export default function App() {
         <Stack.Screen name="SignUP" component={SignUp} />
         <Stack.Screen name="Login" component={Login} />
         <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
+         
         <Stack.Screen name="MainTabs" component={TabNavigator} />
         {/* <Stack.Screen name="index" component={index} /> */}
       </Stack.Navigator>
