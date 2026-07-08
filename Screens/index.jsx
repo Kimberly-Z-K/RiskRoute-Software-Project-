@@ -24,7 +24,7 @@ const RiskRouteScreen = ({ navigation }) => {
   };
 
   return (
-    <LinearGradient colors={["#c0daf1", "#a0e2e6"]} style={styles.container}>
+    <LinearGradient colors={["#d5d6e0", "#fff"]} style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerText}>Risk Route</Text>
@@ -34,7 +34,7 @@ const RiskRouteScreen = ({ navigation }) => {
 
        {/* overwiew buttons */}
         <View style={styles.overviewCard}>
-          <Text style={styles.heading}>📊 Today's Overview</Text>
+          <Text style={styles.heading}> Today's Overview</Text>
 
           {/* Action Buttons */}
           <View style={styles.actionRow}>
@@ -92,7 +92,7 @@ const RiskRouteScreen = ({ navigation }) => {
 
         {/* Trip Summary */}
         <View style={styles.card}>
-          <Text style={styles.heading}>🚛Trip Summary</Text>
+          <Text style={styles.vehicleTitle}>Trip Summary</Text>
           <Text style={styles.detail}>Destination: Port of Durban</Text>
           <Text style={styles.detail}>Cargo: Petrol</Text>
           <Text style={styles.detail}>ETA: 2h 15m</Text>
@@ -112,7 +112,7 @@ const RiskRouteScreen = ({ navigation }) => {
          {/* Vehicle Status */}
 <View style={styles.vehicleCard}>
 
-  <Text style={styles.vehicleTitle}>🚗 Vehicle Status</Text>
+  <Text style={styles.vehicleTitle}> Vehicle Status</Text>
 
   <Text style={styles.vehicleName}>Toyota Quantum</Text>
   <Text style={styles.vehicleSub}>2023 · Diesel · GPS Active</Text>
@@ -161,7 +161,7 @@ const styles = StyleSheet.create({
   },
 
   headerText: {
-    color: "#fff",
+    color: "black",
     fontSize: 22,
     fontWeight: "bold",
   },
@@ -171,7 +171,7 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: "#000068",
+    backgroundColor: "#ffffff",
     borderRadius: 20,
     padding: 16,
     marginBottom: 16,
@@ -186,7 +186,7 @@ const styles = StyleSheet.create({
 
   detail: {
     fontSize: 14,
-    color: "#555",
+    color: "blue",
     marginBottom: 4,
   },
 
@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
 
   mapPreview: {
     height: 110,
-    backgroundColor: "#113065",
+    backgroundColor: "#0A1F44",
     borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
@@ -274,7 +274,7 @@ const styles = StyleSheet.create({
   
 
   overviewCard: {
-    backgroundColor: "#000050",
+    backgroundColor: "#0A1F44",
     borderRadius: 20,
     padding: 16,
     marginBottom: 16,
@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
   },
 
   actionBtn: {
-    backgroundColor: "#113065",
+    backgroundColor: "rgba(255,255,255,0.12)",
     padding: 10,
     borderRadius: 12,
     alignItems: "center",
@@ -309,7 +309,7 @@ const styles = StyleSheet.create({
   },
 
   statBox: {
-    backgroundColor: "#113065",
+    backgroundColor: "rgba(255,255,255,0.12)",
     width: "48%",
     padding: 12,
     borderRadius: 12,
@@ -335,7 +335,7 @@ const styles = StyleSheet.create({
 },
 
 vehicleTitle: {
-  color: "#0B1F3A",
+  color: "#0A1F44",
   fontSize: 16,
   fontWeight: "bold",
   marginBottom: 10,

@@ -5,6 +5,7 @@ import Home from "../../Screens/index";
 import Profile from "../../Screens/Profile";
 import Location from "../../Screens/Location";
 import Notifications from "../../Screens/Notifications";
+import FuelScreen from "../../Screens/fuel";
 
 const Tab = createBottomTabNavigator();
 
@@ -58,6 +59,21 @@ export default function TabNavigator() {
           tabBarIcon: ({ focused }) => (
             <Ionicons
               name={focused ? "location" : "location-outline"}
+              size={24}
+              color={focused ? "#007bff" : "#888"}
+            />
+          ),
+        }}
+      />
+
+       {/* fuel*/}
+      <Tab.Screen
+        name="FuelScreen"
+        component={FuelScreen}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <Ionicons
+              name={focused ? "speedometer" : "speedometer-outline"}
               size={24}
               color={focused ? "#007bff" : "#888"}
             />

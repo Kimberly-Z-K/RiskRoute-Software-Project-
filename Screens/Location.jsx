@@ -280,7 +280,7 @@ startSimulation(coords);
           <View style={styles.searchContainer}>
   <TextInput
     style={styles.input}
-    placeholder="Enter destination in South Africa"
+    placeholder="Enter destination"
     value={destinationName}
     onChangeText={setDestinationName}
   />
@@ -302,7 +302,7 @@ startSimulation(coords);
 
           {/* Road Alerts*/}
           <View style={styles.card}>
-            <Text style={styles.heading}>⚠️ Alerts</Text>
+            <Text style={styles.heading}>Alerts</Text>
             <Text style={styles.alertText}>
               Heavy traffic ahead (4km)
             </Text>
@@ -364,7 +364,7 @@ const styles = StyleSheet.create({
   },
 
   halfMap: {
-    height: "45%",
+    height: "35%",
     width: "100%",
   },
 

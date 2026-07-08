@@ -324,7 +324,7 @@ const styles = StyleSheet.create({
   loginLink: { marginBottom: 50, color: '#000', fontWeight: 'bold' },
 
   // --- MODAL FORCE DIALOGUE STYLES ---
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',  padding: 20, marginTop:2 },
   modalContent: { width: '100%', backgroundColor: '#FFF', borderRadius: 30, padding: 25, alignItems: 'center', elevation: 10 },
   modalHeader: { fontSize: 22, fontWeight: 'bold', color: '#000', marginBottom: 10 },
   modalSubtext: { fontSize: 14, color: '#4B5563', textAlign: 'center', lineHeight: 22, marginBottom: 20 },
