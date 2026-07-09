@@ -40,7 +40,9 @@ export default function VehicleList() {
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [showAll, setShowAll] = useState(false);
+  const [page, setPage] = useState(1);
+
+  const pageSize = 3;
 
   useEffect(() => {
     const loadData = async () => {
@@ -107,7 +109,21 @@ export default function VehicleList() {
     });
   }, [vehicles, drivers, searchTerm, statusFilter]);
 
-  const visibleVehicles = showAll ? filteredVehicles : filteredVehicles.slice(0, 2);
+  const totalPages = Math.max(1, Math.ceil(filteredVehicles.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, statusFilter]);
+
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages));
+  }, [totalPages]);
+
+  const visibleVehicles = filteredVehicles.slice(
+    (safePage - 1) * pageSize,
+    safePage * pageSize
+  );
 
   const stats = {
     total: vehicles.length,
@@ -145,6 +161,9 @@ export default function VehicleList() {
     { key: 'unassigned', label: 'Unassigned', count: stats.unassigned },
   ];
 
+  const goPrev = () => setPage((p) => Math.max(1, p - 1));
+  const goNext = () => setPage((p) => Math.min(totalPages, p + 1));
+
   return (
     <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
       <div className="px-5 py-4 border-b border-slate-200">
@@ -162,10 +181,7 @@ export default function VehicleList() {
             {filters.map((item) => (
               <button
                 key={item.key}
-                onClick={() => {
-                  setStatusFilter(item.key);
-                  setShowAll(false);
-                }}
+                onClick={() => setStatusFilter(item.key)}
                 className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition-colors ring-1 ${
                   statusFilter === item.key
                     ? 'bg-slate-900 text-white ring-slate-900'
@@ -193,10 +209,7 @@ export default function VehicleList() {
             type="text"
             placeholder="Search vehicle, registration, location, or driver"
             value={searchTerm}
-            onChange={(e) => {
-              setSearchTerm(e.target.value);
-              setShowAll(false);
-            }}
+            onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:bg-white"
           />
         </div>
@@ -304,23 +317,27 @@ export default function VehicleList() {
           Showing {visibleVehicles.length} of {filteredVehicles.length} vehicles
         </span>
 
-        {!showAll && filteredVehicles.length > 2 && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => setShowAll(true)}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+            onClick={goPrev}
+            disabled={safePage === 1}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Show more
+            Prev
           </button>
-        )}
 
-        {showAll && filteredVehicles.length > 2 && (
+          <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700">
+            {safePage} of {totalPages}
+          </span>
+
           <button
-            onClick={() => setShowAll(false)}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+            onClick={goNext}
+            disabled={safePage === totalPages}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Show less
+            Next
           </button>
-        )}
+        </div>
       </div>
     </div>
   );
