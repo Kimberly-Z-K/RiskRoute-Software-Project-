@@ -17,6 +17,7 @@ import {
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 
 export default function Login({ navigation }) {
   const [email, setEmail] = useState('');
@@ -74,6 +75,8 @@ export default function Login({ navigation }) {
     }
   };
 
+  const { setIsVerified } = useAuth();
+
   const handleVerifyCode = async () => {
     if (verificationCode.length !== 6) {
       Alert.alert('Invalid Code', 'Please enter the 6-digit code sent to your email.');
@@ -94,10 +97,15 @@ export default function Login({ navigation }) {
       if (error) throw error;
 
       if (data && data.length > 0 && data[0].code === verificationCode) {
-        Alert.alert('Success', 'Identity verified.');
+        // setIsVerified(true);
+        // Alert.alert('Success', 'Identity verified. SUCCESS. PUSH TO REPO. YOU CAN SLEEP');
+        // setShowMfaModal(false);
+        // setVerificationCode('');
+        await setIsVerified(true);
         setShowMfaModal(false);
-        setVerificationCode('');
-        navigation.navigate('MainTabs');
+        setVerificationCode("");
+        Alert.alert("Success", "Identity verified.");
+
       } else {
         Alert.alert('Access Denied', 'Incorrect verification code.');
       }

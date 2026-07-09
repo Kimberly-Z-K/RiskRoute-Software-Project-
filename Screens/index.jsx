@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect,  useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { useAuth } from '../context/AuthContext';
 
 const RiskRouteScreen = ({ navigation }) => {
   const riskLevel = "Low";
@@ -22,6 +23,12 @@ const RiskRouteScreen = ({ navigation }) => {
         return "#2ecc71";
     }
   };
+
+  const { user, session } = useAuth();
+
+ useEffect(() => {
+  console.log('[Home screen AUTH]', !!user);
+}, [user])
 
   return (
     <LinearGradient colors={["#d5d6e0", "#fff"]} style={styles.container}>
@@ -152,7 +159,10 @@ const RiskRouteScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
 
-  container: { flex: 1 },
+  container: { 
+    flex: 1, 
+    marginBottom: 80,
+  },
 
   header: {
     paddingTop: 50,

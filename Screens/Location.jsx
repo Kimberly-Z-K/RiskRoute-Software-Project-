@@ -13,8 +13,14 @@ import {
 import MapView, { Marker, Polyline } from "react-native-maps";
 import * as ExpoLocation from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
+import { useAuth } from '../context/AuthContext';
 
 export default function Location() {
+  const { user, session } = useAuth();
+  useEffect(() => {
+    console.log('[location screen AUTH]', !!user);
+  }, [user])
+
   const [fullMap, setFullMap] = useState(false);
   const [location, setLocation] = useState(null);
   const [routeCoords, setRouteCoords] = useState([]);
@@ -31,7 +37,7 @@ export default function Location() {
     longitude: 28.0567, 
   };*/
   const [destinationName, setDestinationName] = useState("");
-const [destination, setDestination] = useState(null);
+  const [destination, setDestination] = useState(null);
 
   useEffect(() => {
     getLocation();

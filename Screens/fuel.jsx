@@ -1,11 +1,15 @@
 
-import React from 'react';
+import React, { useEffect,  useState } from 'react';
 import { Text,ScrollView, StyleSheet,TouchableOpacity,View } from 'react-native';
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { useAuth } from '../context/AuthContext';
 
 const FuelScreen=({navigation})=>{
-
+const { user, session } = useAuth();
+ useEffect(() => {
+  console.log('[fuel screen AUTH]', !!user);
+}, [user])
 return(
 
  <ScrollView
@@ -186,6 +190,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F5F7FB",
+    marginBottom: 70,
   },
 
   fuelTopsection: {

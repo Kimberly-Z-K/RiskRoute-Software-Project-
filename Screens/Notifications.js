@@ -15,8 +15,14 @@ import {
   Feather,
 } from "@expo/vector-icons";
 import { LinearGradient } from 'expo-linear-gradient';
+import { useAuth } from '../context/AuthContext';
 
 export default function Notifications() {
+  const { user, session } = useAuth();
+  useEffect(() => {
+    console.log('[noti screen AUTH]', !!user);
+  }, [user])
+
   const [notifications, setNotifications] = useState([
     {
       id: Date.now() + 1, // Use unique IDs
@@ -319,6 +325,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F3F4F6",
+    marginBottom: 70,
   },
 
   headerGradient: {
