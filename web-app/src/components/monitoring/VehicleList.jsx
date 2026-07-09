@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Truck,
   MapPin,
-  ChevronRight,
   AlertCircle,
   CheckCircle,
   AlertTriangle,
@@ -33,34 +32,46 @@ const statusMeta = {
   },
 };
 
-const VehicleList = ({ onSelectVehicle }) => {
+export default function VehicleList() {
   const [vehicles, setVehicles] = useState([]);
+  const [drivers, setDrivers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState(null);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
-    const loadVehicles = async () => {
+    const loadData = async () => {
       setLoading(true);
       setError('');
 
       try {
-        const { data, error } = await supabase
+        const vehiclesRes = await supabase
           .from('vehicles')
-          .select('vehicle_id, registration_number, status, current_location')
+          .select('vehicle_id, registration_number, status, current_location, driver_id')
           .order('vehicle_id', { ascending: true });
 
-        if (error) throw error;
+        const driversRes = await supabase
+          .from('drivers')
+          .select('driver_id, driver_username')
+          .order('driver_username', { ascending: true });
 
-        const mapped = (data || []).map((row) => ({
-          id: row.vehicle_id,
-          registrationNumber: row.registration_number,
-          status: row.status || 'unknown',
-          currentLocation: row.current_location || 'Unknown location',
-        }));
+        if (vehiclesRes.error) throw vehiclesRes.error;
+        if (driversRes.error) throw driversRes.error;
 
-        setVehicles(mapped);
+        setVehicles(
+          (vehiclesRes.data || []).map((row) => ({
+            id: row.vehicle_id,
+            registrationNumber: row.registration_number || '',
+            status: row.status || 'unknown',
+            currentLocation: row.current_location || 'Unknown location',
+            driverId: row.driver_id || '',
+          }))
+        );
+
+        setDrivers(driversRes.data || []);
       } catch (err) {
         setError(err.message || 'Failed to load vehicles');
       } finally {
@@ -68,46 +79,82 @@ const VehicleList = ({ onSelectVehicle }) => {
       }
     };
 
-    loadVehicles();
+    loadData();
   }, []);
 
   const filteredVehicles = useMemo(() => {
+    const q = searchTerm.toLowerCase();
+
     return vehicles.filter((vehicle) => {
-      const q = searchTerm.toLowerCase();
+      const selectedDriver = drivers.find(
+        (d) => String(d.driver_id) === String(vehicle.driverId)
+      );
+      const driverName = selectedDriver?.driver_username || '';
+
       const matchesSearch =
         String(vehicle.id).toLowerCase().includes(q) ||
         (vehicle.registrationNumber || '').toLowerCase().includes(q) ||
-        (vehicle.currentLocation || '').toLowerCase().includes(q);
+        (vehicle.currentLocation || '').toLowerCase().includes(q) ||
+        driverName.toLowerCase().includes(q);
 
-      const matchesStatus = statusFilter === 'all' || vehicle.status === statusFilter;
-      return matchesSearch && matchesStatus;
+      const assigned = Boolean(vehicle.driverId);
+      const matchesFilter =
+        statusFilter === 'all' ||
+        (statusFilter === 'assigned' && assigned) ||
+        (statusFilter === 'unassigned' && !assigned);
+
+      return matchesSearch && matchesFilter;
     });
-  }, [vehicles, searchTerm, statusFilter]);
+  }, [vehicles, drivers, searchTerm, statusFilter]);
+
+  const visibleVehicles = showAll ? filteredVehicles : filteredVehicles.slice(0, 2);
 
   const stats = {
     total: vehicles.length,
-    onTime: vehicles.filter((v) => v.status === 'on-time').length,
-    delayed: vehicles.filter((v) => v.status === 'delayed').length,
-    atRisk: vehicles.filter((v) => v.status === 'at-risk').length,
+    assigned: vehicles.filter((v) => v.driverId).length,
+    unassigned: vehicles.filter((v) => !v.driverId).length,
+  };
+
+  const handleAssignDriver = async (vehicleId, driverId) => {
+    setSavingId(vehicleId);
+    setError('');
+
+    try {
+      const { error: updateError } = await supabase
+        .from('vehicles')
+        .update({ driver_id: driverId || null })
+        .eq('vehicle_id', vehicleId);
+
+      if (updateError) throw updateError;
+
+      setVehicles((prev) =>
+        prev.map((v) =>
+          v.id === vehicleId ? { ...v, driverId: driverId || '' } : v
+        )
+      );
+    } catch (err) {
+      setError(err.message || 'Failed to update vehicle');
+    } finally {
+      setSavingId(null);
+    }
   };
 
   const filters = [
     { key: 'all', label: 'All', count: stats.total },
-    { key: 'on-time', label: 'On time', count: stats.onTime },
-    { key: 'delayed', label: 'Delayed', count: stats.delayed },
-    { key: 'at-risk', label: 'At risk', count: stats.atRisk },
+    { key: 'assigned', label: 'Assigned', count: stats.assigned },
+    { key: 'unassigned', label: 'Unassigned', count: stats.unassigned },
   ];
 
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
+    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
       <div className="px-5 py-4 border-b border-slate-200">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h3 className="text-sm font-semibold text-slate-900 tracking-tight">
-              Vehicles
+              Vehicle Assignments
             </h3>
             <p className="mt-1 text-sm text-slate-500">
-              Active fleet records from Supabase
+              Assign a driver to each vehicle
             </p>
           </div>
 
@@ -115,7 +162,10 @@ const VehicleList = ({ onSelectVehicle }) => {
             {filters.map((item) => (
               <button
                 key={item.key}
-                onClick={() => setStatusFilter(item.key)}
+                onClick={() => {
+                  setStatusFilter(item.key);
+                  setShowAll(false);
+                }}
                 className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm transition-colors ring-1 ${
                   statusFilter === item.key
                     ? 'bg-slate-900 text-white ring-slate-900'
@@ -125,7 +175,9 @@ const VehicleList = ({ onSelectVehicle }) => {
                 <span>{item.label}</span>
                 <span
                   className={`min-w-5 rounded-full px-1.5 py-0.5 text-xs ${
-                    statusFilter === item.key ? 'bg-white/10 text-white' : 'bg-slate-100 text-slate-500'
+                    statusFilter === item.key
+                      ? 'bg-white/10 text-white'
+                      : 'bg-slate-100 text-slate-500'
                   }`}
                 >
                   {item.count}
@@ -139,85 +191,137 @@ const VehicleList = ({ onSelectVehicle }) => {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search vehicles"
+            placeholder="Search vehicle, registration, location, or driver"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setShowAll(false);
+            }}
             className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:bg-white"
           />
         </div>
       </div>
 
-      <div className="max-h-[520px] divide-y divide-slate-100 overflow-y-auto">
+      <div className="overflow-x-auto">
         {loading ? (
-          <div className="p-8 text-center text-slate-500">
-            <div className="mx-auto mb-3 h-10 w-10 animate-pulse rounded-full bg-slate-100" />
-            <p className="text-sm">Loading vehicles...</p>
-          </div>
+          <div className="p-8 text-center text-slate-500">Loading vehicles...</div>
         ) : error ? (
-          <div className="p-6 text-sm text-rose-600">
-            {error}
-          </div>
-        ) : filteredVehicles.length === 0 ? (
+          <div className="p-6 text-sm text-rose-600">{error}</div>
+        ) : visibleVehicles.length === 0 ? (
           <div className="p-8 text-center text-slate-500">
             <Truck className="mx-auto mb-3 h-10 w-10 text-slate-300" />
             <p className="text-sm">No vehicles found</p>
           </div>
         ) : (
-          filteredVehicles.map((vehicle) => {
-            const meta = statusMeta[vehicle.status] || statusMeta.unknown;
-            const StatusIcon = meta.icon;
+          <table className="min-w-full divide-y divide-slate-100">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Vehicle
+                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Details
+                </th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Driver
+                </th>
+              </tr>
+            </thead>
 
-            return (
-              <button
-                key={vehicle.id}
-                onClick={() => onSelectVehicle?.(vehicle)}
-                className="group w-full text-left px-5 py-4 transition-colors hover:bg-slate-50"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white">
-                        <Truck className="h-4.5 w-4.5 text-slate-600" />
-                      </div>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {visibleVehicles.map((vehicle) => {
+                const meta = statusMeta[vehicle.status] || statusMeta.unknown;
+                const StatusIcon = meta.icon;
+                const selectedDriver = drivers.find(
+                  (d) => String(d.driver_id) === String(vehicle.driverId)
+                );
 
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium text-slate-900">
-                            Vehicle {vehicle.id}
-                          </span>
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ring-1 ${meta.tone}`}
-                          >
-                            <StatusIcon className="h-3 w-3" />
-                            {meta.label}
-                          </span>
+                return (
+                  <tr key={vehicle.id} className="hover:bg-slate-50">
+                    <td className="px-5 py-4 align-middle">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white">
+                          <Truck className="h-4.5 w-4.5 text-slate-600" />
                         </div>
-
-                        <p className="mt-1 text-sm text-slate-500">
-                          {vehicle.registrationNumber || 'N/A'}
-                        </p>
+                        <div>
+                          <div className="text-sm font-medium text-slate-900">
+                            Vehicle {vehicle.id}
+                          </div>
+                          <div className="text-sm text-slate-500">
+                            {vehicle.registrationNumber || 'N/A'}
+                          </div>
+                        </div>
                       </div>
-                    </div>
+                    </td>
 
-                    <div className="mt-3 flex items-center gap-1.5 text-sm text-slate-500">
-                      <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                      <span className="truncate">{vehicle.currentLocation}</span>
-                    </div>
-                  </div>
+                    <td className="px-5 py-4 align-middle">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ring-1 ${meta.tone}`}
+                        >
+                          <StatusIcon className="h-3 w-3" />
+                          {meta.label}
+                        </span>
 
-                  <ChevronRight className="mt-1 h-4 w-4 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-slate-500" />
-                </div>
-              </button>
-            );
-          })
+                        <span className="inline-flex items-center gap-1 text-sm text-slate-500">
+                          <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                          {vehicle.currentLocation}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td className="px-5 py-4 align-middle">
+                      <div className="flex items-center gap-3">
+                        <span className="min-w-[110px] text-sm text-slate-600">
+                          {selectedDriver ? selectedDriver.driver_username : 'Unassigned'}
+                        </span>
+
+                        <select
+                          value={vehicle.driverId || ''}
+                          onChange={(e) => handleAssignDriver(vehicle.id, e.target.value)}
+                          disabled={savingId === vehicle.id}
+                          className="w-full max-w-[200px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <option value="">Unassigned</option>
+                          {drivers.map((driver) => (
+                            <option key={driver.driver_id} value={driver.driver_id}>
+                              {driver.driver_username}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </div>
 
-      <div className="border-t border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-500">
-        Showing {filteredVehicles.length} of {vehicles.length} vehicles
+      <div className="border-t border-slate-200 bg-slate-50 px-5 py-3 flex items-center justify-between text-sm text-slate-500">
+        <span>
+          Showing {visibleVehicles.length} of {filteredVehicles.length} vehicles
+        </span>
+
+        {!showAll && filteredVehicles.length > 2 && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+          >
+            Show more
+          </button>
+        )}
+
+        {showAll && filteredVehicles.length > 2 && (
+          <button
+            onClick={() => setShowAll(false)}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+          >
+            Show less
+          </button>
+        )}
       </div>
     </div>
   );
-};
-
-export default VehicleList;
+}
