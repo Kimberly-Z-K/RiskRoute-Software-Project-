@@ -1,168 +1,7 @@
-// import { Router } from "express";
-// import { optimizeRouteTomTom } from "../services/tomtom.js";
-// import { supabase } from "../../lib/supabase.js";
-
-// const router = Router();
-
-// const TOMTOM_API_KEY = process.env.TOMTOM_API_KEY;
-
-// function isValidPoint(point) {
-//   return (
-//     point &&
-//     typeof point === "object" &&
-//     typeof point.lat === "number" &&
-//     typeof point.lng === "number"
-//   );
-// }
-
-// async function geocodePlace(query) {
-//   if (!query || !query.trim()) {
-//     throw new Error("Geocode query is required");
-//   }
-
-//   const url = `https://api.tomtom.com/search/2/geocode/${encodeURIComponent(
-//     query.trim()
-//   )}.json?key=${TOMTOM_API_KEY}&limit=1`;
-
-//   const response = await fetch(url);
-//   const data = await response.json();
-
-//   const result = data?.results?.[0];
-//   const position = result?.position;
-
-//   if (!position || typeof position.lat !== "number" || typeof position.lon !== "number") {
-//     throw new Error(`Could not geocode: ${query}`);
-//   }
-
-//   return {
-//     label: result?.address?.freeformAddress || query.trim(),
-//     lat: position.lat,
-//     lng: position.lon,
-//   };
-// }
-
-// router.get("/geocode", async (req, res) => {
-//   try {
-//     const { query } = req.query;
-
-//     if (!query || typeof query !== "string") {
-//       return res.status(400).json({
-//         success: false,
-//         error: "query is required",
-//       });
-//     }
-
-//     const place = await geocodePlace(query);
-
-//     return res.json({
-//       success: true,
-//       data: place,
-//     });
-//   } catch (error) {
-//     return res.status(500).json({
-//       success: false,
-//       error: error.message,
-//     });
-//   }
-// });
-
-// router.post("/optimize", async (req, res) => {
-//   try {
-//     const { start, stops = [], constraints = {} } = req.body;
-
-//     if (!isValidPoint(start)) {
-//       return res.status(400).json({
-//         success: false,
-//         error: "start is required and must be an object with numeric lat and lng",
-//       });
-//     }
-
-//     if (!Array.isArray(stops)) {
-//       return res.status(400).json({
-//         success: false,
-//         error: "stops must be an array",
-//       });
-//     }
-
-//     for (const stop of stops) {
-//       if (!isValidPoint(stop)) {
-//         return res.status(400).json({
-//           success: false,
-//           error: "Each stop must be an object with numeric lat and lng",
-//         });
-//       }
-//     }
-
-//     const tomtomData = await optimizeRouteTomTom(start, stops, constraints);
-
-//     const route = tomtomData?.routes?.[0];
-//     const summary = route?.summary || {};
-//     const optimizedWaypoints = route?.optimizedWaypoints || [];
-
-//     const cleanedResult = {
-//       distanceKm: (summary.lengthInMeters || 0) / 1000,
-//       durationMin: Math.round((summary.travelTimeInSeconds || 0) / 60),
-//       trafficDelayMin: Math.round((summary.trafficDelayInSeconds || 0) / 60),
-//       optimizedWaypoints,
-//       geometry: route?.legs || [],
-//     };
-
-//     const { error } = await supabase.from("optimized_routes").insert({
-//       start_point: start,
-//       stops,
-//       constraints,
-//       result: cleanedResult,
-//     });
-
-//     if (error) {
-//       return res.status(500).json({
-//         success: false,
-//         error: error.message,
-//       });
-//     }
-
-//     return res.json({
-//       success: true,
-//       ...cleanedResult,
-//     });
-//   } catch (error) {
-//     return res.status(500).json({
-//       success: false,
-//       error: error.response?.data || error.message,
-//     });
-//   }
-// });
-
-// router.get("/optimized-routes", async (req, res) => {
-//   try {
-//     const { data, error } = await supabase
-//       .from("optimized_routes")
-//       .select("*")
-//       .order("created_at", { ascending: false });
-
-//     if (error) {
-//       return res.status(500).json({
-//         success: false,
-//         error: error.message,
-//       });
-//     }
-
-//     return res.json({
-//       success: true,
-//       data,
-//     });
-//   } catch (error) {
-//     return res.status(500).json({
-//       success: false,
-//       error: error.message,
-//     });
-//   }
-// });
-
-// export default router;
 
 import { Router } from "express";
 import { optimizeRouteTomTom } from "../services/tomtom.js";
+import { getTrafficIncidentsTomTom, getTrafficFlowTomTom } from "../services/traffic.js";
 import { supabase } from "../../lib/supabase.js";
 
 const router = Router();
@@ -242,6 +81,33 @@ async function reverseGeocode(lat, lng) {
 
   console.log("[reverseGeocode] resolved:", resolved);
   return resolved;
+}
+
+async function reverseGeocodeIncident(incident) {
+  try {
+    const coords = incident?.geometry?.coordinates || [];
+    const first = coords[0];
+
+    if (!first || first.length < 2) {
+      return { ...incident, locationName: "Nearby" };
+    }
+
+    const lng = first[0];
+    const lat = first[1];
+
+    const place = await reverseGeocode(lat, lng);
+
+    return {
+      ...incident,
+      locationName: place?.label || "Nearby",
+    };
+  } catch (error) {
+    console.log("[reverseGeocodeIncident] error:", error.message);
+    return {
+      ...incident,
+      locationName: "Nearby",
+    };
+  }
 }
 
 router.get("/geocode", async (req, res) => {
@@ -421,6 +287,72 @@ router.get("/optimized-routes", async (req, res) => {
     });
   } catch (error) {
     console.log("[/optimized-routes] failed:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+router.get("/traffic/incidents", async (req, res) => {
+  console.log("=== GET /api/traffic/incidents ===");
+  console.log("Query:", req.query);
+
+  try {
+    const { bbox } = req.query;
+
+    if (!bbox || typeof bbox !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: "bbox is required",
+      });
+    }
+
+    const data = await getTrafficIncidentsTomTom(bbox);
+    const incidents = data?.incidents || data?.data?.incidents || [];
+
+    const enrichedIncidents = await Promise.all(
+      incidents.map((incident) => reverseGeocodeIncident(incident))
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        incidents: enrichedIncidents,
+      },
+    });
+  } catch (error) {
+    console.log("[/traffic/incidents] error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+router.get("/traffic/flow", async (req, res) => {
+  console.log("=== GET /api/traffic/flow ===");
+  console.log("Query:", req.query);
+
+  try {
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      return res.status(400).json({
+        success: false,
+        error: "lat and lng are required and must be numbers",
+      });
+    }
+
+    const data = await getTrafficFlowTomTom(lat, lng);
+
+    return res.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.log("[/traffic/flow] error:", error);
     return res.status(500).json({
       success: false,
       error: error.message,
