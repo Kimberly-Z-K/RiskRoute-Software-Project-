@@ -11,21 +11,57 @@ import {
 import * as Speech from "expo-speech";
 import {
   MaterialCommunityIcons,
-  Ionicons,
   Feather,
 } from "@expo/vector-icons";
-import { LinearGradient } from 'expo-linear-gradient';
-import { useAuth } from '../context/AuthContext';
+import { LinearGradient } from "expo-linear-gradient";
+import { useAuth } from "../context/AuthContext";
+
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:5000";
+
+const typeMap = {
+  1: "Accident",
+  2: "Fog",
+  3: "Dangerous Conditions",
+  4: "Rain",
+  5: "Ice",
+  6: "Jam",
+  7: "Lane Closed",
+  8: "Road Closed",
+  9: "Road Works",
+  10: "Wind",
+  11: "Flooding",
+  14: "Broken Down Vehicle",
+};
+
+function buildTrafficNotification(incident, index) {
+  const iconCategory = incident?.properties?.iconCategory ?? 0;
+  const label = typeMap[iconCategory] || "Traffic Alert";
+  const location = incident?.locationName || "Nearby";
+  const severity = incident?.properties?.magnitudeOfDelay || "";
+
+  return {
+    id: `traffic-${incident?.properties?.id || index}`,
+    category: "ROUTE & TRAFFIC",
+    title: `${label} near ${location}`,
+    message: severity ? `Severity: ${severity}` : "Live traffic update detected",
+    time: "Just now",
+    icon: "traffic-light",
+    iconColor: "#3B82F6",
+    bg: "#DBEAFE",
+    unread: true,
+  };
+}
 
 export default function Notifications() {
   const { user, session } = useAuth();
+
   useEffect(() => {
-    console.log('[noti screen AUTH]', !!user);
-  }, [user])
+    console.log("[noti screen AUTH]", !!user);
+  }, [user]);
 
   const [notifications, setNotifications] = useState([
     {
-      id: Date.now() + 1, // Use unique IDs
+      id: Date.now() + 1,
       category: "FUEL ALERTS",
       title: "Fuel at 38% — refill recommended",
       message: "2 stations detected on your route",
@@ -92,9 +128,29 @@ export default function Notifications() {
     },
   ]);
 
-  const unreadCount = notifications.filter(n => n.unread).length;
+  const unreadCount = notifications.filter((n) => n.unread).length;
 
-  // Read unread notifications when opening screen
+  const fetchTrafficUpdates = async () => {
+    try {
+      const bbox = "28.0,-26.3,28.1,-26.2";
+      const response = await fetch(
+        `${API_BASE_URL}/api/traffic/incidents?bbox=${encodeURIComponent(bbox)}`
+      );
+
+      const result = await response.json();
+      const incidents = result?.data?.incidents || [];
+
+      const trafficNotifications = incidents.map(buildTrafficNotification);
+
+      setNotifications((prev) => {
+        const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
+        return [...trafficNotifications, ...nonTraffic];
+      });
+    } catch (error) {
+      console.log("[fetchTrafficUpdates] error:", error);
+    }
+  };
+
   useEffect(() => {
     const unread = notifications.filter((n) => n.unread);
 
@@ -109,11 +165,17 @@ export default function Notifications() {
     }
   }, []);
 
-  // Simulate incoming notifications
+  useEffect(() => {
+    fetchTrafficUpdates();
+
+    const interval = setInterval(fetchTrafficUpdates, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     const newNotifications = [
       {
-        id: Date.now() + 100, // Use unique IDs with timestamp
+        id: Date.now() + 100,
         category: "DELIVERIES",
         title: "New delivery assigned",
         message: "Johannesburg → Pretoria",
@@ -145,7 +207,6 @@ export default function Notifications() {
       }
 
       const item = newNotifications[i];
-      // Ensure unique ID for each new notification
       const uniqueItem = {
         ...item,
         id: Date.now() + i + 200,
@@ -172,26 +233,27 @@ export default function Notifications() {
 
   const markAsRead = (id) => {
     setNotifications((prev) =>
-      prev.map((n) =>
-        n.id === id ? { ...n, unread: false } : n
-      )
+      prev.map((n) => (n.id === id ? { ...n, unread: false } : n))
     );
   };
 
   const getCategoryColor = (category) => {
-    switch(category) {
-      case "FUEL ALERTS": return "#F59E0B";
-      case "ROUTE & TRAFFIC": return "#3B82F6";
-      case "DELIVERIES": return "#10B981";
-      case "VEHICLE": return "#EF4444";
-      default: return "#6B7280";
+    switch (category) {
+      case "FUEL ALERTS":
+        return "#F59E0B";
+      case "ROUTE & TRAFFIC":
+        return "#3B82F6";
+      case "DELIVERIES":
+        return "#10B981";
+      case "VEHICLE":
+        return "#EF4444";
+      default:
+        return "#6B7280";
     }
   };
 
   const renderCategory = (category) => {
-    const items = notifications.filter(
-      (n) => n.category === category
-    );
+    const items = notifications.filter((n) => n.category === category);
 
     if (!items.length) return null;
 
@@ -206,7 +268,7 @@ export default function Notifications() {
 
         {items.map((item, index) => (
           <TouchableOpacity
-            key={item.id.toString()} // Ensure key is a string
+            key={item.id.toString()}
             style={[
               styles.card,
               item.unread && styles.unreadCard,
@@ -249,25 +311,24 @@ export default function Notifications() {
 
   return (
     <View style={styles.container}>
-      <StatusBar 
-        barStyle="light-content" 
-        backgroundColor="transparent" 
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor="transparent"
         translucent={true}
       />
-      
-      {/* Header with Gradient that covers status bar */}
+
       <LinearGradient
-        colors={['#1E40AF', '#3B82F6']}
+        colors={["#1E40AF", "#3B82F6"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.headerGradient}
       >
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <MaterialCommunityIcons 
-              name="bell-ring" 
-              size={28} 
-              color="#FFFFFF" 
+            <MaterialCommunityIcons
+              name="bell-ring"
+              size={28}
+              color="#FFFFFF"
             />
             <Text style={styles.heading}>Notifications</Text>
             {unreadCount > 0 && (
@@ -278,10 +339,7 @@ export default function Notifications() {
           </View>
 
           {unreadCount > 0 && (
-            <TouchableOpacity 
-              onPress={markAllRead}
-              style={styles.markAllButton}
-            >
+            <TouchableOpacity onPress={markAllRead} style={styles.markAllButton}>
               <Feather name="check-circle" size={16} color="#FFFFFF" />
               <Text style={styles.readAll}>Mark all read</Text>
             </TouchableOpacity>
@@ -289,7 +347,7 @@ export default function Notifications() {
         </View>
       </LinearGradient>
 
-      <ScrollView 
+      <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -303,10 +361,10 @@ export default function Notifications() {
           </>
         ) : (
           <View style={styles.emptyState}>
-            <MaterialCommunityIcons 
-              name="bell-off-outline" 
-              size={80} 
-              color="#D1D5DB" 
+            <MaterialCommunityIcons
+              name="bell-off-outline"
+              size={80}
+              color="#D1D5DB"
             />
             <Text style={styles.emptyStateTitle}>No notifications</Text>
             <Text style={styles.emptyStateText}>
@@ -327,32 +385,27 @@ const styles = StyleSheet.create({
     backgroundColor: "#F3F4F6",
     marginBottom: 70,
   },
-
   headerGradient: {
-    paddingTop: Platform.OS === 'ios' ? 50 : StatusBar.currentHeight + 10,
+    paddingTop: Platform.OS === "ios" ? 50 : StatusBar.currentHeight + 10,
     paddingBottom: 16,
     paddingHorizontal: 20,
   },
-
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: Platform.OS === 'ios' ? 0 : 8,
+    marginTop: Platform.OS === "ios" ? 0 : 8,
   },
-
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
   },
-
   heading: {
     fontSize: 24,
     fontWeight: "700",
     color: "#FFFFFF",
     marginLeft: 10,
   },
-
   badgeContainer: {
     backgroundColor: "#EF4444",
     borderRadius: 12,
@@ -362,13 +415,11 @@ const styles = StyleSheet.create({
     minWidth: 22,
     alignItems: "center",
   },
-
   badgeText: {
     color: "#FFFFFF",
     fontSize: 12,
     fontWeight: "700",
   },
-
   markAllButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -378,48 +429,40 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     gap: 6,
   },
-
   readAll: {
     color: "#FFFFFF",
     fontWeight: "600",
     fontSize: 13,
   },
-
   scrollView: {
     flex: 1,
     backgroundColor: "#F3F4F6",
   },
-
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 16,
   },
-
   categoryContainer: {
     marginBottom: 20,
   },
-
   categoryHeader: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 12,
     paddingHorizontal: 4,
   },
-
   categoryDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     marginRight: 8,
   },
-
   section: {
     fontSize: 13,
     color: "#6B7280",
     fontWeight: "700",
     letterSpacing: 1.5,
   },
-
   card: {
     backgroundColor: "#FFFFFF",
     padding: 16,
@@ -428,24 +471,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
-
   firstCard: {
     borderTopLeftRadius: 12,
     borderTopRightRadius: 12,
   },
-
   lastCard: {
     borderBottomLeftRadius: 12,
     borderBottomRightRadius: 12,
     borderBottomWidth: 0,
   },
-
   unreadCard: {
     backgroundColor: "#F8FAFF",
     borderLeftWidth: 4,
     borderLeftColor: "#3B82F6",
   },
-
   iconBox: {
     width: 44,
     height: 44,
@@ -454,24 +493,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 14,
   },
-
   cardContent: {
     flex: 1,
   },
-
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-
   title: {
     fontWeight: "600",
     fontSize: 14,
     color: "#111827",
     flex: 1,
   },
-
   unreadDot: {
     width: 8,
     height: 8,
@@ -479,26 +514,22 @@ const styles = StyleSheet.create({
     backgroundColor: "#3B82F6",
     marginLeft: 8,
   },
-
   message: {
     color: "#6B7280",
     marginTop: 3,
     fontSize: 13,
     lineHeight: 18,
   },
-
   timeContainer: {
     flexDirection: "row",
     alignItems: "center",
     marginTop: 6,
     gap: 4,
   },
-
   time: {
     color: "#9CA3AF",
     fontSize: 12,
   },
-
   emptyState: {
     flex: 1,
     alignItems: "center",
@@ -506,14 +537,12 @@ const styles = StyleSheet.create({
     paddingTop: 80,
     paddingBottom: 40,
   },
-
   emptyStateTitle: {
     fontSize: 20,
     fontWeight: "600",
     color: "#374151",
     marginTop: 16,
   },
-
   emptyStateText: {
     fontSize: 14,
     color: "#9CA3AF",
@@ -522,7 +551,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
     lineHeight: 20,
   },
-
   bottomPadding: {
     height: 20,
   },
