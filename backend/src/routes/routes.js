@@ -1,4 +1,3 @@
-
 import { Router } from "express";
 import { optimizeRouteTomTom } from "../services/tomtom.js";
 import { getTrafficIncidentsTomTom, getTrafficFlowTomTom } from "../services/traffic.js";

@@ -27,6 +27,7 @@ import {
   Clock as ClockIcon, Navigation, Shield, Star, Fuel, Pause, Play, BarChart3, FileText, MapPin, Lightbulb
 } from 'lucide-react';
 import './styles/globals.css';
+import { useRoutes } from '../src/hooks/useRoutes';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -90,6 +91,7 @@ function App() {
   const [simulationResults, setSimulationResults] = useState(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const { updateSignal, isActive: isRealTimeActive, setIsActive: setIsRealTimeActive } = useRealTimeUpdates(8000);
+  const { routes, loading: routesLoading, error: routesError } = useRoutes(); 
 
   // Initialize data only once
   useEffect(() => {
@@ -153,27 +155,66 @@ function App() {
   }, []);
 
   const runSimulation = useCallback(() => {
-    const delayImpact = simulationParams.delay;
-    const weatherImpact = simulationParams.weather === 'severe' ? 25 : simulationParams.weather === 'moderate' ? 12 : 0;
-    const accidentImpact = simulationParams.accident ? 35 : 0;
-    const roadClosureImpact = simulationParams.roadClosure ? 28 : 0;
-    const totalDelay = delayImpact + weatherImpact + accidentImpact + roadClosureImpact;
-    
-    setSimulationResults({
-      current: {
-        time: `+${totalDelay} min (${Math.floor(totalDelay / 60)}h ${totalDelay % 60}min)`,
-        cost: `+R${Math.floor(totalDelay * 3.5 + 50)}`,
-        riskScore: Math.min(95, 45 + Math.floor(totalDelay / 3)),
-        alternative: simulationParams.accident ? 'Take I-495 detour - saves 22 min' : 'Consider alternate route via BQE'
-      },
-      optimal: {
-        time: simulationParams.accident ? '+8 min' : '+15 min',
-        cost: `+R${Math.floor(simulationParams.delay * 1.8)}`,
-        riskScore: Math.min(70, 28 + Math.floor(simulationParams.delay / 5)),
-        alternative: 'Recommended: Safer Northern corridor - avoids incident zone'
-      }
-    });
-  }, [simulationParams]);
+  // Check if routes are loaded
+  if (routes.length === 0) {
+    alert('Please wait for routes to load from the database');
+    return;
+  }
+
+  const delayImpact = simulationParams.delay;
+  const weatherImpact = simulationParams.weather === 'severe' ? 25 : simulationParams.weather === 'moderate' ? 12 : 0;
+  const accidentImpact = simulationParams.accident ? 35 : 0;
+  const roadClosureImpact = simulationParams.roadClosure ? 28 : 0;
+  const totalDelay = delayImpact + weatherImpact + accidentImpact + roadClosureImpact;
+  
+  // Get the current route (first route or selected route)
+  const currentRoute = routes[0];
+  // Find an alternative route (could be the second route or any other)
+  const alternativeRoute = routes.find(r => r.id !== currentRoute?.id);
+  
+  // Calculate base values from route data or use defaults
+  const baseTime = currentRoute?.estimated_time || currentRoute?.duration || 30;
+  const baseCost = currentRoute?.estimated_cost || currentRoute?.cost || 10;
+  
+  // Calculate impact on time based on parameters
+  const timeMultiplier = 1 + (delayImpact / 60) + (weatherImpact / 100) + (accidentImpact / 100) + (roadClosureImpact / 100);
+  const newTime = Math.round(baseTime * timeMultiplier);
+  
+  // Calculate cost impact
+  const costMultiplier = 1 + (delayImpact / 120) + (weatherImpact / 150);
+  const newCost = Math.round((baseCost * costMultiplier) * 100) / 100;
+  
+  // Calculate risk score
+  let riskScore = 0;
+  if (simulationParams.weather === 'severe') riskScore += 30;
+  if (simulationParams.weather === 'moderate') riskScore += 15;
+  if (simulationParams.accident) riskScore += 25;
+  if (simulationParams.roadClosure) riskScore += 20;
+  riskScore += Math.min(delayImpact / 2, 25);
+  riskScore = Math.min(riskScore, 95);
+  
+  // Calculate optimal route values (assuming 20-30% improvement)
+  const optimalTime = Math.round(newTime * 0.7);
+  const optimalCost = Math.round((newCost * 0.75) * 100) / 100;
+  const optimalRisk = Math.min(Math.round(riskScore * 0.5), 70);
+  
+  setSimulationResults({
+    current: {
+      time: `${newTime} min (${Math.floor(newTime / 60)}h ${newTime % 60}min)`,
+      cost: `R${newCost.toFixed(2)}`,
+      riskScore: riskScore,
+      alternative: simulationParams.accident 
+        ? `Take ${alternativeRoute?.name || 'alternative route'} - saves ${Math.round(newTime - optimalTime)} min` 
+        : `Consider alternate route via ${alternativeRoute?.name || 'BQE'}`
+    },
+    optimal: {
+      time: `${optimalTime} min`,
+      cost: `R${optimalCost.toFixed(2)}`,
+      riskScore: optimalRisk,
+      alternative: `Recommended: ${alternativeRoute?.name || 'Safer Northern corridor'} - avoids incident zone`
+    }
+  });
+}, [simulationParams, routes]);
 
 // In your App.js, update the statsCards array:
 
@@ -413,16 +454,18 @@ const statsCards = [
             )}
             
             {/* Simulation Screen */}
-            {activeTab === 'simulation' && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <SimulationControls 
-                  params={simulationParams}
-                  setParams={setSimulationParams}
-                  onRunSimulation={runSimulation}
-                />
-                <SimulationResults results={simulationResults} />
-              </div>
-            )}
+{activeTab === 'simulation' && (
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <SimulationControls 
+      params={simulationParams}
+      setParams={setSimulationParams}
+      onRunSimulation={runSimulation}
+      routes={routes}  // Pass routes to the component
+      isRoutesLoading={routesLoading}
+    />
+    <SimulationResults results={simulationResults} />
+  </div>
+)}
             
             {/* Analytics Screen */}
             {activeTab === 'analytics' && performanceData && (
