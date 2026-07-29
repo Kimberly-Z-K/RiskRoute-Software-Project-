@@ -22,7 +22,7 @@ export default function VehicleList() {
       try {
         const vehiclesRes = await supabase
           .from('vehicles')
-          .select('vehicle_id, registration_number, status, current_location, driver_id')
+          .select('vehicle_id, registration_number, driver_id')
           .order('vehicle_id', { ascending: true });
 
         const driversRes = await supabase
@@ -37,8 +37,6 @@ export default function VehicleList() {
           (vehiclesRes.data || []).map((row) => ({
             id: row.vehicle_id,
             registrationNumber: row.registration_number || '',
-            status: row.status || 'unknown',
-            currentLocation: row.current_location || 'Unknown location',
             driverId: row.driver_id || '',
           }))
         );
@@ -100,7 +98,7 @@ export default function VehicleList() {
     unassigned: vehicles.filter((v) => !v.driverId).length,
   };
 
-  const handleAssignDriver = async (vehicleId, driverId) => {
+  const updateDriver = async (vehicleId, driverId) => {
     const previousVehicle = vehicles.find((v) => v.id === vehicleId);
     const previousDriverId = previousVehicle?.driverId || '';
 
@@ -218,6 +216,7 @@ export default function VehicleList() {
                 const selectedDriver = drivers.find(
                   (d) => String(d.driver_id) === String(vehicle.driverId)
                 );
+                const isAssigned = Boolean(vehicle.driverId);
 
                 return (
                   <tr key={vehicle.id} className="hover:bg-slate-50">
@@ -239,23 +238,36 @@ export default function VehicleList() {
 
                     <td className="px-5 py-4 align-middle">
                       <div className="flex items-center gap-3">
-                        <span className="min-w-[110px] text-sm text-slate-600">
-                          {selectedDriver ? selectedDriver.driver_username : 'Unassigned'}
-                        </span>
+                        {!isAssigned ? (
+                          <select
+                            value={vehicle.driverId || ''}
+                            onChange={(e) => updateDriver(vehicle.id, e.target.value)}
+                            disabled={savingId === vehicle.id}
+                            className="w-full max-w-[220px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <option value="">Assign driver</option>
+                            {drivers.map((driver) => (
+                              <option key={driver.driver_id} value={driver.driver_id}>
+                                {driver.driver_username}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <>
+                            <span className="min-w-[140px] text-sm text-slate-600">
+                              {selectedDriver ? selectedDriver.driver_username : 'Assigned'}
+                            </span>
 
-                        <select
-                          value={vehicle.driverId || ''}
-                          onChange={(e) => handleAssignDriver(vehicle.id, e.target.value)}
-                          disabled={savingId === vehicle.id}
-                          className="w-full max-w-[200px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <option value="">Unassigned</option>
-                          {drivers.map((driver) => (
-                            <option key={driver.driver_id} value={driver.driver_id}>
-                              {driver.driver_username}
-                            </option>
-                          ))}
-                        </select>
+                            <button
+                              type="button"
+                              onClick={() => updateDriver(vehicle.id, '')}
+                              disabled={savingId === vehicle.id}
+                              className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Unassign
+                            </button>
+                          </>
+                        )}
 
                         {savingId === vehicle.id && (
                           <span className="text-xs text-slate-500">Saving...</span>
