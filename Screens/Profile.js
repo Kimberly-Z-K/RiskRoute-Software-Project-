@@ -1,4 +1,4 @@
-import React, { useEffect,  useState } from 'react';
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   StatusBar,
   Platform,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import {
@@ -18,52 +19,139 @@ import {
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
 import { supabase } from "../lib/supabase";
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from "../context/AuthContext";
 
 export default function Profile() {
-  const { user, session, signOut } = useAuth();
-  useEffect(() => {
-    console.log('[profile screen AUTH]', !!user);
-  }, [user])
+  const { user, signOut } = useAuth();
 
-  const [editing, setEditing] = useState(true);
-  const [name, setName] = useState("");
-  const [surname, setSurname] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(null);
+
+  const [userName, setUserName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [licenseNumber, setLicenseNumber] = useState("");
+  const [email, setEmail] = useState("");
 
   const [vehicle, setVehicle] = useState("Volvo FH Truck");
   const [plate, setPlate] = useState("CA 123-456");
-  const [rating, setRating] = useState("4.8 ⭐");
+  const [rating, setRating] = useState("4.8");
   const [trips, setTrips] = useState(128);
 
-  const handleSave = () => {
-    if (!name.trim() || !surname.trim() || !phone.trim()) {
-      Alert.alert("Error", "Please fill in all required fields");
-      return;
-    }
-    setSaved({ name, surname, phone, email });
+  useEffect(() => {
+    if (!user?.id) return;
+    loadProfile();
+  }, [user]);
+
+const loadProfile = async () => {
+  try {
+    setLoading(true);
+
+    const userId = user.id;
+
+    const { data: userRow, error: userError } = await supabase
+      .from("users")
+      .select("user_id, user_name, email")
+      .eq("user_id", userId)
+      .single();
+
+    if (userError) throw userError;
+
+    const { data: driverRow, error: driverError } = await supabase
+      .from("drivers")
+      .select("driver_id, driver_username, phone, license_number") // Add driver_username here
+      .eq("driver_id", userId)
+      .single();
+
+    if (driverError) throw driverError;
+
+    const profileData = {
+      userName: driverRow.driver_username || userRow.user_name || "", // Use driver_username from drivers table
+      email: userRow.email || "",
+      phone: driverRow.phone || "",
+      licenseNumber: driverRow.license_number || "",
+    };
+
+    setSaved(profileData);
+    setUserName(profileData.userName);
+    setEmail(profileData.email);
+    setPhone(profileData.phone);
+    setLicenseNumber(profileData.licenseNumber);
+  } catch (err) {
+    Alert.alert("Error", err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleSave = async () => {
+  if (!userName.trim() || !phone.trim() || !licenseNumber.trim() || !email.trim()) {
+    Alert.alert("Error", "Please fill in all required fields");
+    return;
+  }
+
+  try {
+    setSaving(true);
+
+    const userId = user.id;
+
+    // Update users table
+    const { error: userUpdateError } = await supabase
+      .from("users")
+      .update({
+        user_name: userName.trim(),
+        email: email.trim(),
+      })
+      .eq("user_id", userId);
+
+    if (userUpdateError) throw userUpdateError;
+
+    // Update drivers table with driver_username
+    const { error: driverUpdateError } = await supabase
+      .from("drivers")
+      .update({
+        driver_username: userName.trim(), // Add this line
+        phone: phone.trim(),
+        license_number: licenseNumber.trim(),
+      })
+      .eq("driver_id", userId);
+
+    if (driverUpdateError) throw driverUpdateError;
+
+    const profileData = {
+      userName: userName.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+      licenseNumber: licenseNumber.trim(),
+    };
+
+    setSaved(profileData);
     setEditing(false);
     Alert.alert("Success", "Profile saved successfully!");
-  };
+  } catch (err) {
+    Alert.alert("Save Error", err.message);
+  } finally {
+    setSaving(false);
+  }
+};
 
   const handleEdit = () => {
     if (saved) {
-      setName(saved.name);
-      setSurname(saved.surname);
-      setPhone(saved.phone);
+      setUserName(saved.userName || "");
       setEmail(saved.email || "");
+      setPhone(saved.phone || "");
+      setLicenseNumber(saved.licenseNumber || "");
     }
     setEditing(true);
   };
 
   const handleCancel = () => {
     if (saved) {
-      setName(saved.name);
-      setSurname(saved.surname);
-      setPhone(saved.phone);
+      setUserName(saved.userName || "");
       setEmail(saved.email || "");
+      setPhone(saved.phone || "");
+      setLicenseNumber(saved.licenseNumber || "");
     }
     setEditing(false);
   };
@@ -72,17 +160,32 @@ export default function Profile() {
     try {
       const { error } = await supabase.auth.signOut({ scope: "local" });
       if (error) throw error;
+      if (signOut) await signOut();
     } catch (err) {
       Alert.alert("Logout Error", err.message);
     }
   };
 
   const getInitials = () => {
-    if (saved) {
-      return `${saved.name.charAt(0)}${saved.surname.charAt(0)}`;
+    if (saved?.userName) {
+      return saved.userName
+        .split(" ")
+        .filter(Boolean)
+        .map((part) => part[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase();
     }
-    return "JD";
+    return "DR";
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -106,18 +209,9 @@ export default function Profile() {
           <View style={styles.headerContent}>
             <View style={styles.profileCard}>
               <View style={styles.profileImageContainer}>
-                {saved ? (
-                  <View style={styles.profileImage}>
-                    <Text style={styles.initials}>{getInitials()}</Text>
-                  </View>
-                ) : (
-                  <Image
-                    source={{
-                      uri: "https://cdn-icons-png.flaticon.com/512/3135/3135715.png",
-                    }}
-                    style={styles.image}
-                  />
-                )}
+                <View style={styles.profileImage}>
+                  <Text style={styles.initials}>{getInitials()}</Text>
+                </View>
                 <TouchableOpacity style={styles.editIcon}>
                   <Feather name="edit-2" size={14} color="#FFFFFF" />
                 </TouchableOpacity>
@@ -125,7 +219,7 @@ export default function Profile() {
 
               <View style={styles.profileInfo}>
                 <Text style={styles.profileName}>
-                  {saved ? `${saved.name} ${saved.surname}` : "Mike Ngwenya"}
+                  {saved?.userName || "Driver"}
                 </Text>
                 <View style={styles.statusContainer}>
                   <View style={styles.statusDot} />
@@ -160,22 +254,11 @@ export default function Profile() {
               <Text style={styles.subtitle}>Update your personal information</Text>
 
               <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>First Name</Text>
+                <Text style={styles.inputLabel}>Username</Text>
                 <TextInput
-                  placeholder="Enter your first name"
-                  value={name}
-                  onChangeText={setName}
-                  style={styles.input}
-                  placeholderTextColor="#9CA3AF"
-                />
-              </View>
-
-              <View style={styles.inputContainer}>
-                <Text style={styles.inputLabel}>Surname</Text>
-                <TextInput
-                  placeholder="Enter your surname"
-                  value={surname}
-                  onChangeText={setSurname}
+                  placeholder="Enter your username"
+                  value={userName}
+                  onChangeText={setUserName}
                   style={styles.input}
                   placeholderTextColor="#9CA3AF"
                 />
@@ -189,6 +272,17 @@ export default function Profile() {
                   onChangeText={setPhone}
                   style={styles.input}
                   keyboardType="phone-pad"
+                  placeholderTextColor="#9CA3AF"
+                />
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.inputLabel}>License Number</Text>
+                <TextInput
+                  placeholder="Enter your license number"
+                  value={licenseNumber}
+                  onChangeText={setLicenseNumber}
+                  style={styles.input}
                   placeholderTextColor="#9CA3AF"
                 />
               </View>
@@ -209,28 +303,30 @@ export default function Profile() {
                 <TouchableOpacity
                   style={[styles.button, styles.cancelButton]}
                   onPress={handleCancel}
+                  disabled={saving}
                 >
                   <Text style={styles.cancelButtonText}>Cancel</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.button, styles.saveButton]}
+                  style={[styles.button, styles.saveButton, saving && { opacity: 0.7 }]}
                   onPress={handleSave}
+                  disabled={saving}
                 >
                   <Feather name="check" size={18} color="#FFFFFF" />
-                  <Text style={styles.buttonText}>Save Profile</Text>
+                  <Text style={styles.buttonText}>
+                    {saving ? "Saving..." : "Save Profile"}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </>
           ) : (
             <>
               <View style={styles.profileHeader}>
-                <Text style={styles.name}>
-                  {saved.name} {saved.surname}
-                </Text>
+                <Text style={styles.name}>{saved?.userName}</Text>
                 <View style={styles.ratingContainer}>
                   <Ionicons name="star" size={16} color="#F59E0B" />
-                  <Text style={styles.rating}>{rating}</Text>
+                  <Text style={styles.rating}>{rating} ⭐</Text>
                 </View>
               </View>
 
@@ -242,12 +338,12 @@ export default function Profile() {
 
                 <View style={styles.infoRow}>
                   <View style={styles.infoItem}>
-                    <Text style={styles.label}>Phone</Text>
-                    <Text style={styles.value}>{saved.phone}</Text>
+                    <Text style={styles.label}>Username</Text>
+                    <Text style={styles.value}>{saved?.userName}</Text>
                   </View>
                   <View style={styles.infoItem}>
                     <Text style={styles.label}>Email</Text>
-                    <Text style={styles.value}>{saved.email || "Not provided"}</Text>
+                    <Text style={styles.value}>{saved?.email}</Text>
                   </View>
                 </View>
               </View>
@@ -259,17 +355,17 @@ export default function Profile() {
                     size={18}
                     color="#3B82F6"
                   />
-                  <Text style={styles.sectionTitle}>Vehicle Info</Text>
+                  <Text style={styles.sectionTitle}>Driver Info</Text>
                 </View>
 
                 <View style={styles.infoRow}>
                   <View style={styles.infoItem}>
-                    <Text style={styles.label}>Vehicle</Text>
-                    <Text style={styles.value}>{vehicle}</Text>
+                    <Text style={styles.label}>Phone</Text>
+                    <Text style={styles.value}>{saved?.phone}</Text>
                   </View>
                   <View style={styles.infoItem}>
-                    <Text style={styles.label}>Plate</Text>
-                    <Text style={styles.value}>{plate}</Text>
+                    <Text style={styles.label}>License Number</Text>
+                    <Text style={styles.value}>{saved?.licenseNumber}</Text>
                   </View>
                 </View>
               </View>
@@ -287,7 +383,7 @@ export default function Profile() {
                   </View>
                   <View style={styles.infoItem}>
                     <Text style={styles.label}>Rating</Text>
-                    <Text style={styles.value}>{rating}</Text>
+                    <Text style={styles.value}>{rating} ⭐</Text>
                   </View>
                 </View>
               </View>
@@ -313,6 +409,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F3F4F6",
+  },
+  centered: {
+    justifyContent: "center",
+    alignItems: "center",
   },
   scrollView: {
     flex: 1,
@@ -350,13 +450,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "700",
     color: "#1E40AF",
-  },
-  image: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    borderWidth: 3,
-    borderColor: "#FFFFFF",
   },
   editIcon: {
     position: "absolute",

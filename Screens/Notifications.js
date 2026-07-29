@@ -16,39 +16,191 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../context/AuthContext";
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "http://localhost:5000";
+const OSRM_BASE_URL = "https://router.project-osrm.org";
 
-const typeMap = {
-  1: "Accident",
-  2: "Fog",
-  3: "Dangerous Conditions",
-  4: "Rain",
-  5: "Ice",
-  6: "Jam",
-  7: "Lane Closed",
-  8: "Road Closed",
-  9: "Road Works",
-  10: "Wind",
-  11: "Flooding",
-  14: "Broken Down Vehicle",
+const geocodeCache = new Map();
+
+const LOCATION_MAP = {
+  "-26.2041,28.0473": "Johannesburg",
+  "-25.7479,28.2293": "Pretoria",
+  "-26.1076,28.0550": "Sandton",
+  "-26.2708,28.1123": "Boksburg",
+  "-26.2274,28.1674": "Germiston",
+  "-26.1952,28.0340": "Braamfontein",
+  "-26.1766,28.0396": "Parktown",
+  "-26.1434,28.0105": "Randburg",
+  "-26.1036,28.0494": "Rivonia",
+  "-26.1367,28.0588": "Sunninghill",
 };
 
-function buildTrafficNotification(incident, index) {
-  const iconCategory = incident?.properties?.iconCategory ?? 0;
-  const label = typeMap[iconCategory] || "Traffic Alert";
-  const location = incident?.locationName || "Nearby";
-  const severity = incident?.properties?.magnitudeOfDelay || "";
+const getCachedLocation = (lat, lng) => {
+  const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+  
+  if (LOCATION_MAP[key]) {
+    return LOCATION_MAP[key];
+  }
+  
+  for (const [mapKey, mapValue] of Object.entries(LOCATION_MAP)) {
+    const [mapLat, mapLng] = mapKey.split(',').map(Number);
+    if (Math.abs(mapLat - lat) < 0.05 && Math.abs(mapLng - lng) < 0.05) {
+      return mapValue;
+    }
+  }
+  
+  return null;
+};
+
+const reverseGeocode = async (lat, lng) => {
+  const cacheKey = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+  
+  if (geocodeCache.has(cacheKey)) {
+    return geocodeCache.get(cacheKey);
+  }
+
+  const cachedLocation = getCachedLocation(lat, lng);
+  if (cachedLocation) {
+    geocodeCache.set(cacheKey, cachedLocation);
+    console.log('[Geocoding] Found in location map:', cachedLocation);
+    return cachedLocation;
+  }
+
+  const geocodingServices = [
+    {
+      name: 'Nominatim',
+      url: `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&accept-language=en`,
+      headers: {
+        'User-Agent': 'YourApp/1.0',
+      },
+      parser: (data) => {
+        if (data && data.display_name) {
+          const parts = data.display_name.split(',');
+          const address = data.address || {};
+          return address.road || address.suburb || address.neighbourhood || 
+                 address.city || address.town || address.village || 
+                 address.county || address.state || parts[0] || null;
+        }
+        return null;
+      }
+    },
+    {
+      name: 'BigDataCloud',
+      url: `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`,
+      headers: {},
+      parser: (data) => {
+        if (data && data.locality) {
+          return data.locality || data.city || data.principalSubdivision || null;
+        }
+        return null;
+      }
+    },
+  ];
+
+  for (const service of geocodingServices) {
+    try {
+      console.log(`[Geocoding] Trying ${service.name}...`);
+      
+      const response = await fetch(service.url, {
+        headers: service.headers,
+      });
+
+      if (!response.ok) {
+        console.log(`[Geocoding] ${service.name} returned ${response.status}`);
+        continue;
+      }
+
+      const data = await response.json();
+      const location = service.parser(data);
+      
+      if (location) {
+        let cleanLocation = location.trim();
+        if (cleanLocation.includes(',')) {
+          cleanLocation = cleanLocation.split(',')[0].trim();
+        }
+        
+        geocodeCache.set(cacheKey, cleanLocation);
+        console.log(`[Geocoding] ${service.name} found:`, cleanLocation);
+        return cleanLocation;
+      }
+    } catch (error) {
+      console.log(`[Geocoding] ${service.name} error:`, error.message);
+    }
+  }
+
+  const fallbackName = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  geocodeCache.set(cacheKey, fallbackName);
+  console.log('[Geocoding] Using fallback:', fallbackName);
+  return fallbackName;
+};
+
+function analyzeRouteForIssues(route, index) {
+  const duration = route?.duration || 0;
+  const distance = route?.distance || 0;
+  
+  const avgSpeed = (distance / 1000) / (duration / 3600);
+  
+
+  let condition = "Normal";
+  let severity = "";
+  
+  if (avgSpeed < 10 && avgSpeed > 0) {
+    condition = "Heavy Traffic Jam";
+    severity = "Severe - Speed under 10 km/h";
+  } else if (avgSpeed < 25) {
+    condition = "Moderate Congestion";
+    severity = "Moderate - Speed under 25 km/h";
+  } else if (avgSpeed < 40) {
+    condition = "Slow Traffic";
+    severity = "Mild - Speed under 40 km/h";
+  } else if (avgSpeed === 0) {
+    condition = "Road Closed / Standstill";
+    severity = "Critical - No movement detected";
+  }
 
   return {
-    id: `traffic-${incident?.properties?.id || index}`,
+    condition,
+    severity,
+    avgSpeed: avgSpeed.toFixed(1),
+    duration: Math.round(duration / 60),
+    distance: (distance / 1000).toFixed(1),
+  };
+}
+
+async function buildTrafficNotification(routeData, index, coordinates, startLocation, endLocation) {
+  const analysis = analyzeRouteForIssues(routeData, index);
+  
+  // Use provided location names or fallback to coordinates
+  const from = startLocation || `${coordinates[0][1].toFixed(4)}, ${coordinates[0][0].toFixed(4)}`;
+  const to = endLocation || `${coordinates[1][1].toFixed(4)}, ${coordinates[1][0].toFixed(4)}`;
+  
+  let message = "";
+  let title = "";
+  
+  if (analysis.condition === "Normal") {
+    title = `Route from ${from} to ${to} is clear`;
+    message = `Distance: ${analysis.distance}km, Estimated time: ${analysis.duration} minutes, Speed: ${analysis.avgSpeed}km/h`;
+  } else {
+    title = `${analysis.emoji} ${analysis.condition} on route from ${from} to ${to}`;
+    message = `${analysis.severity}. Distance: ${analysis.distance}km, Est. time: ${analysis.duration}min, Speed: ${analysis.avgSpeed}km/h`;
+  }
+
+  return {
+    id: `traffic-route-${Date.now()}-${index}`,
     category: "ROUTE & TRAFFIC",
-    title: `${label} near ${location}`,
-    message: severity ? `Severity: ${severity}` : "Live traffic update detected",
+    title: title,
+    message: message,
     time: "Just now",
-    icon: "traffic-light",
-    iconColor: "#3B82F6",
-    bg: "#DBEAFE",
+    icon: analysis.condition === "Normal" ? "check-circle" : "traffic-light",
+    iconColor: analysis.condition === "Normal" ? "#10B981" : "#3B82F6",
+    bg: analysis.condition === "Normal" ? "#D1FAE5" : "#DBEAFE",
     unread: true,
+    routeData: routeData,
+    from: from,
+    to: to,
+    condition: analysis.condition,
+    duration: analysis.duration,
+    distance: analysis.distance,
+    speed: analysis.avgSpeed,
+    emoji: analysis.emoji,
   };
 }
 
@@ -130,97 +282,246 @@ export default function Notifications() {
 
   const unreadCount = notifications.filter((n) => n.unread).length;
 
+  const [lastSpeechTime, setLastSpeechTime] = useState(0);
+
   const fetchTrafficUpdates = async () => {
     try {
-      const bbox = "28.0,-26.3,28.1,-26.2";
-      const response = await fetch(
-        `${API_BASE_URL}/api/traffic/incidents?bbox=${encodeURIComponent(bbox)}`
-      );
+      const coordinates = [
+        [28.0473, -26.2041], 
+        [28.2293, -25.7479], 
+      ];
+
+      console.log('[fetchTrafficUpdates] Geocoding locations...');
+      const startLocation = await reverseGeocode(coordinates[0][1], coordinates[0][0]);
+      const endLocation = await reverseGeocode(coordinates[1][1], coordinates[1][0]);
+      
+      console.log('[fetchTrafficUpdates] Locations:', { startLocation, endLocation });
+
+      const coordsString = coordinates
+        .map(coord => `${coord[0]},${coord[1]}`)
+        .join(';');
+      
+      const url = `${OSRM_BASE_URL}/route/v1/driving/${coordsString}?overview=false&steps=false&annotations=true`;
+      
+      console.log('[fetchTrafficUpdates] Fetching from OSRM:', url);
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
 
       const result = await response.json();
-      const incidents = result?.data?.incidents || [];
+      console.log('[fetchTrafficUpdates] OSRM Response received');
 
-      const trafficNotifications = incidents.map(buildTrafficNotification);
+      if (result.code === "Ok" && result.routes && result.routes.length > 0) {
+        const routes = result.routes;
+        console.log('[fetchTrafficUpdates] Number of routes found:', routes.length);
 
-      setNotifications((prev) => {
-        const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
-        return [...trafficNotifications, ...nonTraffic];
-      });
+        const trafficNotifications = [];
+        
+        for (let i = 0; i < routes.length; i++) {
+          const notification = await buildTrafficNotification(
+            routes[i], 
+            i, 
+            coordinates, 
+            startLocation, 
+            endLocation
+          );
+          trafficNotifications.push(notification);
+          
+          console.log(`[fetchTrafficUpdates] Route ${i + 1}:`, {
+            from: startLocation,
+            to: endLocation,
+            condition: notification.condition,
+            speed: notification.speed,
+            duration: notification.duration,
+            distance: notification.distance,
+          });
+        }
+
+        const firstRouteAnalysis = analyzeRouteForIssues(routes[0], 0);
+        if (firstRouteAnalysis.condition !== "Normal") {
+          const alternativeRoute = {
+            id: `traffic-alt-${Date.now()}`,
+            category: "ROUTE & TRAFFIC",
+            title: `🔄 Alternative route available with less traffic`,
+            message: `Suggested detour from ${startLocation} to ${endLocation}: ${(routes[0].distance / 1000 * 1.15).toFixed(1)}km, estimated ${Math.round(routes[0].duration / 60 * 1.2)} minutes (15% longer but less traffic)`,
+            time: "Just now",
+            icon: "map-marker-path",
+            iconColor: "#10B981",
+            bg: "#D1FAE5",
+            unread: true,
+            from: startLocation,
+            to: endLocation,
+          };
+          trafficNotifications.push(alternativeRoute);
+        }
+
+        console.log('[fetchTrafficUpdates] Final notifications:', trafficNotifications.length);
+
+        setNotifications((prev) => {
+          const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
+          const updated = [...trafficNotifications, ...nonTraffic];
+          
+          console.log('[fetchTrafficUpdates] Updated state:', {
+            total: updated.length,
+            traffic: trafficNotifications.length,
+            nonTraffic: nonTraffic.length
+          });
+          
+          return updated;
+        });
+
+        const now = Date.now();
+        if (now - lastSpeechTime > 5000) {
+          setLastSpeechTime(now);
+
+          for (let i = 0; i < trafficNotifications.length; i++) {
+            const alert = trafficNotifications[i];
+
+            await new Promise(resolve => setTimeout(resolve, i * 2000));
+            
+            Speech.speak(`${alert.title}. ${alert.message}`, {
+              rate: 0.9,
+              pitch: 1.0,
+              language: 'en',
+            });
+            
+            console.log('[Speech] Spoke alert:', alert.title);
+          }
+        }
+
+      } else {
+        console.log('[fetchTrafficUpdates] No routes found or API error:', result.code);
+
+        const startLocation = await reverseGeocode(coordinates[0][1], coordinates[0][0]);
+        const endLocation = await reverseGeocode(coordinates[1][1], coordinates[1][0]);
+        
+        const fallbackNotification = {
+          id: `traffic-fallback-${Date.now()}`,
+          category: "ROUTE & TRAFFIC",
+          title: `📍 Route update: ${startLocation} to ${endLocation}`,
+          message: "No route data available. Please check your connection.",
+          time: "Just now",
+          icon: "info",
+          iconColor: "#F59E0B",
+          bg: "#FEF3C7",
+          unread: true,
+          from: startLocation,
+          to: endLocation,
+        };
+        
+        setNotifications((prev) => {
+          const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
+          return [fallbackNotification, ...nonTraffic];
+        });
+
+        const now = Date.now();
+        if (now - lastSpeechTime > 5000) {
+          setLastSpeechTime(now);
+          Speech.speak(`Route update. ${fallbackNotification.title}`, {
+            rate: 0.9,
+            pitch: 1.0,
+          });
+        }
+      }
+
     } catch (error) {
-      console.log("[fetchTrafficUpdates] error:", error);
+      console.error('[fetchTrafficUpdates] Error:', error);
+      
+      try {
+        const coordinates = [
+          [28.0473, -26.2041],
+          [28.2293, -25.7479],
+        ];
+        const startLocation = await reverseGeocode(coordinates[0][1], coordinates[0][0]);
+        const endLocation = await reverseGeocode(coordinates[1][1], coordinates[1][0]);
+        
+        const errorNotification = {
+          id: `traffic-error-${Date.now()}`,
+          category: "ROUTE & TRAFFIC",
+          title: `⚠️ Route update unavailable: ${startLocation} to ${endLocation}`,
+          message: "Unable to fetch traffic data. Please try again later.",
+          time: "Just now",
+          icon: "alert-circle",
+          iconColor: "#EF4444",
+          bg: "#FEE2E2",
+          unread: true,
+          from: startLocation,
+          to: endLocation,
+        };
+        
+        setNotifications((prev) => {
+          const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
+          return [errorNotification, ...nonTraffic];
+        });
+      } catch (e) {
+        console.error('[fetchTrafficUpdates] Error creating fallback:', e);
+      }
     }
   };
 
   useEffect(() => {
-    const unread = notifications.filter((n) => n.unread);
-
-    if (unread.length > 0) {
-      unread.forEach((item, index) => {
-        setTimeout(() => {
-          Speech.speak(`${item.title}. ${item.message}`, {
-            rate: 0.95,
-          });
-        }, index * 3500);
-      });
-    }
-  }, []);
-
-  useEffect(() => {
     fetchTrafficUpdates();
-
     const interval = setInterval(fetchTrafficUpdates, 60000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    const newNotifications = [
-      {
-        id: Date.now() + 100,
-        category: "DELIVERIES",
-        title: "New delivery assigned",
-        message: "Johannesburg → Pretoria",
-        time: "Just now",
-        icon: "truck-fast",
-        iconColor: "#10B981",
-        bg: "#D1FAE5",
-        unread: true,
-      },
-      {
-        id: Date.now() + 101,
-        category: "ROUTE & TRAFFIC",
-        title: "Traffic alert",
-        message: "Heavy congestion on N1",
-        time: "Just now",
-        icon: "traffic-light",
-        iconColor: "#3B82F6",
-        bg: "#DBEAFE",
-        unread: true,
-      },
-    ];
+    let mockInterval = null;
+    
+    const addMockNotification = () => {
+      const mockNotifications = [
+        {
+          category: "DELIVERIES",
+          title: "📦 New delivery assigned",
+          message: "Johannesburg → Pretoria • Expected time: 45 min",
+          icon: "truck-fast",
+          iconColor: "#10B981",
+          bg: "#D1FAE5",
+        },
+        {
+          category: "FUEL ALERTS",
+          title: "⛽ Fuel price update",
+          message: "Price decreased by R0.15 at nearest station",
+          icon: "gas-station",
+          iconColor: "#F59E0B",
+          bg: "#FEF3C7",
+        },
+      ];
 
-    let i = 0;
-
-    const interval = setInterval(() => {
-      if (i >= newNotifications.length) {
-        clearInterval(interval);
-        return;
-      }
-
-      const item = newNotifications[i];
+      const randomIndex = Math.floor(Math.random() * mockNotifications.length);
+      const mock = mockNotifications[randomIndex];
+      
       const uniqueItem = {
-        ...item,
-        id: Date.now() + i + 200,
+        ...mock,
+        id: Date.now() + Math.random() * 1000,
+        time: "Just now",
+        unread: true,
       };
 
       setNotifications((prev) => [uniqueItem, ...prev]);
+      
+      Speech.speak(`${mock.title}. ${mock.message}`, {
+        rate: 0.9,
+        pitch: 1.0,
+      });
+    };
 
-      Speech.speak(`${item.title}. ${item.message}`);
+    mockInterval = setInterval(() => {
+      const recentTraffic = notifications.some(n => 
+        n.category === "ROUTE & TRAFFIC" && 
+        n.time === "Just now"
+      );
+      
+      if (!recentTraffic) {
+        addMockNotification();
+      }
+    }, 120000);
 
-      i++;
-    }, 10000);
-
-    return () => clearInterval(interval);
-  }, []);
+    return () => clearInterval(mockInterval);
+  }, [notifications]);
 
   const markAllRead = () => {
     setNotifications((prev) =>
@@ -288,15 +589,32 @@ export default function Notifications() {
 
             <View style={styles.cardContent}>
               <View style={styles.titleRow}>
-                <Text style={styles.title} numberOfLines={2}>
+                <Text style={styles.title} numberOfLines={3}>
                   {item.title}
                 </Text>
                 {item.unread && <View style={styles.unreadDot} />}
               </View>
 
-              <Text style={styles.message} numberOfLines={2}>
+              <Text style={styles.message} numberOfLines={3}>
                 {item.message}
               </Text>
+
+              {item.from && item.to && (
+                <View style={styles.locationContainer}>
+                  <Feather name="map-pin" size={12} color="#9CA3AF" />
+                  <Text style={styles.locationText}>
+                    {item.from} → {item.to}
+                  </Text>
+                </View>
+              )}
+
+              {item.duration && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailText}>
+                    ⏱ {item.duration} min • {item.distance} km • {item.speed} km/h
+                  </Text>
+                </View>
+              )}
 
               <View style={styles.timeContainer}>
                 <Feather name="clock" size={12} color="#9CA3AF" />
@@ -513,12 +831,32 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: "#3B82F6",
     marginLeft: 8,
+    flexShrink: 0,
   },
   message: {
     color: "#6B7280",
     marginTop: 3,
     fontSize: 13,
     lineHeight: 18,
+  },
+  locationContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    gap: 4,
+  },
+  locationText: {
+    color: "#4B5563",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  detailRow: {
+    marginTop: 4,
+  },
+  detailText: {
+    color: "#6B7280",
+    fontSize: 11,
+    fontWeight: "400",
   },
   timeContainer: {
     flexDirection: "row",
