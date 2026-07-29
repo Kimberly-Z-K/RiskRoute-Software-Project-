@@ -1,36 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Truck,
-  MapPin,
-  AlertCircle,
-  CheckCircle,
-  AlertTriangle,
-  Search,
-} from 'lucide-react';
+import { Truck, Search } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
-
-const statusMeta = {
-  'on-time': {
-    label: 'On time',
-    tone: 'text-emerald-700 bg-emerald-50 ring-emerald-200',
-    icon: CheckCircle,
-  },
-  delayed: {
-    label: 'Delayed',
-    tone: 'text-amber-700 bg-amber-50 ring-amber-200',
-    icon: AlertCircle,
-  },
-  'at-risk': {
-    label: 'At risk',
-    tone: 'text-rose-700 bg-rose-50 ring-rose-200',
-    icon: AlertTriangle,
-  },
-  unknown: {
-    label: 'Unknown',
-    tone: 'text-slate-600 bg-slate-100 ring-slate-200',
-    icon: Truck,
-  },
-};
 
 export default function VehicleList() {
   const [vehicles, setVehicles] = useState([]);
@@ -52,7 +22,7 @@ export default function VehicleList() {
       try {
         const vehiclesRes = await supabase
           .from('vehicles')
-          .select('vehicle_id, registration_number, status, current_location, driver_id')
+          .select('vehicle_id, registration_number, driver_id')
           .order('vehicle_id', { ascending: true });
 
         const driversRes = await supabase
@@ -67,8 +37,6 @@ export default function VehicleList() {
           (vehiclesRes.data || []).map((row) => ({
             id: row.vehicle_id,
             registrationNumber: row.registration_number || '',
-            status: row.status || 'unknown',
-            currentLocation: row.current_location || 'Unknown location',
             driverId: row.driver_id || '',
           }))
         );
@@ -96,7 +64,6 @@ export default function VehicleList() {
       const matchesSearch =
         String(vehicle.id).toLowerCase().includes(q) ||
         (vehicle.registrationNumber || '').toLowerCase().includes(q) ||
-        (vehicle.currentLocation || '').toLowerCase().includes(q) ||
         driverName.toLowerCase().includes(q);
 
       const assigned = Boolean(vehicle.driverId);
@@ -131,9 +98,16 @@ export default function VehicleList() {
     unassigned: vehicles.filter((v) => !v.driverId).length,
   };
 
-  const handleAssignDriver = async (vehicleId, driverId) => {
+  const updateDriver = async (vehicleId, driverId) => {
+    const previousVehicle = vehicles.find((v) => v.id === vehicleId);
+    const previousDriverId = previousVehicle?.driverId || '';
+
     setSavingId(vehicleId);
     setError('');
+
+    setVehicles((prev) =>
+      prev.map((v) => (v.id === vehicleId ? { ...v, driverId: driverId || '' } : v))
+    );
 
     try {
       const { error: updateError } = await supabase
@@ -142,13 +116,12 @@ export default function VehicleList() {
         .eq('vehicle_id', vehicleId);
 
       if (updateError) throw updateError;
-
+    } catch (err) {
       setVehicles((prev) =>
         prev.map((v) =>
-          v.id === vehicleId ? { ...v, driverId: driverId || '' } : v
+          v.id === vehicleId ? { ...v, driverId: previousDriverId } : v
         )
       );
-    } catch (err) {
       setError(err.message || 'Failed to update vehicle');
     } finally {
       setSavingId(null);
@@ -207,7 +180,7 @@ export default function VehicleList() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search vehicle, registration, location, or driver"
+            placeholder="Search vehicle, registration, or driver"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:bg-white"
@@ -233,9 +206,6 @@ export default function VehicleList() {
                   Vehicle
                 </th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Details
-                </th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Driver
                 </th>
               </tr>
@@ -243,11 +213,10 @@ export default function VehicleList() {
 
             <tbody className="divide-y divide-slate-100 bg-white">
               {visibleVehicles.map((vehicle) => {
-                const meta = statusMeta[vehicle.status] || statusMeta.unknown;
-                const StatusIcon = meta.icon;
                 const selectedDriver = drivers.find(
                   (d) => String(d.driver_id) === String(vehicle.driverId)
                 );
+                const isAssigned = Boolean(vehicle.driverId);
 
                 return (
                   <tr key={vehicle.id} className="hover:bg-slate-50">
@@ -258,7 +227,7 @@ export default function VehicleList() {
                         </div>
                         <div>
                           <div className="text-sm font-medium text-slate-900">
-                            Vehicle {vehicle.id}
+                            Vehicle {vehicle.registration_number}
                           </div>
                           <div className="text-sm text-slate-500">
                             {vehicle.registrationNumber || 'N/A'}
@@ -268,40 +237,41 @@ export default function VehicleList() {
                     </td>
 
                     <td className="px-5 py-4 align-middle">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ring-1 ${meta.tone}`}
-                        >
-                          <StatusIcon className="h-3 w-3" />
-                          {meta.label}
-                        </span>
-
-                        <span className="inline-flex items-center gap-1 text-sm text-slate-500">
-                          <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                          {vehicle.currentLocation}
-                        </span>
-                      </div>
-                    </td>
-
-                    <td className="px-5 py-4 align-middle">
                       <div className="flex items-center gap-3">
-                        <span className="min-w-[110px] text-sm text-slate-600">
-                          {selectedDriver ? selectedDriver.driver_username : 'Unassigned'}
-                        </span>
+                        {!isAssigned ? (
+                          <select
+                            value={vehicle.driverId || ''}
+                            onChange={(e) => updateDriver(vehicle.id, e.target.value)}
+                            disabled={savingId === vehicle.id}
+                            className="w-full max-w-[220px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <option value="">Assign driver</option>
+                            {drivers.map((driver) => (
+                              <option key={driver.driver_id} value={driver.driver_id}>
+                                {driver.driver_username}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <>
+                            <span className="min-w-[140px] text-sm text-slate-600">
+                              {selectedDriver ? selectedDriver.driver_username : 'Assigned'}
+                            </span>
 
-                        <select
-                          value={vehicle.driverId || ''}
-                          onChange={(e) => handleAssignDriver(vehicle.id, e.target.value)}
-                          disabled={savingId === vehicle.id}
-                          className="w-full max-w-[200px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <option value="">Unassigned</option>
-                          {drivers.map((driver) => (
-                            <option key={driver.driver_id} value={driver.driver_id}>
-                              {driver.driver_username}
-                            </option>
-                          ))}
-                        </select>
+                            <button
+                              type="button"
+                              onClick={() => updateDriver(vehicle.id, '')}
+                              disabled={savingId === vehicle.id}
+                              className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Unassign
+                            </button>
+                          </>
+                        )}
+
+                        {savingId === vehicle.id && (
+                          <span className="text-xs text-slate-500">Saving...</span>
+                        )}
                       </div>
                     </td>
                   </tr>

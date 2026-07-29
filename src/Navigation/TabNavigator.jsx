@@ -5,7 +5,7 @@ import Home from "../../Screens/index";
 import Profile from "../../Screens/Profile";
 import Location from "../../Screens/Location";
 import Notifications from "../../Screens/Notifications";
-import FuelScreen from "../../Screens/fuel";
+import FuelScreen from "../../Screens/fuel"; 
 
 const Tab = createBottomTabNavigator();
 
@@ -15,7 +15,6 @@ export default function TabNavigator() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-
         tabBarStyle: {
           position: "absolute",
           bottom: 20,
@@ -25,17 +24,14 @@ export default function TabNavigator() {
           backgroundColor: "#fcf6f6",
           borderRadius: 70,
           height: 65,
-
           shadowColor: "#000",
           shadowOpacity: 0.25,
           shadowRadius: 30,
           shadowOffset: { width: 0, height: 5 },
-
           borderTopWidth: 0,
         },
       }}
     >
-
       {/* HOME */}
       <Tab.Screen
         name="Home"
@@ -66,9 +62,9 @@ export default function TabNavigator() {
         }}
       />
 
-       {/* fuel*/}
+      {/* FUEL */}
       <Tab.Screen
-        name="FuelScreen"
+        name="Fuel"
         component={FuelScreen}
         options={{
           tabBarIcon: ({ focused }) => (
@@ -80,7 +76,6 @@ export default function TabNavigator() {
           ),
         }}
       />
-
 
       {/* NOTIFICATIONS */}
       <Tab.Screen
@@ -111,7 +106,6 @@ export default function TabNavigator() {
           ),
         }}
       />
-
     </Tab.Navigator>
   );
 }

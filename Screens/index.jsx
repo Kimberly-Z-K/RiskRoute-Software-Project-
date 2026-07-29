@@ -1,4 +1,4 @@
-import React, { useEffect,  useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -26,9 +26,9 @@ const RiskRouteScreen = ({ navigation }) => {
 
   const { user, session } = useAuth();
 
- useEffect(() => {
-  console.log('[Home screen AUTH]', !!user);
-}, [user])
+  useEffect(() => {
+    console.log('[Home screen AUTH]', !!user);
+  }, [user]);
 
   return (
     <LinearGradient colors={["#d5d6e0", "#fff"]} style={styles.container}>
@@ -38,14 +38,12 @@ const RiskRouteScreen = ({ navigation }) => {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
-
-       {/* overwiew buttons */}
+        {/* Overview buttons */}
         <View style={styles.overviewCard}>
           <Text style={styles.heading}> Today's Overview</Text>
 
           {/* Action Buttons */}
           <View style={styles.actionRow}>
-
             <TouchableOpacity
               style={styles.actionBtn}
               onPress={() => navigation.navigate("Location")}
@@ -54,7 +52,10 @@ const RiskRouteScreen = ({ navigation }) => {
               <Text style={styles.actionText}>Navigate</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionBtn}>
+            <TouchableOpacity 
+              style={styles.actionBtn}
+              onPress={() => navigation.navigate("Fuel")}
+            >
               <Ionicons name="car" size={18} color="#fff" />
               <Text style={styles.actionText}>Fuel</Text>
             </TouchableOpacity>
@@ -64,16 +65,17 @@ const RiskRouteScreen = ({ navigation }) => {
               <Text style={styles.actionText}>Support</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionBtn}>
+            <TouchableOpacity 
+              style={styles.actionBtn}
+              onPress={() => navigation.navigate("Notifications")}
+            >
               <Ionicons name="notifications" size={18} color="#fff" />
               <Text style={styles.actionText}>Alerts</Text>
             </TouchableOpacity>
-
           </View>
 
           {/* Stats Grid */}
           <View style={styles.statsGrid}>
-
             <View style={styles.statBox}>
               <Text style={styles.statTitle}>Trips Done</Text>
               <Text style={styles.statValue}>12 / 15</Text>
@@ -93,7 +95,6 @@ const RiskRouteScreen = ({ navigation }) => {
               <Text style={styles.statTitle}>Deliveries</Text>
               <Text style={styles.statValue}>18 / 25</Text>
             </View>
-
           </View>
         </View>
 
@@ -114,51 +115,45 @@ const RiskRouteScreen = ({ navigation }) => {
           </View>
         </View>
 
-        
+        {/* Vehicle Status */}
+        <View style={styles.vehicleCard}>
+          <Text style={styles.vehicleTitle}> Vehicle Status</Text>
 
-         {/* Vehicle Status */}
-<View style={styles.vehicleCard}>
+          <Text style={styles.vehicleName}>Toyota Quantum</Text>
+          <Text style={styles.vehicleSub}>2023 · Diesel · GPS Active</Text>
 
-  <Text style={styles.vehicleTitle}> Vehicle Status</Text>
+          {/* Number Plate */}
+          <View style={styles.plateOuter}>
+            <Text style={styles.plateText}>GP 22-34 FM</Text>
+          </View>
 
-  <Text style={styles.vehicleName}>Toyota Quantum</Text>
-  <Text style={styles.vehicleSub}>2023 · Diesel · GPS Active</Text>
+          {/* Fuel */}
+          <Text style={styles.label}>Fuel</Text>
+          <View style={styles.barBackground}>
+            <View style={[styles.barFill, { width: "38%", backgroundColor: "#f4a300" }]} />
+          </View>
+          <Text style={styles.percentText}>38%</Text>
 
-  {/* Number Plate */}
-  <View style={styles.plateOuter}>
-    <Text style={styles.plateText}>GP 22-34 FM</Text>
-  </View>
+          {/* Engine */}
+          <Text style={styles.label}>Engine</Text>
+          <View style={styles.barBackground}>
+            <View style={[styles.barFill, { width: "90%", backgroundColor: "#2ecc71" }]} />
+          </View>
+          <Text style={styles.percentText}>Good</Text>
 
-  {/* Fuel */}
-  <Text style={styles.label}>Fuel</Text>
-  <View style={styles.barBackground}>
-    <View style={[styles.barFill, { width: "38%", backgroundColor: "#f4a300" }]} />
-  </View>
-  <Text style={styles.percentText}>38%</Text>
-
-  {/* Engine */}
-  <Text style={styles.label}>Engine</Text>
-  <View style={styles.barBackground}>
-    <View style={[styles.barFill, { width: "90%", backgroundColor: "#2ecc71" }]} />
-  </View>
-  <Text style={styles.percentText}>Good</Text>
-
-  {/* Tyres */}
-  <Text style={styles.label}>Tyres</Text>
-  <View style={styles.barBackground}>
-    <View style={[styles.barFill, { width: "75%", backgroundColor: "#3498db" }]} />
-  </View>
-  <Text style={styles.percentText}>75%</Text>
-
-</View>
-
+          {/* Tyres */}
+          <Text style={styles.label}>Tyres</Text>
+          <View style={styles.barBackground}>
+            <View style={[styles.barFill, { width: "75%", backgroundColor: "#3498db" }]} />
+          </View>
+          <Text style={styles.percentText}>75%</Text>
+        </View>
       </ScrollView>
     </LinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-
   container: { 
     flex: 1, 
     marginBottom: 80,
@@ -281,8 +276,6 @@ const styles = StyleSheet.create({
     marginLeft: 5,
   },
 
-  
-
   overviewCard: {
     backgroundColor: "#0A1F44",
     borderRadius: 20,
@@ -337,78 +330,77 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginTop: 5,
   },
+
   vehicleCard: {
-  backgroundColor: "#fff",
-  borderRadius: 18,
-  padding: 16,
-  marginBottom: 16,
-},
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 16,
+  },
 
-vehicleTitle: {
-  color: "#0A1F44",
-  fontSize: 16,
-  fontWeight: "bold",
-  marginBottom: 10,
-},
+  vehicleTitle: {
+    color: "#0A1F44",
+    fontSize: 16,
+    fontWeight: "bold",
+    marginBottom: 10,
+  },
 
-vehicleName: {
-  color: "#0B1F3A",
-  fontSize: 18,
-  fontWeight: "bold",
-},
+  vehicleName: {
+    color: "#0B1F3A",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
 
-vehicleSub: {
-  color: "#666",
-  fontSize: 13,
-  marginBottom: 10,
-},
+  vehicleSub: {
+    color: "#666",
+    fontSize: 13,
+    marginBottom: 10,
+  },
 
-/* number plate styling*/
-plateOuter: {
-  borderWidth: 2,
-  borderColor: "#0b60f4",
-  backgroundColor: "#fff",
-  paddingVertical: 6,
-  paddingHorizontal: 12,
-  alignSelf: "flex-start",
-  borderRadius: 6,
-  marginBottom: 14,
-},
+  /* number plate styling*/
+  plateOuter: {
+    borderWidth: 2,
+    borderColor: "#0b60f4",
+    backgroundColor: "#fff",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignSelf: "flex-start",
+    borderRadius: 6,
+    marginBottom: 14,
+  },
 
-plateText: {
-  color: "#0b60f4",
-  fontWeight: "bold",
-  letterSpacing: 1,
-},
+  plateText: {
+    color: "#0b60f4",
+    fontWeight: "bold",
+    letterSpacing: 1,
+  },
 
+  label: {
+    color: "#0B1F3A",
+    fontSize: 12,
+    marginTop: 8,
+    marginBottom: 4,
+    fontWeight: "600",
+  },
 
-label: {
-  color: "#0B1F3A",
-  fontSize: 12,
-  marginTop: 8,
-  marginBottom: 4,
-  fontWeight: "600",
-},
+  barBackground: {
+    height: 8,
+    width: "100%",
+    backgroundColor: "#E6EAF0",
+    borderRadius: 10,
+    overflow: "hidden",
+  },
 
+  barFill: {
+    height: "100%",
+    borderRadius: 10,
+  },
 
-barBackground: {
-  height: 8,
-  width: "100%",
-  backgroundColor: "#E6EAF0",
-  borderRadius: 10,
-  overflow: "hidden",
-},
-
-barFill: {
-  height: "100%",
-  borderRadius: 10,
-},
-
-percentText: {
-  fontSize: 12,
-  color: "#555",
-  marginTop: 4,
-},
+  percentText: {
+    fontSize: 12,
+    color: "#555",
+    marginTop: 4,
+  },
 });
 
 export default RiskRouteScreen;
