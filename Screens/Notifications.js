@@ -16,10 +16,8 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../context/AuthContext";
 
-// Use OSRM API directly
 const OSRM_BASE_URL = "https://router.project-osrm.org";
 
-// Cache for geocoding results to avoid repeated API calls
 const geocodeCache = new Map();
 
 // Hardcoded location names for common coordinates (fallback)
@@ -36,16 +34,13 @@ const LOCATION_MAP = {
   "-26.1367,28.0588": "Sunninghill",
 };
 
-// Function to get location name from cache or map
 const getCachedLocation = (lat, lng) => {
   const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
   
-  // Check exact match first
   if (LOCATION_MAP[key]) {
     return LOCATION_MAP[key];
   }
   
-  // Check with less precision (within 0.05 degrees)
   for (const [mapKey, mapValue] of Object.entries(LOCATION_MAP)) {
     const [mapLat, mapLng] = mapKey.split(',').map(Number);
     if (Math.abs(mapLat - lat) < 0.05 && Math.abs(mapLng - lng) < 0.05) {
@@ -56,16 +51,13 @@ const getCachedLocation = (lat, lng) => {
   return null;
 };
 
-// Try multiple geocoding services with fallbacks
 const reverseGeocode = async (lat, lng) => {
   const cacheKey = `${lat.toFixed(6)},${lng.toFixed(6)}`;
   
-  // Check cache first
   if (geocodeCache.has(cacheKey)) {
     return geocodeCache.get(cacheKey);
   }
 
-  // Check hardcoded location map first (fastest)
   const cachedLocation = getCachedLocation(lat, lng);
   if (cachedLocation) {
     geocodeCache.set(cacheKey, cachedLocation);
@@ -124,7 +116,6 @@ const reverseGeocode = async (lat, lng) => {
       const location = service.parser(data);
       
       if (location) {
-        // Clean up the location name
         let cleanLocation = location.trim();
         if (cleanLocation.includes(',')) {
           cleanLocation = cleanLocation.split(',')[0].trim();
@@ -136,11 +127,9 @@ const reverseGeocode = async (lat, lng) => {
       }
     } catch (error) {
       console.log(`[Geocoding] ${service.name} error:`, error.message);
-      // Continue to next service
     }
   }
 
-  // Final fallback: return coordinates as string
   const fallbackName = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   geocodeCache.set(cacheKey, fallbackName);
   console.log('[Geocoding] Using fallback:', fallbackName);
@@ -152,39 +141,32 @@ function analyzeRouteForIssues(route, index) {
   const duration = route?.duration || 0;
   const distance = route?.distance || 0;
   
-  // Calculate average speed in km/h
   const avgSpeed = (distance / 1000) / (duration / 3600);
   
-  // Determine traffic conditions based on speed
+
   let condition = "Normal";
   let severity = "";
-  let emoji = "✅";
   
   if (avgSpeed < 10 && avgSpeed > 0) {
     condition = "Heavy Traffic Jam";
     severity = "Severe - Speed under 10 km/h";
-    emoji = "🔴";
   } else if (avgSpeed < 25) {
     condition = "Moderate Congestion";
     severity = "Moderate - Speed under 25 km/h";
-    emoji = "🟡";
   } else if (avgSpeed < 40) {
     condition = "Slow Traffic";
     severity = "Mild - Speed under 40 km/h";
-    emoji = "🟠";
   } else if (avgSpeed === 0) {
     condition = "Road Closed / Standstill";
     severity = "Critical - No movement detected";
-    emoji = "⛔";
   }
 
   return {
     condition,
     severity,
     avgSpeed: avgSpeed.toFixed(1),
-    duration: Math.round(duration / 60), // in minutes
-    distance: (distance / 1000).toFixed(1), // in km
-    emoji,
+    duration: Math.round(duration / 60),
+    distance: (distance / 1000).toFixed(1),
   };
 }
 
@@ -195,12 +177,11 @@ async function buildTrafficNotification(routeData, index, coordinates, startLoca
   const from = startLocation || `${coordinates[0][1].toFixed(4)}, ${coordinates[0][0].toFixed(4)}`;
   const to = endLocation || `${coordinates[1][1].toFixed(4)}, ${coordinates[1][0].toFixed(4)}`;
   
-  // Different message based on condition
   let message = "";
   let title = "";
   
   if (analysis.condition === "Normal") {
-    title = `✅ Route from ${from} to ${to} is clear`;
+    title = `Route from ${from} to ${to} is clear`;
     message = `Distance: ${analysis.distance}km, Estimated time: ${analysis.duration} minutes, Speed: ${analysis.avgSpeed}km/h`;
   } else {
     title = `${analysis.emoji} ${analysis.condition} on route from ${from} to ${to}`;
