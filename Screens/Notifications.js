@@ -20,7 +20,6 @@ const OSRM_BASE_URL = "https://router.project-osrm.org";
 
 const geocodeCache = new Map();
 
-// Hardcoded location names for common coordinates (fallback)
 const LOCATION_MAP = {
   "-26.2041,28.0473": "Johannesburg",
   "-25.7479,28.2293": "Pretoria",
@@ -65,14 +64,12 @@ const reverseGeocode = async (lat, lng) => {
     return cachedLocation;
   }
 
-  // Try multiple geocoding services
   const geocodingServices = [
-    // Service 1: OpenStreetMap Nominatim (Free, no API key required)
     {
       name: 'Nominatim',
       url: `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&accept-language=en`,
       headers: {
-        'User-Agent': 'YourApp/1.0', // Required by Nominatim
+        'User-Agent': 'YourApp/1.0',
       },
       parser: (data) => {
         if (data && data.display_name) {
@@ -85,7 +82,6 @@ const reverseGeocode = async (lat, lng) => {
         return null;
       }
     },
-    // Service 2: BigDataCloud (Free, no API key required)
     {
       name: 'BigDataCloud',
       url: `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`,
@@ -109,7 +105,7 @@ const reverseGeocode = async (lat, lng) => {
 
       if (!response.ok) {
         console.log(`[Geocoding] ${service.name} returned ${response.status}`);
-        continue; // Try next service
+        continue;
       }
 
       const data = await response.json();
@@ -136,7 +132,6 @@ const reverseGeocode = async (lat, lng) => {
   return fallbackName;
 };
 
-// Function to check for traffic-like conditions based on route duration
 function analyzeRouteForIssues(route, index) {
   const duration = route?.duration || 0;
   const distance = route?.distance || 0;
@@ -287,26 +282,21 @@ export default function Notifications() {
 
   const unreadCount = notifications.filter((n) => n.unread).length;
 
-  // Track last speech time to avoid spamming
   const [lastSpeechTime, setLastSpeechTime] = useState(0);
 
   const fetchTrafficUpdates = async () => {
     try {
-      // Define coordinates for a route (example: Johannesburg to Pretoria)
-      // Format: [longitude, latitude]
       const coordinates = [
-        [28.0473, -26.2041], // Johannesburg
-        [28.2293, -25.7479], // Pretoria
+        [28.0473, -26.2041], 
+        [28.2293, -25.7479], 
       ];
 
-      // Geocode start and end locations
       console.log('[fetchTrafficUpdates] Geocoding locations...');
       const startLocation = await reverseGeocode(coordinates[0][1], coordinates[0][0]);
       const endLocation = await reverseGeocode(coordinates[1][1], coordinates[1][0]);
       
       console.log('[fetchTrafficUpdates] Locations:', { startLocation, endLocation });
 
-      // Build OSRM route URL
       const coordsString = coordinates
         .map(coord => `${coord[0]},${coord[1]}`)
         .join(';');
@@ -324,12 +314,10 @@ export default function Notifications() {
       const result = await response.json();
       console.log('[fetchTrafficUpdates] OSRM Response received');
 
-      // Check if route exists
       if (result.code === "Ok" && result.routes && result.routes.length > 0) {
         const routes = result.routes;
         console.log('[fetchTrafficUpdates] Number of routes found:', routes.length);
 
-        // Build notifications from route data with location names
         const trafficNotifications = [];
         
         for (let i = 0; i < routes.length; i++) {
@@ -352,7 +340,6 @@ export default function Notifications() {
           });
         }
 
-        // Add simulated alternative route suggestion if traffic detected
         const firstRouteAnalysis = analyzeRouteForIssues(routes[0], 0);
         if (firstRouteAnalysis.condition !== "Normal") {
           const alternativeRoute = {
@@ -373,7 +360,6 @@ export default function Notifications() {
 
         console.log('[fetchTrafficUpdates] Final notifications:', trafficNotifications.length);
 
-        // Update notifications state
         setNotifications((prev) => {
           const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
           const updated = [...trafficNotifications, ...nonTraffic];
@@ -387,15 +373,13 @@ export default function Notifications() {
           return updated;
         });
 
-        // SPEECH FOR EVERY UPDATE - Speak all traffic alerts
         const now = Date.now();
-        if (now - lastSpeechTime > 5000) { // Prevent spamming (min 5 seconds between speech)
+        if (now - lastSpeechTime > 5000) {
           setLastSpeechTime(now);
-          
-          // Speak all traffic alerts one by one
+
           for (let i = 0; i < trafficNotifications.length; i++) {
             const alert = trafficNotifications[i];
-            // Add a slight delay between each speech
+
             await new Promise(resolve => setTimeout(resolve, i * 2000));
             
             Speech.speak(`${alert.title}. ${alert.message}`, {
@@ -410,7 +394,7 @@ export default function Notifications() {
 
       } else {
         console.log('[fetchTrafficUpdates] No routes found or API error:', result.code);
-        // Fallback notification with location names
+
         const startLocation = await reverseGeocode(coordinates[0][1], coordinates[0][0]);
         const endLocation = await reverseGeocode(coordinates[1][1], coordinates[1][0]);
         
@@ -433,7 +417,6 @@ export default function Notifications() {
           return [fallbackNotification, ...nonTraffic];
         });
 
-        // Speak fallback notification
         const now = Date.now();
         if (now - lastSpeechTime > 5000) {
           setLastSpeechTime(now);
@@ -447,7 +430,6 @@ export default function Notifications() {
     } catch (error) {
       console.error('[fetchTrafficUpdates] Error:', error);
       
-      // Create error notification with location names if possible
       try {
         const coordinates = [
           [28.0473, -26.2041],
@@ -480,18 +462,15 @@ export default function Notifications() {
     }
   };
 
-  // Fetch traffic updates on mount and every 60 seconds
   useEffect(() => {
     fetchTrafficUpdates();
     const interval = setInterval(fetchTrafficUpdates, 60000);
     return () => clearInterval(interval);
   }, []);
 
-  // Mock notifications for other categories
   useEffect(() => {
     let mockInterval = null;
     
-    // Add mock notifications occasionally
     const addMockNotification = () => {
       const mockNotifications = [
         {
@@ -512,7 +491,6 @@ export default function Notifications() {
         },
       ];
 
-      // Pick a random mock notification
       const randomIndex = Math.floor(Math.random() * mockNotifications.length);
       const mock = mockNotifications[randomIndex];
       
@@ -525,16 +503,13 @@ export default function Notifications() {
 
       setNotifications((prev) => [uniqueItem, ...prev]);
       
-      // Speak the mock notification
       Speech.speak(`${mock.title}. ${mock.message}`, {
         rate: 0.9,
         pitch: 1.0,
       });
     };
 
-    // Add a mock notification every 2 minutes (but only if no traffic alerts recently)
     mockInterval = setInterval(() => {
-      // Check if there are recent traffic alerts (in the last 30 seconds)
       const recentTraffic = notifications.some(n => 
         n.category === "ROUTE & TRAFFIC" && 
         n.time === "Just now"
@@ -543,7 +518,7 @@ export default function Notifications() {
       if (!recentTraffic) {
         addMockNotification();
       }
-    }, 120000); // Every 2 minutes
+    }, 120000);
 
     return () => clearInterval(mockInterval);
   }, [notifications]);

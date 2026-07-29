@@ -22,7 +22,6 @@ import { supabase } from "../lib/supabase";
 
 const { width, height } = Dimensions.get("window");
 
-// Constants
 const CONFIG = {
   TANK_CAPACITY: 70,
   FUEL_CONSUMPTION: 8,
@@ -34,10 +33,9 @@ const CONFIG = {
   DRIVING_DISTANCE_CANDIDATES: 5,
   OSRM_BASE_URL: "https://router.project-osrm.org",
   OVERPASS_API_URL: "https://overpass-api.de/api/interpreter",
-  STATIONS_ALONG_ROUTE: 10, // Number of stations to find along route
+  STATIONS_ALONG_ROUTE: 10,
 };
 
-// Mock fuel stations for when API fails
 const MOCK_FUEL_STATIONS = [
   { id: 1, name: "Shell Garage", latitude: -26.1076, longitude: 28.0567 },
   { id: 2, name: "BP Service Station", latitude: -26.1100, longitude: 28.0600 },
@@ -46,7 +44,6 @@ const MOCK_FUEL_STATIONS = [
   { id: 5, name: "Total Energies", latitude: -26.1080, longitude: 28.0620 },
 ];
 
-// Utility Functions
 const toCoord = (p) => {
   if (!p || p.lat == null || p.lng == null) return null;
   return {
@@ -97,7 +94,6 @@ export default function LocationScreen({ route }) {
   const tripId = route?.params?.tripId;
 
   const [state, setState] = useState({
-    // Location & Route
     location: null,
     destination: null,
     routeCoords: [],
@@ -106,7 +102,6 @@ export default function LocationScreen({ route }) {
     fullMap: false,
     screenReady: false,
     
-    // Trip Data
     start: null,
     stops: [],
     startAddress: "",
@@ -115,7 +110,6 @@ export default function LocationScreen({ route }) {
     routeLoading: false,
     tripLoaded: false,
     
-    // Fuel Management
     fuelPercent: 20,
     fuelWarning: false,
     fuelStations: [],
@@ -206,7 +200,6 @@ export default function LocationScreen({ route }) {
     }, durationMs);
   }, [updateState]);
 
-  // ============ LOCATION FUNCTIONS ============
   const getLocation = useCallback(async () => {
     try {
       const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
@@ -233,7 +226,6 @@ export default function LocationScreen({ route }) {
     }
   }, [updateState]);
 
-  // ============ OSRM ROUTE FUNCTIONS ============
   const fetchOSRMRoute = useCallback(async (points) => {
     if (!Array.isArray(points) || points.length < 2) return null;
 
@@ -286,7 +278,6 @@ export default function LocationScreen({ route }) {
           },
           routeLoading: false,
         });
-        // Still try to find stations along route using the two points
         await findFuelStationsAlongRoute([startPoint, endPoint]);
         return;
       }
@@ -300,7 +291,6 @@ export default function LocationScreen({ route }) {
         routeLoading: false,
       });
 
-      // Find fuel stations along the route
       await findFuelStationsAlongRoute(coords);
 
     } catch (error) {
@@ -312,7 +302,6 @@ export default function LocationScreen({ route }) {
     }
   }, [fetchOSRMRoute, updateState]);
 
-  // ============ FUEL STATIONS ALONG ROUTE ============
   const findFuelStationsAlongRoute = useCallback(async (routePoints) => {
     if (!routePoints || routePoints.length < 2) {
       console.log("Not enough route points to find stations");
@@ -322,7 +311,6 @@ export default function LocationScreen({ route }) {
     try {
       updateState({ searchingStations: true });
 
-      // Sample points along the route (every ~5km)
       const samplePoints = [];
       const totalDistance = routePoints.reduce((acc, point, i) => {
         if (i === 0) return 0;
@@ -332,21 +320,19 @@ export default function LocationScreen({ route }) {
         );
       }, 0);
 
-      // Get points every ~5km or at least 5 points
       const numSamples = Math.max(5, Math.min(20, Math.ceil(totalDistance / 5)));
       const step = Math.max(1, Math.floor(routePoints.length / numSamples));
 
       for (let i = 0; i < routePoints.length; i += step) {
         samplePoints.push(routePoints[i]);
       }
-      // Always include the last point
+
       if (samplePoints[samplePoints.length - 1] !== routePoints[routePoints.length - 1]) {
         samplePoints.push(routePoints[routePoints.length - 1]);
       }
 
       console.log(`Sampling ${samplePoints.length} points along route for fuel stations`);
 
-      // Fetch stations around each sample point
       const allStations = [];
       const seenStationIds = new Set();
 
@@ -354,11 +340,11 @@ export default function LocationScreen({ route }) {
         const stations = await fetchNearbyStations(point.latitude, point.longitude);
         
         if (stations && stations.length > 0) {
-          // Deduplicate stations
+
           for (const station of stations) {
             if (!seenStationIds.has(station.id)) {
               seenStationIds.add(station.id);
-              // Calculate distance from route (minimum distance to any route point)
+              
               let minDistToRoute = Infinity;
               for (const routePoint of routePoints) {
                 const dist = haversineKm(
@@ -374,25 +360,21 @@ export default function LocationScreen({ route }) {
         }
       }
 
-      // Sort stations by distance to route (closest first)
       const sortedStations = allStations
         .sort((a, b) => a.distanceToRoute - b.distanceToRoute)
         .slice(0, CONFIG.STATIONS_ALONG_ROUTE);
 
       console.log(`Found ${sortedStations.length} unique fuel stations along route`);
 
-      // Find the best station (closest to route and within range)
       updateState({ 
         fuelStations: sortedStations,
         searchingStations: false 
       });
 
-      // Find the best station (closest to route)
       if (sortedStations.length > 0) {
         const bestStation = sortedStations[0];
         updateState({ recommendedStation: bestStation });
-        
-        // Check if any station is closer than destination
+
         if (location && destination) {
           const station = sortedStations[0];
           const distToStation = haversineKm(
@@ -422,7 +404,6 @@ export default function LocationScreen({ route }) {
     }
   }, [fetchNearbyStations, location, destination, updateState]);
 
-  // ============ TRIP LOADING FROM DATABASE ============
   const loadTrip = useCallback(async () => {
     try {
       updateState({ tripLoading: true, routeLoading: true, error: "" });
@@ -452,7 +433,6 @@ export default function LocationScreen({ route }) {
         destination: stopCoords[0] || null,
       });
 
-      // Get addresses
       const startAddr = await reverseGeocodePoint(startCoord);
       const stopAddrList = await Promise.all(
         stopCoords.map(async (coord) => {
@@ -467,7 +447,6 @@ export default function LocationScreen({ route }) {
         tripLoaded: true,
       });
 
-      // If there are stops, fetch route from start to first stop
       if (stopCoords.length > 0 && startCoord) {
         await fetchRoute(startCoord, stopCoords[0]);
       }
@@ -484,7 +463,6 @@ export default function LocationScreen({ route }) {
     }
   }, [tripId, fetchRoute, updateState]);
 
-  // ============ REVERSE GEOCODING ============
   const reverseGeocodePoint = useCallback(async (coord) => {
     try {
       const res = await ExpoLocation.reverseGeocodeAsync(coord);
@@ -494,16 +472,15 @@ export default function LocationScreen({ route }) {
     }
   }, []);
 
-  // ============ FUEL STATION FUNCTIONS ============
   const fetchNearbyStations = useCallback(async (lat, lon) => {
     try {
       const query = `
-[out:json][timeout:5];
-(
-  node["amenity"="fuel"](around:${CONFIG.FUEL_STATION_RADIUS},${lat},${lon});
-);
-out body 5;
-`;
+        [out:json][timeout:5];
+        (
+          node["amenity"="fuel"](around:${CONFIG.FUEL_STATION_RADIUS},${lat},${lon});
+        );
+        out body 5;
+        `;
       const response = await fetch(CONFIG.OVERPASS_API_URL, {
         method: "POST",
         body: query,
@@ -583,12 +560,10 @@ out body 5;
       
       showNotification('warning', `Fuel at ${current.fuelPercent.toFixed(0)}% - Please find a fuel station!`, 5000);
 
-      // Show fuel stations modal to help user find one
       updateState({ showFuelModal: true });
     }
   }, [updateState, showNotification]);
 
-  // ============ RECEIPT FUNCTIONS ============
   const requestCameraPermission = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
@@ -651,8 +626,7 @@ out body 5;
                     `Receipt submitted! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`, 
                     5000
                   );
-                  
-                  // Check if fuel is still low after refueling
+
                   if (newFuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD) {
                     setTimeout(() => {
                       checkFuelAndRedirect();
@@ -750,8 +724,6 @@ out body 5;
     }
   }, [fuelPercent, updateState, showNotification, checkFuelAndRedirect]);
 
-  // ============ EFFECTS ============
-  // First effect: Set page ready and get location
   useEffect(() => {
     console.log('[location screen]', !!user);
     getLocation();
@@ -763,7 +735,6 @@ out body 5;
     };
   }, [getLocation, user]);
 
-  // Second effect: Load trip data once screen is ready and location is available
   useEffect(() => {
     if (screenReady && location && !tripLoaded && !tripLoading) {
       console.log("Screen ready, loading trip data...");
@@ -771,14 +742,12 @@ out body 5;
     }
   }, [screenReady, location, tripLoaded, tripLoading, loadTrip]);
 
-  // Third effect: Check fuel status
   useEffect(() => {
     if (tripLoaded && fuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD && !fuelWarning) {
       checkFuelAndRedirect();
     }
   }, [fuelPercent, tripLoaded, fuelWarning, checkFuelAndRedirect]);
 
-  // Fourth effect: Fit map to route
   useEffect(() => {
     if (mapRef.current && routeCoords.length > 1) {
       mapRef.current.fitToCoordinates(routeCoords, {
@@ -788,7 +757,6 @@ out body 5;
     }
   }, [routeCoords]);
 
-  // ============ RENDER FUNCTIONS ============
   const renderLoading = () => (
     <View style={styles.loadingContainer}>
       <ActivityIndicator size="large" color="#007bff" />
@@ -1415,7 +1383,6 @@ out body 5;
     </ScrollView>
   );
 
-  // Show loading only if screen is not ready
   if (!screenReady) {
     return renderLoading();
   }
@@ -1556,8 +1523,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
   },
-  
-  // Distance Info
   distanceInfo: {
     position: "absolute",
     bottom: 80,
@@ -1583,8 +1548,6 @@ const styles = StyleSheet.create({
     color: "#333",
     fontWeight: "500",
   },
-  
-  // Notification
   notificationBanner: {
     padding: 12,
     borderRadius: 12,
@@ -1595,8 +1558,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center",
   },
-  
-  // Map Overlay
   mapOverlay: {
     position: "absolute",
     top: 16,
@@ -1614,8 +1575,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   overlayText: { marginLeft: 8, color: "#333", fontWeight: "600" },
-  
-  // Fuel Warning Overlay
+
   fuelWarningOverlay: {
     position: "absolute",
     top: 60,
@@ -1637,8 +1597,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginLeft: 8,
   },
-  
-  // Error
   errorBox: {
     backgroundColor: "#fff",
     padding: 12,
@@ -1648,8 +1606,7 @@ const styles = StyleSheet.create({
     borderColor: "#f44336",
   },
   errorText: { color: "#f44336" },
-  
-  // Map Markers
+
   currentLocationMarker: {
     alignItems: "center",
     justifyContent: "center",
@@ -1684,8 +1641,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginBottom: 4,
   },
-  
-  // Fuel Modal
   modalContainer: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -1808,8 +1763,7 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "bold",
   },
-  
-  // Receipt Modal
+
   receiptImageContainer: {
     width: '100%',
     height: 200,
