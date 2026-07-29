@@ -44,94 +44,97 @@ export default function Profile() {
     loadProfile();
   }, [user]);
 
-  const loadProfile = async () => {
-    try {
-      setLoading(true);
+const loadProfile = async () => {
+  try {
+    setLoading(true);
 
-      const userId = user.id;
+    const userId = user.id;
 
-      const { data: userRow, error: userError } = await supabase
-        .from("users")
-        .select("user_id, user_name, email")
-        .eq("user_id", userId)
-        .single();
+    const { data: userRow, error: userError } = await supabase
+      .from("users")
+      .select("user_id, user_name, email")
+      .eq("user_id", userId)
+      .single();
 
-      if (userError) throw userError;
+    if (userError) throw userError;
 
-      const { data: driverRow, error: driverError } = await supabase
-        .from("drivers")
-        .select("driver_id, phone, license_number")
-        .eq("driver_id", userId)
-        .single();
+    const { data: driverRow, error: driverError } = await supabase
+      .from("drivers")
+      .select("driver_id, driver_username, phone, license_number") // Add driver_username here
+      .eq("driver_id", userId)
+      .single();
 
-      if (driverError) throw driverError;
+    if (driverError) throw driverError;
 
-      const profileData = {
-        userName: userRow.user_name || "",
-        email: userRow.email || "",
-        phone: driverRow.phone || "",
-        licenseNumber: driverRow.license_number || "",
-      };
+    const profileData = {
+      userName: driverRow.driver_username || userRow.user_name || "", // Use driver_username from drivers table
+      email: userRow.email || "",
+      phone: driverRow.phone || "",
+      licenseNumber: driverRow.license_number || "",
+    };
 
-      setSaved(profileData);
-      setUserName(profileData.userName);
-      setEmail(profileData.email);
-      setPhone(profileData.phone);
-      setLicenseNumber(profileData.licenseNumber);
-    } catch (err) {
-      Alert.alert("Error", err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+    setSaved(profileData);
+    setUserName(profileData.userName);
+    setEmail(profileData.email);
+    setPhone(profileData.phone);
+    setLicenseNumber(profileData.licenseNumber);
+  } catch (err) {
+    Alert.alert("Error", err.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
-  const handleSave = async () => {
-    if (!userName.trim() || !phone.trim() || !licenseNumber.trim() || !email.trim()) {
-      Alert.alert("Error", "Please fill in all required fields");
-      return;
-    }
+const handleSave = async () => {
+  if (!userName.trim() || !phone.trim() || !licenseNumber.trim() || !email.trim()) {
+    Alert.alert("Error", "Please fill in all required fields");
+    return;
+  }
 
-    try {
-      setSaving(true);
+  try {
+    setSaving(true);
 
-      const userId = user.id;
+    const userId = user.id;
 
-      const { error: userUpdateError } = await supabase
-        .from("users")
-        .update({
-          user_name: userName.trim(),
-          email: email.trim(),
-        })
-        .eq("user_id", userId);
-
-      if (userUpdateError) throw userUpdateError;
-
-      const { error: driverUpdateError } = await supabase
-        .from("drivers")
-        .update({
-          phone: phone.trim(),
-          license_number: licenseNumber.trim(),
-        })
-        .eq("driver_id", userId);
-
-      if (driverUpdateError) throw driverUpdateError;
-
-      const profileData = {
-        userName: userName.trim(),
+    // Update users table
+    const { error: userUpdateError } = await supabase
+      .from("users")
+      .update({
+        user_name: userName.trim(),
         email: email.trim(),
-        phone: phone.trim(),
-        licenseNumber: licenseNumber.trim(),
-      };
+      })
+      .eq("user_id", userId);
 
-      setSaved(profileData);
-      setEditing(false);
-      Alert.alert("Success", "Profile saved successfully!");
-    } catch (err) {
-      Alert.alert("Save Error", err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
+    if (userUpdateError) throw userUpdateError;
+
+    // Update drivers table with driver_username
+    const { error: driverUpdateError } = await supabase
+      .from("drivers")
+      .update({
+        driver_username: userName.trim(), // Add this line
+        phone: phone.trim(),
+        license_number: licenseNumber.trim(),
+      })
+      .eq("driver_id", userId);
+
+    if (driverUpdateError) throw driverUpdateError;
+
+    const profileData = {
+      userName: userName.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+      licenseNumber: licenseNumber.trim(),
+    };
+
+    setSaved(profileData);
+    setEditing(false);
+    Alert.alert("Success", "Profile saved successfully!");
+  } catch (err) {
+    Alert.alert("Save Error", err.message);
+  } finally {
+    setSaving(false);
+  }
+};
 
   const handleEdit = () => {
     if (saved) {

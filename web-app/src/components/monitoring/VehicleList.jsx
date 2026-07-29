@@ -1,36 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Truck,
-  MapPin,
-  AlertCircle,
-  CheckCircle,
-  AlertTriangle,
-  Search,
-} from 'lucide-react';
+import { Truck, Search } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
-
-const statusMeta = {
-  'on-time': {
-    label: 'On time',
-    tone: 'text-emerald-700 bg-emerald-50 ring-emerald-200',
-    icon: CheckCircle,
-  },
-  delayed: {
-    label: 'Delayed',
-    tone: 'text-amber-700 bg-amber-50 ring-amber-200',
-    icon: AlertCircle,
-  },
-  'at-risk': {
-    label: 'At risk',
-    tone: 'text-rose-700 bg-rose-50 ring-rose-200',
-    icon: AlertTriangle,
-  },
-  unknown: {
-    label: 'Unknown',
-    tone: 'text-slate-600 bg-slate-100 ring-slate-200',
-    icon: Truck,
-  },
-};
 
 export default function VehicleList() {
   const [vehicles, setVehicles] = useState([]);
@@ -96,7 +66,6 @@ export default function VehicleList() {
       const matchesSearch =
         String(vehicle.id).toLowerCase().includes(q) ||
         (vehicle.registrationNumber || '').toLowerCase().includes(q) ||
-        (vehicle.currentLocation || '').toLowerCase().includes(q) ||
         driverName.toLowerCase().includes(q);
 
       const assigned = Boolean(vehicle.driverId);
@@ -132,8 +101,15 @@ export default function VehicleList() {
   };
 
   const handleAssignDriver = async (vehicleId, driverId) => {
+    const previousVehicle = vehicles.find((v) => v.id === vehicleId);
+    const previousDriverId = previousVehicle?.driverId || '';
+
     setSavingId(vehicleId);
     setError('');
+
+    setVehicles((prev) =>
+      prev.map((v) => (v.id === vehicleId ? { ...v, driverId: driverId || '' } : v))
+    );
 
     try {
       const { error: updateError } = await supabase
@@ -142,13 +118,12 @@ export default function VehicleList() {
         .eq('vehicle_id', vehicleId);
 
       if (updateError) throw updateError;
-
+    } catch (err) {
       setVehicles((prev) =>
         prev.map((v) =>
-          v.id === vehicleId ? { ...v, driverId: driverId || '' } : v
+          v.id === vehicleId ? { ...v, driverId: previousDriverId } : v
         )
       );
-    } catch (err) {
       setError(err.message || 'Failed to update vehicle');
     } finally {
       setSavingId(null);
@@ -207,7 +182,7 @@ export default function VehicleList() {
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Search vehicle, registration, location, or driver"
+            placeholder="Search vehicle, registration, or driver"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:bg-white"
@@ -233,9 +208,6 @@ export default function VehicleList() {
                   Vehicle
                 </th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Details
-                </th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Driver
                 </th>
               </tr>
@@ -243,8 +215,6 @@ export default function VehicleList() {
 
             <tbody className="divide-y divide-slate-100 bg-white">
               {visibleVehicles.map((vehicle) => {
-                const meta = statusMeta[vehicle.status] || statusMeta.unknown;
-                const StatusIcon = meta.icon;
                 const selectedDriver = drivers.find(
                   (d) => String(d.driver_id) === String(vehicle.driverId)
                 );
@@ -258,28 +228,12 @@ export default function VehicleList() {
                         </div>
                         <div>
                           <div className="text-sm font-medium text-slate-900">
-                            Vehicle {vehicle.id}
+                            Vehicle {vehicle.registration_number}
                           </div>
                           <div className="text-sm text-slate-500">
                             {vehicle.registrationNumber || 'N/A'}
                           </div>
                         </div>
-                      </div>
-                    </td>
-
-                    <td className="px-5 py-4 align-middle">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs ring-1 ${meta.tone}`}
-                        >
-                          <StatusIcon className="h-3 w-3" />
-                          {meta.label}
-                        </span>
-
-                        <span className="inline-flex items-center gap-1 text-sm text-slate-500">
-                          <MapPin className="h-3.5 w-3.5 text-slate-400" />
-                          {vehicle.currentLocation}
-                        </span>
                       </div>
                     </td>
 
@@ -302,6 +256,10 @@ export default function VehicleList() {
                             </option>
                           ))}
                         </select>
+
+                        {savingId === vehicle.id && (
+                          <span className="text-xs text-slate-500">Saving...</span>
+                        )}
                       </div>
                     </td>
                   </tr>
