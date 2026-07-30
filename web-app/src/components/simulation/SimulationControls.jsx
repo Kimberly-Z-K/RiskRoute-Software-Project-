@@ -1,134 +1,370 @@
-import React, { useState, useEffect } from 'react';
-import { Zap, MapPin, Loader, CloudRain, Sun, Wind, Thermometer } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Zap, MapPin, Loader, Cloud, CloudRain, CloudSun, Wind, Sun, CloudFog, AlertTriangle } from 'lucide-react';
+
+// Your API Keys
+const TOMTOM_API_KEY = "boAgd49GhcpqsqaQ6qlAfmC6YEBORJVF";
+const GRAPHHOPPER_API_KEY = "6T2DDPGJLyW04V4lCgZrmkXmajx9Lct2";
+const WEATHER_API_KEY = "ec5202fdabe043c4b0f190711262807";
 
 const API_BASE_URL = "http://localhost:5000/api";
-const WEATHER_API_KEY = "ec5202fdabe043c4b0f190711262807";
+
+// South Africa Weather Types - Only common SA conditions
+const SOUTH_AFRICA_WEATHER = {
+  SUNNY: { id: 'sunny', label: '☀️ Sunny / Clear', value: 'sunny', icon: Sun },
+  PARTLY_CLOUDY: { id: 'partly_cloudy', label: '🌤️ Partly Cloudy', value: 'partly_cloudy', icon: CloudSun },
+  CLOUDY: { id: 'cloudy', label: '☁️ Cloudy / Overcast', value: 'cloudy', icon: Cloud },
+  LIGHT_RAIN: { id: 'light_rain', label: '🌦️ Light Rain', value: 'light_rain', icon: CloudRain },
+  MODERATE_RAIN: { id: 'moderate_rain', label: '🌧️ Moderate Rain', value: 'moderate_rain', icon: CloudRain },
+  HEAVY_RAIN: { id: 'heavy_rain', label: '⛈️ Heavy Rain / Thunderstorms', value: 'heavy_rain', icon: CloudRain },
+  FOG: { id: 'fog', label: '🌫️ Fog / Mist', value: 'fog', icon: CloudFog },
+  WINDY: { id: 'windy', label: '💨 Windy', value: 'windy', icon: Wind }
+};
+
+const WEATHER_IMPACTS = {
+  sunny: { speedMultiplier: 1.0, congestionMultiplier: 1.0, delayMultiplier: 1.0, riskLevel: 'low' },
+  partly_cloudy: { speedMultiplier: 0.98, congestionMultiplier: 1.02, delayMultiplier: 1.02, riskLevel: 'low' },
+  cloudy: { speedMultiplier: 0.95, congestionMultiplier: 1.05, delayMultiplier: 1.05, riskLevel: 'low' },
+  light_rain: { speedMultiplier: 0.85, congestionMultiplier: 1.15, delayMultiplier: 1.2, riskLevel: 'medium' },
+  moderate_rain: { speedMultiplier: 0.75, congestionMultiplier: 1.3, delayMultiplier: 1.4, riskLevel: 'medium' },
+  heavy_rain: { speedMultiplier: 0.6, congestionMultiplier: 1.5, delayMultiplier: 1.6, riskLevel: 'high' },
+  fog: { speedMultiplier: 0.7, congestionMultiplier: 1.2, delayMultiplier: 1.3, riskLevel: 'high' },
+  windy: { speedMultiplier: 0.9, congestionMultiplier: 1.1, delayMultiplier: 1.1, riskLevel: 'medium' }
+};
+
+// South African cities coordinates for weather lookup
+const SA_CITIES = [
+  { name: 'Cape Town', lat: -33.9249, lng: 18.4241 },
+  { name: 'Johannesburg', lat: -26.2041, lng: 28.0473 },
+  { name: 'Pretoria', lat: -25.7479, lng: 28.2293 },
+  { name: 'Durban', lat: -29.8587, lng: 31.0218 },
+  { name: 'Port Elizabeth', lat: -33.9608, lng: 25.6022 },
+  { name: 'Bloemfontein', lat: -29.0852, lng: 26.1596 },
+  { name: 'East London', lat: -33.0153, lng: 27.9116 },
+  { name: 'Nelspruit', lat: -25.4748, lng: 30.9703 },
+  { name: 'Polokwane', lat: -23.8962, lng: 29.4486 },
+  { name: 'Kimberley', lat: -28.7282, lng: 24.7499 },
+  { name: 'George', lat: -33.9631, lng: 22.4555 },
+  { name: 'Pietermaritzburg', lat: -29.6168, lng: 30.3928 }
+];
 
 const SimulationControls = ({ 
   params = { delay: 30, weather: 'moderate', accident: false, roadClosure: false }, 
   setParams, 
   onRunSimulation,
   routes = [],
-  isRoutesLoading = false
+  isRoutesLoading = false,
+  location = 'Johannesburg,ZA'
 }) => {
+  // State
   const [selectedRouteId, setSelectedRouteId] = useState('');
   const [enrichedRoutes, setEnrichedRoutes] = useState([]);
   const [enriching, setEnriching] = useState(false);
+  const [liveTrafficData, setLiveTrafficData] = useState(null);
   const [liveWeather, setLiveWeather] = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState(null);
+  const [useLiveWeather, setUseLiveWeather] = useState(true);
+  const [detectedLocation, setDetectedLocation] = useState(location);
+  const [simulationHistory, setSimulationHistory] = useState([]);
+  const [routeMetrics, setRouteMetrics] = useState(null);
+  
+  const abortControllerRef = useRef(null);
+  const weatherUpdateInterval = useRef(null);
 
-  // Fetch live weather data from OpenWeather API
-  const fetchLiveWeather = async (lat, lng) => {
-    if (!lat || !lng) return null;
+  // Weather Service
+  const fetchLiveWeather = useCallback(async (lat, lng) => {
+    setWeatherLoading(true);
+    setWeatherError(null);
     
     try {
-      const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&appid=${WEATHER_API_KEY}&units=metric`;
+      // Try to get weather for the specific location
+      let locationQuery = `${lat},${lng}`;
+      
+      // If we have a city name, use it
+      if (detectedLocation) {
+        locationQuery = detectedLocation;
+      }
+
+      const url = `https://api.weatherapi.com/v1/current.json?key=${WEATHER_API_KEY}&q=${locationQuery}&aqi=no`;
+      
       const response = await fetch(url);
       
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          condition: data.weather?.[0]?.description || 'Unknown',
-          temperature: Math.round(data.main?.temp || 0),
-          feelsLike: Math.round(data.main?.feels_like || 0),
-          humidity: data.main?.humidity || 0,
-          rainfall: data.rain ? (data.rain['1h'] || data.rain['3h'] || 0) : 0,
-          windSpeed: Math.round((data.wind?.speed || 0) * 3.6), // Convert m/s to km/h
-          windGust: data.wind?.gust ? Math.round(data.wind.gust * 3.6) : null,
-          visibility: data.visibility ? Math.round(data.visibility / 1000) : 0,
-          pressure: data.main?.pressure || 0,
-          icon: data.weather?.[0]?.icon || '',
-          severity: calculateWeatherSeverity(data)
-        };
+      if (!response.ok) {
+        throw new Error(`Weather API error: ${response.status}`);
       }
+      
+      const data = await response.json();
+      
+      // Map to South Africa weather types
+      const mappedWeather = mapToSouthAfricaWeather(data.current.condition.text);
+      
+      const weatherData = {
+        temperature: data.current.temp_c,
+        condition: mappedWeather,
+        conditionText: data.current.condition.text,
+        windKph: data.current.wind_kph,
+        humidity: data.current.humidity,
+        precipMm: data.current.precip_mm,
+        location: data.location.name,
+        country: data.location.country,
+        lastUpdated: data.current.last_updated,
+        isRainy: ['light_rain', 'moderate_rain', 'heavy_rain'].includes(mappedWeather),
+        isWindy: mappedWeather === 'windy',
+        isFoggy: mappedWeather === 'fog',
+        impacts: WEATHER_IMPACTS[mappedWeather] || WEATHER_IMPACTS.sunny
+      };
+      
+      setLiveWeather(weatherData);
+      
+      // Auto-update simulation params if using live weather
+      if (useLiveWeather && setParams) {
+        setParams(prev => ({
+          ...prev,
+          weather: mappedWeather
+        }));
+      }
+      
+      return weatherData;
+      
     } catch (error) {
-      console.warn('Failed to fetch weather data:', error);
+      console.error('Failed to fetch weather:', error);
+      setWeatherError(error.message);
+      
+      // Fallback to detected location weather
+      return getFallbackWeather(lat, lng);
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, [detectedLocation, useLiveWeather, setParams]);
+
+  // Map WeatherAPI conditions to South Africa weather types
+  const mapToSouthAfricaWeather = (conditionText) => {
+    const text = conditionText.toLowerCase();
+    
+    const mapping = {
+      'sunny': 'sunny',
+      'clear': 'sunny',
+      'partly cloudy': 'partly_cloudy',
+      'cloudy': 'cloudy',
+      'overcast': 'cloudy',
+      'patchy rain': 'light_rain',
+      'light rain': 'light_rain',
+      'moderate rain': 'moderate_rain',
+      'heavy rain': 'heavy_rain',
+      'thunderstorm': 'heavy_rain',
+      'fog': 'fog',
+      'mist': 'fog',
+      'windy': 'windy',
+      'breezy': 'windy'
+    };
+    
+    for (const [key, value] of Object.entries(mapping)) {
+      if (text.includes(key)) {
+        return value;
+      }
+    }
+    
+    return 'sunny'; // Default
+  };
+
+  // Fallback weather based on city
+  const getFallbackWeather = (lat, lng) => {
+    const city = getNearbyCity(lat, lng);
+    const weatherConditions = ['sunny', 'partly_cloudy', 'cloudy', 'sunny', 'sunny'];
+    const randomWeather = weatherConditions[Math.floor(Math.random() * weatherConditions.length)];
+    
+    return {
+      temperature: 25,
+      condition: randomWeather,
+      conditionText: 'Sunny',
+      windKph: 10,
+      humidity: 50,
+      precipMm: 0,
+      location: city || 'Unknown',
+      country: 'South Africa',
+      lastUpdated: new Date().toISOString(),
+      isRainy: false,
+      isWindy: false,
+      isFoggy: false,
+      impacts: WEATHER_IMPACTS[randomWeather] || WEATHER_IMPACTS.sunny
+    };
+  };
+
+  // Helper to find nearby South African city
+  const getNearbyCity = (lat, lng) => {
+    let closestCity = null;
+    let closestDistance = Infinity;
+    
+    for (const city of SA_CITIES) {
+      const distance = Math.sqrt(
+        Math.pow(lat - city.lat, 2) + 
+        Math.pow(lng - city.lng, 2)
+      );
+      
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestCity = city.name;
+      }
+    }
+    
+    return closestCity || 'Johannesburg';
+  };
+
+  // Get weather for route location
+  const getWeatherForRoute = useCallback(async (route) => {
+    const coords = extractCoordinates(route);
+    if (coords.length > 0) {
+      const midPoint = coords[Math.floor(coords.length / 2)];
+      if (midPoint.lat && midPoint.lng) {
+        const city = getNearbyCity(midPoint.lat, midPoint.lng);
+        setDetectedLocation(city);
+        return await fetchLiveWeather(midPoint.lat, midPoint.lng);
+      }
     }
     return null;
+  }, [fetchLiveWeather]);
+
+  // Extract coordinates from route
+  const extractCoordinates = (route) => {
+    let coords = [];
+    
+    if (route.stops && Array.isArray(route.stops)) {
+      coords = route.stops.map(stop => ({
+        lat: stop.latitude || stop.lat,
+        lng: stop.longitude || stop.lng
+      })).filter(coord => coord.lat && coord.lng);
+    }
+    
+    if (route.result?.geometry?.points && Array.isArray(route.result.geometry.points)) {
+      const geomCoords = route.result.geometry.points.map(point => ({
+        lat: point.latitude || point.lat,
+        lng: point.longitude || point.lng
+      })).filter(coord => coord.lat && coord.lng);
+      
+      if (geomCoords.length > 0) {
+        coords = geomCoords;
+      }
+    }
+    
+    if (coords.length === 0) {
+      if (route.start_lat && route.start_lng) {
+        coords.push({ lat: route.start_lat, lng: route.start_lng });
+      }
+      if (route.end_lat && route.end_lng) {
+        coords.push({ lat: route.end_lat, lng: route.end_lng });
+      }
+    }
+    
+    // Remove duplicates
+    const uniqueCoords = [];
+    const seen = new Set();
+    for (const coord of coords) {
+      const key = `${coord.lat.toFixed(6)},${coord.lng.toFixed(6)}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueCoords.push(coord);
+      }
+    }
+    
+    return uniqueCoords;
   };
 
-  // Calculate weather severity based on conditions
-  const calculateWeatherSeverity = (data) => {
-    let severity = 0;
-    
-    // Rain impact
-    if (data.rain) {
-      const rainfall = data.rain['1h'] || data.rain['3h'] || 0;
-      if (rainfall > 10) severity += 40;
-      else if (rainfall > 5) severity += 25;
-      else if (rainfall > 1) severity += 10;
-    }
-    
-    // Wind impact
-    if (data.wind) {
-      const windSpeed = data.wind.speed;
-      if (windSpeed > 15) severity += 30;
-      else if (windSpeed > 10) severity += 20;
-      else if (windSpeed > 5) severity += 10;
-    }
-    
-    // Visibility impact
-    if (data.visibility && data.visibility < 1000) {
-      severity += 20;
-    } else if (data.visibility && data.visibility < 5000) {
-      severity += 10;
-    }
-    
-    // Temperature extremes
-    if (data.main) {
-      const temp = data.main.temp;
-      if (temp > 35) severity += 15;
-      else if (temp < 0) severity += 10;
-    }
-    
-    return Math.min(severity, 100);
-  };
-
-  // Simple reverse geocode using your backend API
+  // Reverse geocode (existing function)
   const reverseGeocodePoint = async (lat, lng) => {
+    console.log("[SimulationControls] Reverse geocoding point:", { lat, lng });
+
     try {
       const url = `${API_BASE_URL}/reverse-geocode?lat=${lat}&lng=${lng}`;
       const response = await fetch(url);
       
       if (response.ok) {
         const data = await response.json();
-        if (data.success && data.data && data.data.label) {
-          return data.data.label;
+        if (data.data && data.data.label) {
+          return { label: data.data.label, source: 'local' };
         }
       }
     } catch (error) {
-      console.warn('Reverse geocode failed:', error);
-    }
-    return null;
-  };
-
-  // Get the actual route name from the route data
-  const getRouteDisplayName = (route) => {
-    // If route already has a name from the database, use it
-    if (route.name && route.name !== 'Unnamed Route') {
-      return route.name;
+      console.warn('Local API reverse geocode failed:', error);
     }
 
-    // Try to get from start_point and stops
-    if (route.start_point && route.stops && route.stops.length > 0) {
-      const originName = route.start_point.name || 'Start';
-      const destName = route.stops[route.stops.length - 1].name || 'Destination';
-      if (originName !== 'Start' && destName !== 'Destination') {
-        return `${originName} → ${destName}`;
+    try {
+      const tomtomUrl = `https://api.tomtom.com/search/2/reverseGeocode/${lat},${lng}.json?key=${TOMTOM_API_KEY}`;
+      const response = await fetch(tomtomUrl);
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.addresses && data.addresses.length > 0) {
+          const address = data.addresses[0].address;
+          const label = [
+            address.streetName,
+            address.municipalitySubdivision || address.municipality,
+            address.countrySubdivision,
+            address.country
+          ].filter(Boolean).join(', ');
+          return { label: label || 'Unknown Location', source: 'tomtom' };
+        }
       }
+    } catch (error) {
+      console.warn('TomTom reverse geocode failed:', error);
     }
 
-    // Try to get from origin_name and destination_name
-    if (route.origin_name && route.destination_name) {
-      return `${route.origin_name} → ${route.destination_name}`;
+    try {
+      const graphhopperUrl = `https://graphhopper.com/api/1/geocode?reverse=true&point=${lat},${lng}&key=${GRAPHHOPPER_API_KEY}`;
+      const response = await fetch(graphhopperUrl);
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.hits && data.hits.length > 0) {
+          const hit = data.hits[0];
+          const label = hit.name || hit.street || hit.city || hit.country || 'Unknown Location';
+          return { label, source: 'graphhopper' };
+        }
+      }
+    } catch (error) {
+      console.warn('GraphHopper reverse geocode failed:', error);
     }
 
-    // Use route ID as fallback
-    return `Route ${route.id || route.route_id || 'Unknown'}`;
+    const nearbyCity = getNearbyCity(lat, lng);
+    if (nearbyCity) {
+      return { label: nearbyCity, source: 'coordinate' };
+    }
+
+    return { label: 'Unknown Location', source: 'coordinate' };
   };
 
-  // Enrich routes with proper names and weather data
-  const enrichRoutesWithNames = async (routesData) => {
+  // Extract meaningful name (existing function)
+  const extractMeaningfulName = (fullAddress) => {
+    if (!fullAddress || fullAddress === 'Unknown Location') return 'Unknown Location';
+    
+    if (fullAddress.includes('(') && fullAddress.includes(')')) {
+      const parts = fullAddress.split('(');
+      if (parts.length > 0) {
+        const cityPart = parts[0].trim();
+        const cleaned = cityPart.replace(/^Near\s+/, '').trim();
+        if (cleaned && cleaned !== 'Location') {
+          return cleaned;
+        }
+      }
+      return 'Unknown Location';
+    }
+    
+    const parts = fullAddress.split(',');
+    
+    for (let part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.match(/^\d{4}$/)) continue;
+      if (trimmed.toLowerCase() === 'south africa') continue;
+      if (trimmed.toLowerCase() === 'za') continue;
+      if (trimmed.split(' ').length > 4) continue;
+      if (trimmed.length < 3) continue;
+      return trimmed;
+    }
+    
+    return parts[0]?.trim() || 'Unknown Location';
+  };
+
+  // Enrich routes with names and weather
+  const enrichRoutesWithNames = useCallback(async (routesData) => {
     if (!routesData || routesData.length === 0) return routesData;
 
     setEnriching(true);
@@ -136,72 +372,120 @@ const SimulationControls = ({
 
     for (const route of routesData) {
       try {
-        // Get display name from existing data first
-        let displayName = getRouteDisplayName(route);
+        console.log(`[Route ${route.id}] Processing route...`);
         
-        // If still generic, try reverse geocoding
-        if (displayName.includes('Route') || displayName === 'Unnamed Route') {
-          let originName = null;
-          let destName = null;
+        const coords = extractCoordinates(route);
+        console.log(`[Route ${route.id}] Extracted ${coords.length} coordinates`);
+        
+        let originName = 'Unknown Location';
+        let destinationName = 'Unknown Location';
+        let routeName = '';
+        let weatherData = null;
 
-          // Get origin
-          if (route.start_point && route.start_point.lat && route.start_point.lng) {
-            originName = await reverseGeocodePoint(route.start_point.lat, route.start_point.lng);
-          } else if (route.start_lat && route.start_lng) {
-            originName = await reverseGeocodePoint(route.start_lat, route.start_lng);
-          }
-
-          // Get destination from stops
-          if (route.stops && route.stops.length > 0) {
-            const lastStop = route.stops[route.stops.length - 1];
-            if (lastStop.lat && lastStop.lng) {
-              destName = await reverseGeocodePoint(lastStop.lat, lastStop.lng);
+        // Get origin name
+        if (coords.length > 0 && coords[0].lat && coords[0].lng) {
+          try {
+            const originData = await reverseGeocodePoint(coords[0].lat, coords[0].lng);
+            if (originData && originData.label) {
+              originName = originData.label;
             }
-          }
-
-          // Build display name
-          if (originName && destName) {
-            displayName = `${originName} → ${destName}`;
-          } else if (originName) {
-            displayName = `From ${originName}`;
-          } else if (destName) {
-            displayName = `To ${destName}`;
+          } catch (error) {
+            console.warn(`[Route ${route.id}] Could not reverse geocode origin:`, error);
           }
         }
 
-        // Fetch live weather for the route's origin
-        let weatherData = null;
-        if (route.start_point && route.start_point.lat && route.start_point.lng) {
-          weatherData = await fetchLiveWeather(route.start_point.lat, route.start_point.lng);
-        } else if (route.start_lat && route.start_lng) {
-          weatherData = await fetchLiveWeather(route.start_lat, route.start_lng);
+        // Get destination name
+        if (coords.length > 1) {
+          const lastCoord = coords[coords.length - 1];
+          if (lastCoord.lat && lastCoord.lng) {
+            try {
+              const destData = await reverseGeocodePoint(lastCoord.lat, lastCoord.lng);
+              if (destData && destData.label) {
+                destinationName = destData.label;
+              }
+            } catch (error) {
+              console.warn(`[Route ${route.id}] Could not reverse geocode destination:`, error);
+            }
+          }
+        } else if (coords.length === 1) {
+          destinationName = originName;
+        }
+
+        // Get weather for route
+        if (coords.length > 0) {
+          const midPoint = coords[Math.floor(coords.length / 2)];
+          if (midPoint.lat && midPoint.lng) {
+            try {
+              weatherData = await fetchLiveWeather(midPoint.lat, midPoint.lng);
+            } catch (error) {
+              console.warn(`[Route ${route.id}] Could not fetch weather:`, error);
+            }
+          }
+        }
+
+        // Extract meaningful short names
+        const originShort = extractMeaningfulName(originName);
+        const destShort = extractMeaningfulName(destinationName);
+
+        // Create meaningful route name
+        if (originShort !== 'Unknown Location' && destShort !== 'Unknown Location' && originShort !== destShort) {
+          routeName = `${originShort} → ${destShort}`;
+        } else if (route.name && route.name !== `Route ${route.id}`) {
+          routeName = route.name;
+        } else if (originShort !== 'Unknown Location') {
+          routeName = `Route from ${originShort}`;
+        } else if (destShort !== 'Unknown Location') {
+          routeName = `Route to ${destShort}`;
+        } else if (route.id) {
+          routeName = `Route ${route.id}`;
+        } else {
+          routeName = 'Unnamed Route';
+        }
+
+        // Get route metrics
+        const distance = route.result?.distance_km || route.distance_km || route.distance || 'N/A';
+        let duration = route.result?.duration_min || route.duration_min || route.estimated_time || route.duration || 'N/A';
+        const cost = route.result?.cost || route.estimated_cost || route.cost || 'N/A';
+
+        // Apply weather impact to duration if weather data available
+        let adjustedDuration = duration;
+        if (weatherData && weatherData.impacts && duration !== 'N/A') {
+          const durationNum = parseFloat(duration);
+          if (!isNaN(durationNum)) {
+            adjustedDuration = Math.round(durationNum * weatherData.impacts.delayMultiplier);
+          }
         }
 
         const enrichedRoute = {
           ...route,
-          display_name: displayName,
-          live_weather: weatherData
+          origin_name: originShort,
+          destination_name: destShort,
+          name: routeName,
+          distance_km: distance,
+          duration_min: duration,
+          estimated_time: duration,
+          estimated_cost: cost,
+          display_name: routeName,
+          weather: weatherData,
+          adjusted_duration: adjustedDuration,
+          weather_impact: weatherData?.impacts || WEATHER_IMPACTS.sunny
         };
 
         enriched.push(enrichedRoute);
-        
-        // Store weather for first route as default
-        if (!liveWeather && weatherData) {
-          setLiveWeather(weatherData);
-        }
-        
+
       } catch (error) {
-        console.error('Error enriching route:', error);
+        console.error(`[Route ${route.id}] Error enriching route:`, error);
+        const fallbackName = route.name || `Route ${route.id || 'N/A'}`;
         enriched.push({
           ...route,
-          display_name: route.name || `Route ${route.id || route.route_id || 'Unknown'}`
+          display_name: fallbackName
         });
       }
     }
 
     setEnriching(false);
     return enriched;
-  };
+  }, [fetchLiveWeather]);
 
   // Process routes when they change
   useEffect(() => {
@@ -210,60 +494,60 @@ const SimulationControls = ({
         console.log('[SimulationControls] Processing routes:', routes.length);
         const enriched = await enrichRoutesWithNames(routes);
         setEnrichedRoutes(enriched);
+        
+        // Auto-select first route
+        if (enriched.length > 0 && !selectedRouteId) {
+          setSelectedRouteId(enriched[0].id);
+        }
       } else {
         setEnrichedRoutes([]);
       }
     };
 
     processRoutes();
-  }, [routes]);
+  }, [routes, enrichRoutesWithNames]);
 
-  // Set first route as default when routes load
+  // Set up weather auto-update
   useEffect(() => {
-    if (enrichedRoutes.length > 0 && !selectedRouteId) {
-      setSelectedRouteId(enrichedRoutes[0].id || enrichedRoutes[0].route_id);
-    }
-  }, [enrichedRoutes, selectedRouteId]);
-
-  // Update weather when selected route changes
-  useEffect(() => {
-    const updateWeather = async () => {
-      if (selectedRoute) {
-        const route = enrichedRoutes.find(r => (r.id || r.route_id) === selectedRouteId);
-        if (route && route.live_weather) {
-          setLiveWeather(route.live_weather);
-        } else if (route) {
-          // Try to fetch weather if not already available
-          let lat, lng;
-          if (route.start_point && route.start_point.lat && route.start_point.lng) {
-            lat = route.start_point.lat;
-            lng = route.start_point.lng;
-          } else if (route.start_lat && route.start_lng) {
-            lat = route.start_lat;
-            lng = route.start_lng;
-          }
-          
-          if (lat && lng) {
-            const weather = await fetchLiveWeather(lat, lng);
-            if (weather) {
-              setLiveWeather(weather);
-              // Update the route with weather data
-              const updatedRoutes = enrichedRoutes.map(r => {
-                if ((r.id || r.route_id) === selectedRouteId) {
-                  return { ...r, live_weather: weather };
-                }
-                return r;
-              });
-              setEnrichedRoutes(updatedRoutes);
-            }
+    if (useLiveWeather && selectedRouteId) {
+      // Clear existing interval
+      if (weatherUpdateInterval.current) {
+        clearInterval(weatherUpdateInterval.current);
+      }
+      
+      // Update weather every 5 minutes
+      weatherUpdateInterval.current = setInterval(() => {
+        const selectedRoute = enrichedRoutes.find(r => r.id === selectedRouteId);
+        if (selectedRoute) {
+          const coords = extractCoordinates(selectedRoute);
+          if (coords.length > 0) {
+            const midPoint = coords[Math.floor(coords.length / 2)];
+            fetchLiveWeather(midPoint.lat, midPoint.lng);
           }
         }
+      }, 300000); // 5 minutes
+      
+      return () => {
+        if (weatherUpdateInterval.current) {
+          clearInterval(weatherUpdateInterval.current);
+        }
+      };
+    }
+  }, [useLiveWeather, selectedRouteId, enrichedRoutes, fetchLiveWeather]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (weatherUpdateInterval.current) {
+        clearInterval(weatherUpdateInterval.current);
       }
     };
+  }, []);
 
-    updateWeather();
-  }, [selectedRouteId, enrichedRoutes]);
-
+  // Handlers
   const handleDelayChange = (e) => {
     if (setParams) {
       setParams({ ...params, delay: parseInt(e.target.value) || 0 });
@@ -274,6 +558,8 @@ const SimulationControls = ({
     if (setParams) {
       setParams({ ...params, weather: e.target.value });
     }
+    // Disable live weather when manually selecting
+    setUseLiveWeather(false);
   };
   
   const handleAccidentChange = (e) => {
@@ -287,38 +573,133 @@ const SimulationControls = ({
       setParams({ ...params, roadClosure: e.target.checked });
     }
   };
+
+  const handleUseLiveWeather = () => {
+    setUseLiveWeather(!useLiveWeather);
+    if (!useLiveWeather) {
+      // Refresh weather when enabling
+      const selectedRoute = enrichedRoutes.find(r => r.id === selectedRouteId);
+      if (selectedRoute) {
+        const coords = extractCoordinates(selectedRoute);
+        if (coords.length > 0) {
+          const midPoint = coords[Math.floor(coords.length / 2)];
+          fetchLiveWeather(midPoint.lat, midPoint.lng);
+        }
+      }
+    }
+  };
   
   const handleRunSimulation = () => {
     if (onRunSimulation) {
+      // Calculate simulation impact
+      const selectedRoute = enrichedRoutes.find(r => r.id === selectedRouteId);
+      
+      if (selectedRoute) {
+        const weatherImpact = selectedRoute.weather?.impacts || WEATHER_IMPACTS[params.weather] || WEATHER_IMPACTS.sunny;
+        const delayImpact = params.delay || 0;
+        const accidentImpact = params.accident ? 15 : 0;
+        const roadClosureImpact = params.roadClosure ? 25 : 0;
+        
+        const totalImpact = {
+          delayMinutes: delayImpact + accidentImpact + roadClosureImpact,
+          speedReduction: (1 - weatherImpact.speedMultiplier) * 100,
+          congestionIncrease: (weatherImpact.congestionMultiplier - 1) * 100,
+          riskLevel: weatherImpact.riskLevel,
+          weatherType: params.weather,
+          hasAccident: params.accident,
+          hasRoadClosure: params.roadClosure
+        };
+        
+        // Add to simulation history
+        setSimulationHistory(prev => [...prev, {
+          timestamp: new Date().toISOString(),
+          routeId: selectedRouteId,
+          routeName: selectedRoute.display_name,
+          params: { ...params },
+          impact: totalImpact,
+          weather: selectedRoute.weather
+        }]);
+        
+        setRouteMetrics(totalImpact);
+      }
+      
       onRunSimulation(selectedRouteId);
     }
   };
 
-  // Get selected route details
-  const selectedRoute = enrichedRoutes.find(r => {
-    const routeId = r.id || r.route_id;
-    return routeId === selectedRouteId;
-  });
+  // Get selected route
+  const selectedRoute = useMemo(() => {
+    return enrichedRoutes.find(r => {
+      const routeId = r.id || r.route_id;
+      return routeId === selectedRouteId;
+    });
+  }, [enrichedRoutes, selectedRouteId]);
 
   const isLoading = isRoutesLoading || enriching;
 
-  // Get weather icon based on condition
-  const getWeatherIcon = (condition) => {
-    if (!condition) return <Sun className="w-4 h-4" />;
-    const lower = condition.toLowerCase();
-    if (lower.includes('rain') || lower.includes('shower')) return <CloudRain className="w-4 h-4 text-blue-500" />;
-    if (lower.includes('storm') || lower.includes('thunder')) return <CloudRain className="w-4 h-4 text-purple-500" />;
-    if (lower.includes('wind')) return <Wind className="w-4 h-4 text-gray-500" />;
-    if (lower.includes('clear') || lower.includes('sun')) return <Sun className="w-4 h-4 text-yellow-500" />;
-    if (lower.includes('cloud')) return <Sun className="w-4 h-4 text-gray-400" />;
-    return <Thermometer className="w-4 h-4" />;
+  // Weather icon component
+  const WeatherIcon = ({ condition, size = 20 }) => {
+    const weatherType = SOUTH_AFRICA_WEATHER[condition?.toUpperCase()] || SOUTH_AFRICA_WEATHER.SUNNY;
+    const IconComponent = weatherType.icon || Sun;
+    return <IconComponent size={size} className="inline-block" />;
   };
 
   return (
     <div className="bg-white rounded-xl p-5 border border-gray-200">
-      <h2 className="font-bold text-lg mb-4 text-gray-900">What-If Simulation</h2>
+      <h2 className="font-bold text-lg mb-4 text-gray-900 flex items-center justify-between">
+        <span>What-If Simulation</span>
+        {liveWeather && (
+          <span className="text-sm font-normal text-gray-600 flex items-center gap-2">
+            <WeatherIcon condition={liveWeather.condition} size={16} />
+            {liveWeather.temperature}°C
+          </span>
+        )}
+      </h2>
       
       <div className="space-y-4">
+        {/* Weather Status Banner */}
+        {liveWeather && (
+          <div className={`p-3 rounded-lg border ${
+            liveWeather.impacts.riskLevel === 'high' ? 'bg-red-50 border-red-200' :
+            liveWeather.impacts.riskLevel === 'medium' ? 'bg-yellow-50 border-yellow-200' :
+            'bg-green-50 border-green-200'
+          }`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <WeatherIcon condition={liveWeather.condition} size={20} />
+                <span className="font-medium text-sm">
+                  {liveWeather.location}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <span>💨 {liveWeather.windKph} km/h</span>
+                <span>💧 {liveWeather.humidity}%</span>
+                {liveWeather.isRainy && <span className="text-blue-600">🌧️ Rain</span>}
+              </div>
+            </div>
+            {weatherError && (
+              <div className="text-xs text-red-500 mt-1 flex items-center gap-1">
+                <AlertTriangle size={12} />
+                {weatherError}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Live Weather Toggle */}
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <input
+              type="checkbox"
+              checked={useLiveWeather}
+              onChange={handleUseLiveWeather}
+              className="w-4 h-4 text-purple-600 focus:ring-purple-500"
+            />
+            <span className="text-gray-700">Use Live Weather</span>
+          </label>
+          {weatherLoading && <Loader className="w-4 h-4 animate-spin text-purple-500" />}
+        </div>
+
         {/* Route Selection Dropdown */}
         <div>
           <label className="text-sm font-medium block mb-2 text-gray-700">
@@ -327,11 +708,22 @@ const SimulationControls = ({
           <select 
             className="w-full p-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent" 
             value={selectedRouteId} 
-            onChange={(e) => setSelectedRouteId(e.target.value)}
+            onChange={(e) => {
+              setSelectedRouteId(e.target.value);
+              // Refresh weather for new route
+              const route = enrichedRoutes.find(r => r.id === e.target.value);
+              if (route && useLiveWeather) {
+                const coords = extractCoordinates(route);
+                if (coords.length > 0) {
+                  const midPoint = coords[Math.floor(coords.length / 2)];
+                  fetchLiveWeather(midPoint.lat, midPoint.lng);
+                }
+              }
+            }}
             disabled={isLoading || enrichedRoutes.length === 0}
           >
             {isLoading ? (
-              <option>Loading routes...</option>
+              <option>Loading routes with live data...</option>
             ) : enrichedRoutes.length === 0 ? (
               <option>No routes available</option>
             ) : (
@@ -346,83 +738,41 @@ const SimulationControls = ({
             )}
           </select>
           
-          {/* Show route details with weather */}
+          {/* Route Details with Weather Impact */}
           {selectedRoute && !isLoading && (
-            <div className="mt-3 space-y-1.5 bg-gray-50 rounded-lg p-3 border border-gray-100">
+            <div className="mt-3 space-y-2 bg-gray-50 rounded-lg p-3 border border-gray-100">
               <div className="flex items-start gap-2 text-sm">
                 <MapPin className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
                   <span className="text-xs text-gray-500">From</span>
-                  <p className="font-medium text-gray-800">
-                    {selectedRoute.start_point?.name || 
-                     selectedRoute.origin_name || 
-                     (selectedRoute.start_point?.lat && selectedRoute.start_point?.lng ? 
-                       `${selectedRoute.start_point.lat.toFixed(4)}, ${selectedRoute.start_point.lng.toFixed(4)}` : 
-                       'Unknown')}
-                  </p>
+                  <p className="font-medium text-gray-800">{selectedRoute.origin_name || 'Unknown'}</p>
                 </div>
               </div>
               <div className="flex items-start gap-2 text-sm">
                 <MapPin className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
                   <span className="text-xs text-gray-500">To</span>
-                  <p className="font-medium text-gray-800">
-                    {selectedRoute.stops && selectedRoute.stops.length > 0 ? 
-                      (selectedRoute.stops[selectedRoute.stops.length - 1].name || 
-                       selectedRoute.destination_name ||
-                       (selectedRoute.stops[selectedRoute.stops.length - 1].lat && 
-                        selectedRoute.stops[selectedRoute.stops.length - 1].lng ? 
-                        `${selectedRoute.stops[selectedRoute.stops.length - 1].lat.toFixed(4)}, ${selectedRoute.stops[selectedRoute.stops.length - 1].lng.toFixed(4)}` : 
-                        'Unknown')) : 
-                      'Unknown'}
-                  </p>
+                  <p className="font-medium text-gray-800">{selectedRoute.destination_name || 'Unknown'}</p>
                 </div>
               </div>
               
-              {/* Live Weather Display */}
-              {selectedRoute.live_weather && (
-                <div className="mt-2 p-2 bg-blue-50 rounded-lg border border-blue-200">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {getWeatherIcon(selectedRoute.live_weather.condition)}
-                      <span className="text-xs font-medium text-gray-700">
-                        {selectedRoute.live_weather.condition}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Thermometer className="w-3 h-3 text-red-500" />
-                      <span className="text-xs font-bold text-gray-800">
-                        {selectedRoute.live_weather.temperature}°C
-                      </span>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1 mt-1 text-xs">
-                    {selectedRoute.live_weather.rainfall > 0 && (
-                      <div className="flex items-center gap-1">
-                        <CloudRain className="w-3 h-3 text-blue-500" />
-                        <span className="text-gray-600">{selectedRoute.live_weather.rainfall}mm</span>
-                      </div>
-                    )}
-                    {selectedRoute.live_weather.windSpeed > 0 && (
-                      <div className="flex items-center gap-1">
-                        <Wind className="w-3 h-3 text-gray-500" />
-                        <span className="text-gray-600">{selectedRoute.live_weather.windSpeed}km/h</span>
-                      </div>
-                    )}
-                    {selectedRoute.live_weather.severity > 0 && (
-                      <div className="flex items-center gap-1">
-                        <span className={`font-medium ${selectedRoute.live_weather.severity > 70 ? 'text-red-600' : selectedRoute.live_weather.severity > 40 ? 'text-yellow-600' : 'text-green-600'}`}>
-                          Severity: {selectedRoute.live_weather.severity}%
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-4 text-xs text-gray-500 mt-1 pt-1 border-t border-gray-200">
+              <div className="flex flex-wrap gap-3 text-xs text-gray-500 mt-1 pt-1 border-t border-gray-200">
                 {selectedRoute.duration_min && selectedRoute.duration_min !== 'N/A' && (
                   <span>⏱️ {selectedRoute.duration_min} min</span>
+                )}
+                {selectedRoute.weather && selectedRoute.weather.impacts && (
+                  <span className={`px-2 py-0.5 rounded ${
+                    selectedRoute.weather.impacts.riskLevel === 'high' ? 'bg-red-100 text-red-700' :
+                    selectedRoute.weather.impacts.riskLevel === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-green-100 text-green-700'
+                  }`}>
+                    {selectedRoute.weather.impacts.riskLevel.toUpperCase()} RISK
+                  </span>
+                )}
+                {selectedRoute.weather && selectedRoute.adjusted_duration && (
+                  <span className="text-blue-600">
+                    ⚡ Adjusted: {selectedRoute.adjusted_duration} min
+                  </span>
                 )}
                 {selectedRoute.estimated_cost && selectedRoute.estimated_cost !== 'N/A' && (
                   <span>💰 R{selectedRoute.estimated_cost}</span>
@@ -431,17 +781,37 @@ const SimulationControls = ({
                   <span>📏 {selectedRoute.distance_km} km</span>
                 )}
               </div>
+
+              {/* Weather Impact Details */}
+              {selectedRoute.weather && selectedRoute.weather.impacts && (
+                <div className="text-xs text-gray-600 pt-1 border-t border-gray-200">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <span className="text-gray-400">Speed</span>
+                      <div className="font-medium">
+                        {Math.round(selectedRoute.weather.impacts.speedMultiplier * 100)}%
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Congestion</span>
+                      <div className="font-medium">
+                        +{Math.round((selectedRoute.weather.impacts.congestionMultiplier - 1) * 100)}%
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Delay</span>
+                      <div className="font-medium">
+                        +{Math.round((selectedRoute.weather.impacts.delayMultiplier - 1) * 100)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-          
-          {enrichedRoutes.length === 0 && !isLoading && (
-            <p className="text-xs text-red-500 mt-1">No routes found in database</p>
-          )}
-          {enrichedRoutes.length > 0 && !isLoading && (
-            <p className="text-xs text-green-500 mt-1">✅ {enrichedRoutes.length} route(s) available</p>
           )}
         </div>
 
+        {/* Delay Slider */}
         <div>
           <label className="text-sm font-medium block mb-2 text-gray-700">
             Delay (minutes): <span className="font-semibold">{params.delay || 0}</span>
@@ -461,20 +831,30 @@ const SimulationControls = ({
           </div>
         </div>
         
+        {/* Weather Selection - Only South Africa weather types */}
         <div>
-          <label className="text-sm font-medium block mb-2 text-gray-700">Weather</label>
+          <label className="text-sm font-medium block mb-2 text-gray-700">
+            Weather Conditions
+          </label>
           <select 
             className="w-full p-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent" 
-            value={params.weather || 'moderate'} 
+            value={params.weather || 'sunny'} 
             onChange={handleWeatherChange}
+            disabled={useLiveWeather}
           >
-            <option value="clear">☀️ Clear</option>
-            <option value="moderate">🌧️ Moderate Rain</option>
-            <option value="severe">⛈️ Severe Storm</option>
+            {Object.values(SOUTH_AFRICA_WEATHER).map(weather => (
+              <option key={weather.id} value={weather.id}>
+                {weather.label}
+              </option>
+            ))}
           </select>
+          {useLiveWeather && (
+            <p className="text-xs text-blue-500 mt-1">Using live weather data</p>
+          )}
         </div>
         
-        <div className="flex items-center gap-4">
+        {/* Incident Toggles */}
+        <div className="flex flex-wrap items-center gap-4">
           <label className="flex items-center gap-2 cursor-pointer">
             <input 
               type="checkbox" 
@@ -495,11 +875,52 @@ const SimulationControls = ({
             <span className="text-sm text-gray-700">🚧 Road closure</span>
           </label>
         </div>
+
+        {/* Simulation Impact Preview */}
+        {routeMetrics && (
+          <div className="bg-purple-50 rounded-lg p-3 border border-purple-200">
+            <div className="flex items-center gap-2 text-sm font-medium text-purple-900 mb-2">
+              <AlertTriangle size={16} />
+              Simulation Impact
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="bg-white rounded p-2">
+                <span className="text-gray-500">Delay</span>
+                <div className="font-bold text-purple-700">
+                  +{routeMetrics.delayMinutes} min
+                </div>
+              </div>
+              <div className="bg-white rounded p-2">
+                <span className="text-gray-500">Speed Reduction</span>
+                <div className="font-bold text-purple-700">
+                  {Math.round(routeMetrics.speedReduction)}%
+                </div>
+              </div>
+              <div className="bg-white rounded p-2">
+                <span className="text-gray-500">Congestion</span>
+                <div className="font-bold text-purple-700">
+                  +{Math.round(routeMetrics.congestionIncrease)}%
+                </div>
+              </div>
+              <div className="bg-white rounded p-2">
+                <span className="text-gray-500">Risk Level</span>
+                <div className={`font-bold ${
+                  routeMetrics.riskLevel === 'high' ? 'text-red-600' :
+                  routeMetrics.riskLevel === 'medium' ? 'text-yellow-600' :
+                  'text-green-600'
+                }`}>
+                  {routeMetrics.riskLevel.toUpperCase()}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         
+        {/* Run Simulation Button */}
         <button 
           onClick={handleRunSimulation} 
           disabled={isLoading || enrichedRoutes.length === 0}
-          className="w-full bg-purple-600 text-white py-2 rounded-md font-medium hover:bg-purple-700 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-purple-600 text-white py-2.5 rounded-md font-medium hover:bg-purple-700 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? (
             <>
@@ -515,6 +936,31 @@ const SimulationControls = ({
             </>
           )}
         </button>
+
+        {/* Simulation History */}
+        {simulationHistory.length > 0 && (
+          <div className="mt-2">
+            <details className="text-xs">
+              <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
+                📊 Simulation History ({simulationHistory.length})
+              </summary>
+              <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
+                {simulationHistory.slice(-5).reverse().map((entry, index) => (
+                  <div key={index} className="bg-gray-50 p-2 rounded text-gray-600">
+                    <div className="flex justify-between">
+                      <span>{entry.routeName}</span>
+                      <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <div className="flex gap-2 text-gray-400">
+                      <span>Delay: +{entry.impact.delayMinutes}min</span>
+                      <span>Risk: {entry.impact.riskLevel}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
       </div>
     </div>
   );

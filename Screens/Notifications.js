@@ -636,7 +636,7 @@ export default function Notifications() {
       />
 
       <LinearGradient
-        colors={["#1E40AF", "#3B82F6"]}
+        colors={["#0A1F44", "#0A1F44"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.headerGradient}
