@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Navigation, MapPin } from "lucide-react";
+import { supabase } from "../../../lib/supabase";
 
 const API_BASE_URL = "http://localhost:5000/api";
 
@@ -10,40 +11,43 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
   const [loadWeight, setLoadWeight] = useState("");
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [assigningLoading, setAssigningLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [latestResult, setLatestResult] = useState(null);
   const [savedRoutes, setSavedRoutes] = useState([]);
   const [originResolved, setOriginResolved] = useState(null);
   const [destinationResolved, setDestinationResolved] = useState(null);
   const [resolvedRouteLabels, setResolvedRouteLabels] = useState({});
+  const [vehicles, setVehicles] = useState([]);
+  const [selectedVehicleId, setSelectedVehicleId] = useState("");
 
   const log = (...args) => console.log("[RouteOptimisationForm]", ...args);
 
-const formatConstraints = (constraints) => {
-  if (!constraints) return "No constraints set.";
+  const formatConstraints = (constraints) => {
+    if (!constraints) return "No constraints set.";
 
-  const parts = [];
+    const parts = [];
 
-  if (constraints.vehicleType) {
-    parts.push(`vehicle type is ${constraints.vehicleType}`);
-  }
+    if (constraints.vehicleType) {
+      parts.push(`vehicle type is ${constraints.vehicleType}`);
+    }
 
-  if (constraints.loadWeight !== null && constraints.loadWeight !== undefined) {
-    parts.push(`load weight is ${constraints.loadWeight} kg`);
-  }
+    if (constraints.loadWeight !== null && constraints.loadWeight !== undefined) {
+      parts.push(`load weight is ${constraints.loadWeight} kg`);
+    }
 
-  if (constraints.avoidTolls !== null && constraints.avoidTolls !== undefined) {
-    parts.push(`${constraints.avoidTolls ? "avoid" : "allow"} toll roads`);
-  }
+    if (constraints.avoidTolls !== null && constraints.avoidTolls !== undefined) {
+      parts.push(`${constraints.avoidTolls ? "avoid" : "allow"} toll roads`);
+    }
 
-  if (constraints.avoidHighways !== null && constraints.avoidHighways !== undefined) {
-    parts.push(`${constraints.avoidHighways ? "avoid" : "allow"} highways`);
-  }
+    if (constraints.avoidHighways !== null && constraints.avoidHighways !== undefined) {
+      parts.push(`${constraints.avoidHighways ? "avoid" : "allow"} highways`);
+    }
 
-  return parts.length > 0
-    ? `Route requires that ${parts.join(", ")}.`
-    : "No constraints set.";
-};
+    return parts.length > 0
+      ? `Route requires that ${parts.join(", ")}.`
+      : "No constraints set.";
+  };
 
   const parseResponse = async (response, context) => {
     const text = await response.text();
@@ -61,6 +65,29 @@ const formatConstraints = (constraints) => {
     return data;
   };
 
+  const loadVehicles = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("vehicles")
+        .select("vehicle_id, registration_number, driver_id, route_id")
+        .not("driver_id", "is", null)
+        .order("vehicle_id", { ascending: true });
+
+      if (error) throw error;
+
+      setVehicles(
+        (data || []).map((row) => ({
+          id: row.vehicle_id,
+          registrationNumber: row.registration_number || "",
+          driverId: row.driver_id || "",
+          routeId: row.route_id || "",
+        }))
+      );
+    } catch (err) {
+      setMessage(err.message || "Failed to load vehicles");
+    }
+  };
+
   const loadSavedRoutes = async () => {
     log("Loading saved routes...");
     setHistoryLoading(true);
@@ -68,8 +95,6 @@ const formatConstraints = (constraints) => {
 
     try {
       const url = `${API_BASE_URL}/optimized-routes`;
-      log("GET URL:", url);
-
       const response = await fetch(url);
       const data = await parseResponse(response, "GET /optimized-routes");
 
@@ -91,8 +116,6 @@ const formatConstraints = (constraints) => {
     log("Geocoding place:", query);
 
     const url = `${API_BASE_URL}/geocode?query=${encodeURIComponent(query)}`;
-    log("Geocode URL:", url);
-
     const response = await fetch(url);
     const data = await parseResponse(response, "GET /geocode");
 
@@ -107,8 +130,6 @@ const formatConstraints = (constraints) => {
     log("Reverse geocoding point:", { lat, lng });
 
     const url = `${API_BASE_URL}/reverse-geocode?lat=${lat}&lng=${lng}`;
-    log("Reverse geocode URL:", url);
-
     const response = await fetch(url);
     const data = await parseResponse(response, "GET /reverse-geocode");
 
@@ -129,18 +150,14 @@ const formatConstraints = (constraints) => {
           ? await reverseGeocodePoint(item.start_point.lat, item.start_point.lng)
           : null;
 
-        const stopLabels = Array.isArray(item.stops)
-          ? await Promise.all(
-              item.stops.map((stop) => reverseGeocodePoint(stop.lat, stop.lng))
-            )
-          : [];
+        const endLabel = item.end_point
+          ? await reverseGeocodePoint(item.end_point.lat, item.end_point.lng)
+          : null;
 
         next[item.id] = {
           start: startLabel?.label || "Unknown",
-          stops: stopLabels.map((s) => s.label),
+          stops: endLabel?.label ? [endLabel.label] : [],
         };
-
-        log(`Resolved labels for route ${item.id}:`, next[item.id]);
       } catch (error) {
         console.error(`[RouteOptimisationForm] Failed resolving route ${item.id}:`, error);
         next[item.id] = {
@@ -155,6 +172,7 @@ const formatConstraints = (constraints) => {
 
   useEffect(() => {
     loadSavedRoutes();
+    loadVehicles();
   }, []);
 
   useEffect(() => {
@@ -162,6 +180,42 @@ const formatConstraints = (constraints) => {
       resolveSavedRoutes();
     }
   }, [savedRoutes]);
+
+  const assignRouteToVehicle = async (vehicleId, routeId) => {
+    if (!vehicleId) {
+      setMessage("Please select a vehicle with a driver first.");
+      return;
+    }
+
+    if (!routeId) {
+      setMessage("Route id not found.");
+      return;
+    }
+
+    setAssigningLoading(true);
+    setMessage("");
+
+    try {
+      const { error } = await supabase
+        .from("vehicles")
+        .update({ route_id: routeId })
+        .eq("vehicle_id", vehicleId);
+
+      if (error) throw error;
+
+      setVehicles((prev) =>
+        prev.map((v) =>
+          String(v.id) === String(vehicleId) ? { ...v, routeId } : v
+        )
+      );
+
+      setMessage("Route assigned to vehicle successfully.");
+    } catch (err) {
+      setMessage(err.message || "Failed to assign route to vehicle");
+    } finally {
+      setAssigningLoading(false);
+    }
+  };
 
   const handleGenerateRoutes = async () => {
     log("Generate clicked");
@@ -224,9 +278,27 @@ const formatConstraints = (constraints) => {
 
       setLatestResult(data);
       setMessage("Route optimized successfully.");
-      log("Optimization success:", data);
+
+      const { data: latestRoute, error: latestRouteError } = await supabase
+        .from("optimized_routes")
+        .select("id")
+        .order("id", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (latestRouteError) {
+        throw latestRouteError;
+      }
+
+      const routeId = latestRoute?.id;
+      console.log("latest route id:", routeId);
+
+      if (routeId && selectedVehicleId) {
+        await assignRouteToVehicle(selectedVehicleId, routeId);
+      }
 
       await loadSavedRoutes();
+      await loadVehicles();
     } catch (error) {
       console.error("[RouteOptimisationForm] handleGenerateRoutes error:", error);
       setMessage(error.message);
@@ -234,6 +306,8 @@ const formatConstraints = (constraints) => {
       setLoading(false);
     }
   };
+
+  const assignedVehicles = vehicles.filter((v) => v.driverId);
 
   return (
     <div className="bg-white rounded-xl p-5 border border-gray-200">
@@ -275,35 +349,28 @@ const formatConstraints = (constraints) => {
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-sm text-gray-600 block mb-1">Vehicle</label>
-            <select
-              className="w-full p-2 border border-gray-300 rounded-md text-sm"
-              value={vehicleType}
-              onChange={(e) => setVehicleType(e.target.value)}
-            >
-              <option value="truck">Truck</option>
-              <option value="van">Van</option>
-              <option value="car">Car</option>
-              <option value="motorcycle">Motorcycle</option>
-            </select>
-          </div>
+          {/* vehicle type and load inputs intentionally kept commented out */}
+        </div>
 
-          <div>
-            <label className="text-sm text-gray-600 block mb-1">Load (kg)</label>
-            <input
-              type="number"
-              className="w-full p-2 border border-gray-300 rounded-md text-sm"
-              value={loadWeight}
-              onChange={(e) => setLoadWeight(e.target.value)}
-              placeholder="Optional"
-            />
-          </div>
+        <div>
+          <label className="text-sm text-gray-600 block mb-1">Assign to Vehicle</label>
+          <select
+            className="w-full p-2 border border-gray-300 rounded-md text-sm"
+            value={selectedVehicleId}
+            onChange={(e) => setSelectedVehicleId(e.target.value)}
+          >
+            <option value="">Select vehicle with assigned driver</option>
+            {assignedVehicles.map((vehicle) => (
+              <option key={vehicle.id} value={vehicle.id}>
+                {vehicle.registrationNumber}
+              </option>
+            ))}
+          </select>
         </div>
 
         <button
           onClick={handleGenerateRoutes}
-          disabled={loading}
+          disabled={loading || assigningLoading}
           className="w-full bg-blue-600 text-white py-2 rounded-md font-medium hover:bg-blue-700 transition flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
         >
           <Navigation className="w-4 h-4" />
@@ -338,74 +405,74 @@ const formatConstraints = (constraints) => {
           ) : savedRoutes.length === 0 ? (
             <p className="text-sm text-gray-500">No saved routes yet.</p>
           ) : (
-          <div className="space-y-4">
-            {savedRoutes.map((item) => (
-              <div
-                key={item.id}
-                className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:shadow-md transition"
-              >
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <div>
-                    <h4 className="text-base font-semibold text-gray-900">
-                      Route #{item.id}
-                    </h4>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {item.created_at
-                        ? new Date(item.created_at).toLocaleString()
-                        : "Unknown date"}
-                    </p>
+            <div className="space-y-4">
+              {savedRoutes.map((item) => (
+                <div
+                  key={item.id}
+                  className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:shadow-md transition"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <h4 className="text-base font-semibold text-gray-900">
+                        Route #{item.id}
+                      </h4>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {item.created_at
+                          ? new Date(item.created_at).toLocaleString()
+                          : "Unknown date"}
+                      </p>
+                    </div>
+
+                    <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                      {item.result?.distanceKm ?? "N/A"} km
+                    </span>
                   </div>
 
-                  <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                    {item.result?.distanceKm ?? "N/A"} km
-                  </span>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-lg bg-gray-50 p-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        Start
+                      </p>
+                      <p className="mt-1 text-sm font-medium text-gray-900">
+                        {resolvedRouteLabels[item.id]?.start || "Resolving..."}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg bg-gray-50 p-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        Stops
+                      </p>
+                      <p className="mt-1 text-sm text-gray-900">
+                        {resolvedRouteLabels[item.id]?.stops?.length > 0
+                          ? resolvedRouteLabels[item.id].stops.join(", ")
+                          : "Resolving..."}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg bg-gray-50 p-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        Constraints
+                      </p>
+                      <p className="mt-1 text-sm text-gray-900">
+                        {formatConstraints(item.constraints)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-lg bg-gray-50 p-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        Timing
+                      </p>
+                      <p className="mt-1 text-sm text-gray-900">
+                        Duration: {item.result?.durationMin ?? "N/A"} min
+                      </p>
+                      <p className="text-sm text-gray-900">
+                        Traffic delay: {item.result?.trafficDelayMin ?? "N/A"} min
+                      </p>
+                    </div>
+                  </div>
                 </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-lg bg-gray-50 p-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                      Start
-                    </p>
-                    <p className="mt-1 text-sm font-medium text-gray-900">
-                      {resolvedRouteLabels[item.id]?.start || "Resolving..."}
-                    </p>
-                  </div>
-
-                  <div className="rounded-lg bg-gray-50 p-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                      Stops
-                    </p>
-                    <p className="mt-1 text-sm text-gray-900">
-                      {resolvedRouteLabels[item.id]?.stops?.length > 0
-                        ? resolvedRouteLabels[item.id].stops.join(", ")
-                        : "Resolving..."}
-                    </p>
-                  </div>
-
-                  <div className="rounded-lg bg-gray-50 p-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                      Constraints
-                    </p>
-                    <p className="mt-1 text-sm text-gray-900">
-                      {formatConstraints(item.constraints)}
-                    </p>
-                  </div>
-
-                  <div className="rounded-lg bg-gray-50 p-3">
-                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                      Timing
-                    </p>
-                    <p className="mt-1 text-sm text-gray-900">
-                      Duration: {item.result?.durationMin ?? "N/A"} min
-                    </p>
-                    <p className="text-sm text-gray-900">
-                      Traffic delay: {item.result?.trafficDelayMin ?? "N/A"} min
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
