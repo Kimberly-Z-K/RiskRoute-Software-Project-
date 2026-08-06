@@ -161,7 +161,6 @@ const SimulationControls = ({
   const [affectedReasons, setAffectedReasons] = useState([]);
   const [alternativeRouteNames, setAlternativeRouteNames] = useState([]);
   const [showAlternatives, setShowAlternatives] = useState(false);
-  const [autoRunEnabled, setAutoRunEnabled] = useState(false);
   const [alternativeRouteSuggestions, setAlternativeRouteSuggestions] = useState([]);
   
   const abortControllerRef = useRef(null);
@@ -922,18 +921,6 @@ const SimulationControls = ({
     alternativeRouteSuggestions
   ]);
 
-  // Auto-run simulation when params change and autoRun is enabled
-  useEffect(() => {
-    if (autoRunEnabled && selectedRouteId && !isSimulating) {
-      // Debounce the auto-run to prevent too many simulations
-      const timer = setTimeout(() => {
-        runEnhancedSimulation();
-      }, 500);
-      
-      return () => clearTimeout(timer);
-    }
-  }, [params.accident, params.roadClosure, params.delay, params.weather, autoRunEnabled, selectedRouteId, isSimulating, runEnhancedSimulation]);
-
   // Process routes when they change
   useEffect(() => {
     const processRoutes = async () => {
@@ -985,7 +972,7 @@ const SimulationControls = ({
   useEffect(() => {
     if (simulationResults) {
       setSimulationResults(null);
-      setVerificationStatus('Parameters changed. Ready for new simulation.');
+      setVerificationStatus('Parameters changed. Click "Run Simulation" to see updated results.');
     }
   }, [params.delay, params.weather, params.accident, params.roadClosure]);
 
@@ -1045,7 +1032,7 @@ const SimulationControls = ({
         setAlternativeRoutes([]);
         setAlternativeRouteNames([]);
         setShowAlternatives(false);
-        setVerificationStatus('Accident toggled. Run simulation to see updated results.');
+        setVerificationStatus('Accident toggled. Click "Run Simulation" to see updated results.');
       }
     }
   };
@@ -1080,7 +1067,7 @@ const SimulationControls = ({
         setAlternativeRoutes([]);
         setAlternativeRouteNames([]);
         setShowAlternatives(false);
-        setVerificationStatus('Road closure toggled. Run simulation to see updated results.');
+        setVerificationStatus('Road closure toggled. Click "Run Simulation" to see updated results.');
       }
     }
   };
@@ -1101,15 +1088,6 @@ const SimulationControls = ({
   
   const handleRunSimulation = () => {
     runEnhancedSimulation();
-  };
-
-  const toggleAutoRun = () => {
-    setAutoRunEnabled(prev => !prev);
-    if (!autoRunEnabled) {
-      setVerificationStatus('Auto-run enabled. Simulations will run when parameters change.');
-    } else {
-      setVerificationStatus('Auto-run disabled. Click "Run Simulation" to simulate.');
-    }
   };
 
   // Get selected route
@@ -1226,22 +1204,6 @@ const SimulationControls = ({
           {weatherLoading && <Loader className="w-4 h-4 animate-spin text-purple-500" />}
           {liveWeather && useLiveWeather && (
             <span className="text-xs text-green-600">✓ Live data</span>
-          )}
-        </div>
-
-        {/* Auto-Run Toggle */}
-        <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 cursor-pointer text-sm">
-            <input
-              type="checkbox"
-              checked={autoRunEnabled}
-              onChange={toggleAutoRun}
-              className="w-4 h-4 text-green-600 focus:ring-green-500"
-            />
-            <span className="text-gray-700">Auto-Run Simulation</span>
-          </label>
-          {autoRunEnabled && (
-            <span className="text-xs text-green-600">✓ Will run when parameters change</span>
           )}
         </div>
 
@@ -1408,7 +1370,7 @@ const SimulationControls = ({
                       {params.accident && ' 🚗 accident'} 
                       {params.accident && params.roadClosure && ' and '} 
                       {params.roadClosure && ' 🚧 road closure'}. 
-                      Run simulation to compare travel times.
+                      Click "Run Simulation" to compare travel times.
                     </span>
                   </div>
                 </div>
@@ -1464,7 +1426,7 @@ const SimulationControls = ({
                   ))}
                 </ul>
                 <div className="text-xs text-red-500 mt-1">
-                  Run simulation to find alternative routes
+                  Click "Run Simulation" to find alternative routes
                 </div>
               </div>
             </div>
