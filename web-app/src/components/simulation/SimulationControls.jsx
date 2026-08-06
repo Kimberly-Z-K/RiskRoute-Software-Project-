@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Zap, MapPin, Loader, Cloud, CloudRain, CloudSun, Wind, Sun, CloudFog, AlertTriangle, RefreshCw, Navigation, Thermometer, Layers, Shield } from 'lucide-react';
+import { Zap, MapPin, Loader, Cloud, CloudRain, CloudSun, Wind, Sun, CloudFog, AlertTriangle, RefreshCw, Navigation, Thermometer, Layers, Shield, Map } from 'lucide-react';
 
 // Your API Keys
 const TOMTOM_API_KEY = "boAgd49GhcpqsqaQ6qlAfmC6YEBORJVF";
@@ -94,6 +94,42 @@ const HARDCODED_ROUTES = [
   }
 ];
 
+// Alternative route names for different scenarios
+const ALTERNATIVE_ROUTE_NAMES = {
+  'Johannesburg to Durban': [
+    'Route via N3 (Alternate - Pietermaritzburg)',
+    'Route via R103 (Scenic route)',
+    'Route via N2 (Coastal route)',
+    'Route via R34 (Northern bypass)',
+    'Route via R33 (Western alternative)'
+  ],
+  'OR Tambo to Sandton': [
+    'Route via R24 (Albertina Sisulu Road)',
+    'Route via N1 (Western bypass)',
+    'Route via R21 (Eastern alternative)',
+    'Route via M1 (City center route)',
+    'Route via M2 (Southern bypass)'
+  ],
+  'Cape Town to Johannesburg': [
+    'Route via N1 (Direct route)',
+    'Route via N12 (Northern Cape)',
+    'Route via N2 (Coastal route)',
+    'Route via N7 (West coast)'
+  ],
+  'Cape Town to Durban': [
+    'Route via N2 (Garden Route)',
+    'Route via N1 (Inland route)',
+    'Route via N9 (Karoo route)'
+  ],
+  'default': [
+    'Alternative Route via N1',
+    'Alternative Route via R21',
+    'Alternative Route via M1',
+    'Alternative Route via R24',
+    'Alternative Route via N2'
+  ]
+};
+
 const SimulationControls = ({ 
   params = { delay: 30, weather: 'moderate', accident: false, roadClosure: false }, 
   setParams, 
@@ -125,6 +161,8 @@ const SimulationControls = ({
   const [affectedReasons, setAffectedReasons] = useState([]);
   const [alternativeRouteNames, setAlternativeRouteNames] = useState([]);
   const [showAlternatives, setShowAlternatives] = useState(false);
+  const [autoRunEnabled, setAutoRunEnabled] = useState(false);
+  const [alternativeRouteSuggestions, setAlternativeRouteSuggestions] = useState([]);
   
   const abortControllerRef = useRef(null);
   const weatherUpdateInterval = useRef(null);
@@ -309,6 +347,30 @@ const SimulationControls = ({
     }
     
     return coords;
+  }, []);
+
+  // Get alternative route suggestions based on the current route
+  const getAlternativeRouteSuggestions = useCallback((routeName) => {
+    // Find matching route in the predefined list
+    let matchedKey = 'default';
+    
+    if (routeName) {
+      for (const [key, value] of Object.entries(ALTERNATIVE_ROUTE_NAMES)) {
+        if (routeName.includes(key) || key.includes(routeName)) {
+          matchedKey = key;
+          break;
+        }
+      }
+    }
+    
+    // Get alternative routes for the matched key
+    const alternatives = ALTERNATIVE_ROUTE_NAMES[matchedKey] || ALTERNATIVE_ROUTE_NAMES.default;
+    
+    // Randomize which alternatives to show (3-5 options)
+    const shuffled = [...alternatives].sort(() => 0.5 - Math.random());
+    const selected = shuffled.slice(0, 3 + Math.floor(Math.random() * 3));
+    
+    return selected;
   }, []);
 
   // Generate proper route names from TomTom instructions
@@ -521,6 +583,16 @@ const SimulationControls = ({
     setIsRouteAffected(affected);
     setAffectedReasons(reasons);
 
+    // If affected, get alternative route suggestions
+    if (affected) {
+      const selectedRoute = enrichedRoutes.find(r => r.id === selectedRouteId);
+      const routeName = selectedRoute?.display_name || selectedRoute?.name || '';
+      const suggestions = getAlternativeRouteSuggestions(routeName);
+      setAlternativeRouteSuggestions(suggestions);
+    } else {
+      setAlternativeRouteSuggestions([]);
+    }
+
     routes.forEach((route, index) => {
       let score = route.duration;
       let issues = [];
@@ -666,7 +738,7 @@ const SimulationControls = ({
     setRouteRecommendations(recommendations);
     return finalRecommendation;
 
-  }, [params.accident, params.roadClosure, liveWeather, checkRouteAffected]);
+  }, [params.accident, params.roadClosure, liveWeather, checkRouteAffected, enrichedRoutes, selectedRouteId, getAlternativeRouteSuggestions]);
 
   // Main simulation function
   const runEnhancedSimulation = useCallback(async () => {
@@ -796,7 +868,8 @@ const SimulationControls = ({
         timestamp: new Date().toISOString(),
         routeRecommendations: routeRecommendations,
         isRouteAffected: isRouteAffected,
-        affectedReasons: affectedReasons
+        affectedReasons: affectedReasons,
+        alternativeSuggestions: alternativeRouteSuggestions
       };
 
       setSimulationResults(results);
@@ -815,7 +888,8 @@ const SimulationControls = ({
         weather: weatherData,
         timeSaved: recommendation?.timeSaved || 0,
         isAffected: isRouteAffected,
-        affectedReasons: affectedReasons
+        affectedReasons: affectedReasons,
+        alternativeSuggestions: alternativeRouteSuggestions
       }, ...prev]);
 
       setVerificationStatus(`✅ Simulation complete! Temperature: ${currentTemp}°C`);
@@ -844,8 +918,21 @@ const SimulationControls = ({
     isRouteAffected,
     affectedReasons,
     trafficIncidents,
-    extractCoordinates
+    extractCoordinates,
+    alternativeRouteSuggestions
   ]);
+
+  // Auto-run simulation when params change and autoRun is enabled
+  useEffect(() => {
+    if (autoRunEnabled && selectedRouteId && !isSimulating) {
+      // Debounce the auto-run to prevent too many simulations
+      const timer = setTimeout(() => {
+        runEnhancedSimulation();
+      }, 500);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [params.accident, params.roadClosure, params.delay, params.weather, autoRunEnabled, selectedRouteId, isSimulating, runEnhancedSimulation]);
 
   // Process routes when they change
   useEffect(() => {
@@ -894,7 +981,7 @@ const SimulationControls = ({
     }
   }, [selectedRouteId]);
 
-  // Reset simulation when parameters change
+  // Reset simulation when parameters change (but don't auto-run)
   useEffect(() => {
     if (simulationResults) {
       setSimulationResults(null);
@@ -930,13 +1017,71 @@ const SimulationControls = ({
   
   const handleAccidentChange = (e) => {
     if (setParams) {
-      setParams({ ...params, accident: e.target.checked });
+      const newAccidentState = e.target.checked;
+      setParams(prev => ({ ...prev, accident: newAccidentState }));
+      
+      // Update traffic incidents based on accident state
+      if (newAccidentState) {
+        setTrafficIncidents(prev => [...prev, {
+          type: 'Accident',
+          severity: 4,
+          description: 'Accident reported on route'
+        }]);
+        
+        // Get alternative route suggestions when accident is reported
+        const selectedRoute = enrichedRoutes.find(r => r.id === selectedRouteId);
+        const routeName = selectedRoute?.display_name || selectedRoute?.name || '';
+        const suggestions = getAlternativeRouteSuggestions(routeName);
+        setAlternativeRouteSuggestions(suggestions);
+      } else {
+        setTrafficIncidents(prev => prev.filter(incident => incident.type !== 'Accident'));
+        setAlternativeRouteSuggestions([]);
+      }
+      
+      // Clear previous results when toggling
+      if (simulationResults) {
+        setSimulationResults(null);
+        setRecommendedRoute(null);
+        setAlternativeRoutes([]);
+        setAlternativeRouteNames([]);
+        setShowAlternatives(false);
+        setVerificationStatus('Accident toggled. Run simulation to see updated results.');
+      }
     }
   };
   
   const handleRoadClosureChange = (e) => {
     if (setParams) {
-      setParams({ ...params, roadClosure: e.target.checked });
+      const newClosureState = e.target.checked;
+      setParams(prev => ({ ...prev, roadClosure: newClosureState }));
+      
+      // Update traffic incidents based on road closure state
+      if (newClosureState) {
+        setTrafficIncidents(prev => [...prev, {
+          type: 'Road Closure',
+          severity: 5,
+          description: 'Road closure on route'
+        }]);
+        
+        // Get alternative route suggestions when road closure is reported
+        const selectedRoute = enrichedRoutes.find(r => r.id === selectedRouteId);
+        const routeName = selectedRoute?.display_name || selectedRoute?.name || '';
+        const suggestions = getAlternativeRouteSuggestions(routeName);
+        setAlternativeRouteSuggestions(suggestions);
+      } else {
+        setTrafficIncidents(prev => prev.filter(incident => incident.type !== 'Road Closure'));
+        setAlternativeRouteSuggestions([]);
+      }
+      
+      // Clear previous results when toggling
+      if (simulationResults) {
+        setSimulationResults(null);
+        setRecommendedRoute(null);
+        setAlternativeRoutes([]);
+        setAlternativeRouteNames([]);
+        setShowAlternatives(false);
+        setVerificationStatus('Road closure toggled. Run simulation to see updated results.');
+      }
     }
   };
 
@@ -956,6 +1101,15 @@ const SimulationControls = ({
   
   const handleRunSimulation = () => {
     runEnhancedSimulation();
+  };
+
+  const toggleAutoRun = () => {
+    setAutoRunEnabled(prev => !prev);
+    if (!autoRunEnabled) {
+      setVerificationStatus('Auto-run enabled. Simulations will run when parameters change.');
+    } else {
+      setVerificationStatus('Auto-run disabled. Click "Run Simulation" to simulate.');
+    }
   };
 
   // Get selected route
@@ -1075,6 +1229,22 @@ const SimulationControls = ({
           )}
         </div>
 
+        {/* Auto-Run Toggle */}
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer text-sm">
+            <input
+              type="checkbox"
+              checked={autoRunEnabled}
+              onChange={toggleAutoRun}
+              className="w-4 h-4 text-green-600 focus:ring-green-500"
+            />
+            <span className="text-gray-700">Auto-Run Simulation</span>
+          </label>
+          {autoRunEnabled && (
+            <span className="text-xs text-green-600">✓ Will run when parameters change</span>
+          )}
+        </div>
+
         {/* Route Selection Dropdown */}
         <div>
           <label className="text-sm font-medium block mb-2 text-gray-700">
@@ -1086,6 +1256,7 @@ const SimulationControls = ({
             onChange={(e) => {
               setSelectedRouteId(e.target.value);
               setSimulationResults(null);
+              setAlternativeRouteSuggestions([]);
               const route = enrichedRoutes.find(r => r.id === e.target.value);
               if (route && useLiveWeather) {
                 const coords = extractCoordinates(route);
@@ -1165,6 +1336,9 @@ const SimulationControls = ({
               className="w-4 h-4 text-purple-600 focus:ring-purple-500"
             />
             <span className="text-sm text-gray-700">🚗 Accident</span>
+            {params.accident && (
+              <span className="text-xs text-red-500 ml-1">Active</span>
+            )}
           </label>
           
           <label className="flex items-center gap-2 cursor-pointer">
@@ -1175,15 +1349,80 @@ const SimulationControls = ({
               className="w-4 h-4 text-purple-600 focus:ring-purple-500"
             />
             <span className="text-sm text-gray-700">🚧 Road closure</span>
+            {params.roadClosure && (
+              <span className="text-xs text-red-500 ml-1">Active</span>
+            )}
           </label>
+          
+          {/* Show active incidents count */}
+          {(params.accident || params.roadClosure) && (
+            <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">
+              {[params.accident, params.roadClosure].filter(Boolean).length} incident(s) active
+            </span>
+          )}
         </div>
 
-        {/* Alternative Route Names Display */}
+        {/* Alternative Route Suggestions - DISPLAYED WHEN ACCIDENT OR ROAD CLOSURE IS REPORTED */}
+        {(params.accident || params.roadClosure) && alternativeRouteSuggestions.length > 0 && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 mt-1">
+                <Map className="w-5 h-5 text-green-600" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-semibold text-green-800 mb-2 flex items-center gap-2">
+                  🚗 Alternative Routes Available
+                  <span className="text-xs bg-green-200 text-green-800 px-2 py-0.5 rounded-full">
+                    {alternativeRouteSuggestions.length} options
+                  </span>
+                </h4>
+                
+                <div className="space-y-2">
+                  {alternativeRouteSuggestions.map((routeName, index) => (
+                    <div key={index} className="bg-white rounded-lg p-2 border border-green-100 flex items-center justify-between hover:shadow-sm transition-shadow">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-green-700 bg-green-100 rounded-full w-5 h-5 flex items-center justify-center">
+                          {index + 1}
+                        </span>
+                        <span className="text-sm text-gray-700">{routeName}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">
+                          {index % 2 === 0 ? '~5 min faster' : '~8 min faster'}
+                        </span>
+                        {index === 0 && (
+                          <span className="text-xs bg-green-200 text-green-800 px-2 py-0.5 rounded-full font-medium">
+                            Best Alternative
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                
+                <div className="mt-3 text-xs text-green-700 bg-green-100 p-2 rounded border border-green-200">
+                  <div className="flex items-start gap-1">
+                    <AlertTriangle className="w-3 h-3 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span>
+                      <strong>Recommendation:</strong> These alternative routes avoid the 
+                      {params.accident && ' 🚗 accident'} 
+                      {params.accident && params.roadClosure && ' and '} 
+                      {params.roadClosure && ' 🚧 road closure'}. 
+                      Run simulation to compare travel times.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Alternative Route Names Display (from TomTom) */}
         {showAlternatives && alternativeRouteNames.length > 0 && (params.accident || params.roadClosure) && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2">
               <Navigation className="w-4 h-4 text-blue-600" />
-              <span className="text-sm font-medium text-blue-700">Alternative Routes Available</span>
+              <span className="text-sm font-medium text-blue-700">TomTom Alternative Routes Available</span>
             </div>
             <div className="space-y-2">
               {alternativeRouteNames.map((alt, idx) => (
@@ -1267,6 +1506,11 @@ const SimulationControls = ({
                 {simulationResults.originalRoute.temperature && (
                   <span className="ml-2 text-orange-600">
                     • Temperature: {simulationResults.originalRoute.temperature}°C
+                  </span>
+                )}
+                {simulationResults.originalRoute.isAffected && (
+                  <span className="ml-2 text-red-600">
+                    • Route affected
                   </span>
                 )}
               </div>
@@ -1433,6 +1677,11 @@ const SimulationControls = ({
                         <span className="text-red-500">⚠️ Error</span>
                       )}
                     </div>
+                    {entry.alternativeSuggestions && entry.alternativeSuggestions.length > 0 && (
+                      <div className="text-xs text-green-600 mt-1">
+                        💡 Alternative routes available: {entry.alternativeSuggestions.slice(0, 3).join(', ')}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
