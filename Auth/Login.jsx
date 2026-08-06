@@ -24,25 +24,63 @@ export default function Login({ navigation }) {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
-
 
   const [showMfaModal, setShowMfaModal] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [currentUserId, setCurrentUserId] = useState(null);
 
-  const handleLogin = async () => {
-    try {
-      if (!email || !password) {
-        Alert.alert('Error', 'Please enter email and password');
-        return;
-      }
 
+  const validateEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!email) {
+      return 'Email is required';
+    } else if (!emailRegex.test(email)) {
+      return 'Please enter a valid email address';
+    }
+    return '';
+  };
+
+  const validatePassword = (password) => {
+    if (!password) {
+      return 'Password is required';
+    } else if (password.length < 6) {
+      return 'Password must be at least 6 characters';
+    }
+    return '';
+  };
+
+  const handleEmailChange = (text) => {
+    setEmail(text);
+    const error = validateEmail(text);
+    setEmailError(error);
+  };
+
+  const handlePasswordChange = (text) => {
+    setPassword(text);
+    const error = validatePassword(text);
+    setPasswordError(error);
+  };
+
+  const handleLogin = async () => {
+    const emailValidationError = validateEmail(email);
+    const passwordValidationError = validatePassword(password);
+
+    setEmailError(emailValidationError);
+    setPasswordError(passwordValidationError);
+
+    if (emailValidationError || passwordValidationError) {
+      Alert.alert('Validation Error', 'Please fix the errors before proceeding');
+      return;
+    }
+
+    try {
       setIsLoggingIn(true);
 
-      // Authenticate password credentials
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -53,10 +91,8 @@ export default function Login({ navigation }) {
       const userId = data.user.id;
       setCurrentUserId(userId);
 
-      // Generate a random 6-digit code
       const generatedCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-      // Save it to database tracking table
       const { error: dbError } = await supabase
         .from('email_2fa_codes')
         .insert([{ user_id: userId, code: generatedCode }]);
@@ -65,11 +101,12 @@ export default function Login({ navigation }) {
 
       console.log(`[SECURITY] 2FA Code generated for user: ${generatedCode}`);
 
-      // Open the modal
       setShowMfaModal(true);
 
     } catch (err) {
       Alert.alert('Login Failed', err.message);
+      setPassword('');
+      setPasswordError('');
     } finally {
       setIsLoggingIn(false);
     }
@@ -78,15 +115,24 @@ export default function Login({ navigation }) {
   const { setIsVerified } = useAuth();
 
   const handleVerifyCode = async () => {
-    if (verificationCode.length !== 6) {
+    if (!verificationCode) {
       Alert.alert('Invalid Code', 'Please enter the 6-digit code sent to your email.');
+      return;
+    }
+
+    if (verificationCode.length !== 6) {
+      Alert.alert('Invalid Code', 'Please enter exactly 6 digits.');
+      return;
+    }
+
+    if (!/^\d{6}$/.test(verificationCode)) {
+      Alert.alert('Invalid Code', 'Please enter only numbers.');
       return;
     }
 
     try {
       setIsVerifying(true);
 
-      // Fetch the latest generated code for this specific user
       const { data, error } = await supabase
         .from('email_2fa_codes')
         .select('code')
@@ -97,10 +143,6 @@ export default function Login({ navigation }) {
       if (error) throw error;
 
       if (data && data.length > 0 && data[0].code === verificationCode) {
-        // setIsVerified(true);
-        // Alert.alert('Success', 'Identity verified. SUCCESS. PUSH TO REPO. YOU CAN SLEEP');
-        // setShowMfaModal(false);
-        // setVerificationCode('');
         await setIsVerified(true);
         setShowMfaModal(false);
         setVerificationCode("");
@@ -108,6 +150,7 @@ export default function Login({ navigation }) {
 
       } else {
         Alert.alert('Access Denied', 'Incorrect verification code.');
+        setVerificationCode('');
       }
     } catch (err) {
       Alert.alert('Verification Error', err.message);
@@ -121,6 +164,10 @@ export default function Login({ navigation }) {
     setShowMfaModal(false);
     setVerificationCode('');
     setCurrentUserId(null);
+    setEmail('');
+    setPassword('');
+    setEmailError('');
+    setPasswordError('');
     Alert.alert('Logged Out', 'You have been shut out due to unverified access.');
   };
 
@@ -146,31 +193,40 @@ export default function Login({ navigation }) {
           <View style={styles.InputS}>
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Email</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="mail-outline" size={20} color="#9CA3AF" />
+              <View style={[
+                styles.inputWrapper,
+                emailError ? styles.inputError : null
+              ]}>
+                <Ionicons name="mail-outline" size={20} color={emailError ? "#DC2626" : "#9CA3AF"} />
                 <TextInput
                   style={styles.input}
                   placeholder="email@gmail.com"
                   value={email}
-                  onChangeText={setEmail}
+                  onChangeText={handleEmailChange}
                   keyboardType="email-address"
                   autoCapitalize="none"
-                  editable={!isLoggingIn} // Disable edits while working
+                  editable={!isLoggingIn}
                 />
               </View>
+              {emailError ? (
+                <Text style={styles.errorText}>{emailError}</Text>
+              ) : null}
             </View>
 
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Password</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="lock-closed-outline" size={20} color="#9CA3AF" />
+              <View style={[
+                styles.inputWrapper,
+                passwordError ? styles.inputError : null
+              ]}>
+                <Ionicons name="lock-closed-outline" size={20} color={passwordError ? "#DC2626" : "#9CA3AF"} />
                 <TextInput
                   style={styles.input}
                   placeholder="Enter password"
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={handlePasswordChange}
                   secureTextEntry={!showPassword}
-                  editable={!isLoggingIn} // Disable edits while working
+                  editable={!isLoggingIn}
                 />
                 <TouchableOpacity onPress={() => setShowPassword(!showPassword)} disabled={isLoggingIn}>
                   <Ionicons
@@ -180,6 +236,9 @@ export default function Login({ navigation }) {
                   />
                 </TouchableOpacity>
               </View>
+              {passwordError ? (
+                <Text style={styles.errorText}>{passwordError}</Text>
+              ) : null}
             </View>
 
             <View style={styles.forgotContainer}>
@@ -205,7 +264,7 @@ export default function Login({ navigation }) {
         </TouchableOpacity>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Don’t have an account?</Text>
+          <Text style={styles.footerText}>Don't have an account?</Text>
           <TouchableOpacity onPress={() => navigation.navigate('SignUP')} disabled={isLoggingIn}>
             <Text style={styles.loginLink}>Sign Up</Text>
           </TouchableOpacity>
@@ -227,7 +286,7 @@ export default function Login({ navigation }) {
               We sent a 6-digit access code to your email account. You must verify your identity to access the system.
             </Text>
 
-            <Text style={{ color: 'red', fontWeight: 900 }}>
+            <Text style={{ color: 'red', fontWeight: '900' }}>
               AwunaChoice
             </Text>
 
@@ -259,7 +318,7 @@ export default function Login({ navigation }) {
                 disabled={isVerifying}
               >
                 {isVerifying ? (
-                  <ActivityIndicator size="small" color="#FFF" /> // Modal loader
+                  <ActivityIndicator size="small" color="#FFF" />
                 ) : (
                   <Text style={styles.confirmBtnText}>Verify</Text>
                 )}
@@ -317,30 +376,147 @@ const styles = StyleSheet.create({
   InputS: {
     marginTop: 0
   },
-  inputContainer: { marginBottom: 20 },
-  label: { fontSize: 14, color: '#6B7280', marginBottom: 8 },
-  inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: 25, paddingHorizontal: 16, paddingVertical: 14, elevation: 2 },
-  input: { flex: 1, marginLeft: 10, fontSize: 15, color: '#000' },
-  fixedBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#E6EEFB', padding: 20, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
-  button: { backgroundColor: '#000', paddingVertical: 16, borderRadius: 25, alignItems: 'center' },
-  buttonDisabled: { backgroundColor: '#4B5563' }, // Gray style for disabled state
-  buttonText: { color: '#FFF', fontSize: 16, fontWeight: '600' },
-  footer: { flexDirection: 'row', justifyContent: 'center', marginTop: 10 },
-  forgotContainer: { alignItems: 'flex-end', marginTop: 5, marginBottom: 10 },
-  forgotText: { color: '#000', fontSize: 13 },
-  footerText: { color: '#9CA3AF', marginRight: 5 },
-  loginLink: { marginBottom: 50, color: '#000', fontWeight: 'bold' },
+  inputContainer: { 
+    marginBottom: 20 
+  },
+  label: { 
+    fontSize: 14, 
+    color: '#6B7280', 
+    marginBottom: 8 
+  },
+  inputWrapper: { 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    backgroundColor: '#FFF', 
+    borderRadius: 25, 
+    paddingHorizontal: 16, 
+    paddingVertical: 14, 
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: 'transparent'
+  },
+  inputError: {
+    borderColor: '#DC2626',
+    borderWidth: 1.5
+  },
+  input: { 
+    flex: 1, 
+    marginLeft: 10, 
+    fontSize: 15, 
+    color: '#000' 
+  },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 12
+  },
+  fixedBottom: { 
+    position: 'absolute', 
+    bottom: 0, 
+    left: 0, 
+    right: 0, 
+    backgroundColor: '#E6EEFB', 
+    padding: 20, 
+    borderTopLeftRadius: 20, 
+    borderTopRightRadius: 20 
+  },
+  button: { 
+    backgroundColor: '#000', 
+    paddingVertical: 16, 
+    borderRadius: 25, 
+    alignItems: 'center' 
+  },
+  buttonDisabled: { 
+    backgroundColor: '#4B5563' 
+  },
+  buttonText: { 
+    color: '#FFF', 
+    fontSize: 16, 
+    fontWeight: '600' 
+  },
+  footer: { 
+    flexDirection: 'row', 
+    justifyContent: 'center', 
+    marginTop: 10 
+  },
+  forgotContainer: { 
+    alignItems: 'flex-end', 
+    marginTop: 5, 
+    marginBottom: 10 
+  },
+  forgotText: { 
+    color: '#000', 
+    fontSize: 13 
+  },
+  footerText: { 
+    color: '#9CA3AF', 
+    marginRight: 5 
+  },
+  loginLink: { 
+    marginBottom: 50, 
+    color: '#000', 
+    fontWeight: 'bold' 
+  },
 
-  // --- MODAL FORCE DIALOGUE STYLES ---
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)',  padding: 20, marginTop:2 },
-  modalContent: { width: '100%', backgroundColor: '#FFF', borderRadius: 30, padding: 25, alignItems: 'center', elevation: 10 },
-  modalHeader: { fontSize: 22, fontWeight: 'bold', color: '#000', marginBottom: 10 },
-  modalSubtext: { fontSize: 14, color: '#4B5563', textAlign: 'center', lineHeight: 22, marginBottom: 20 },
-  centerText: { textAlign: 'center', letterSpacing: 4, fontSize: 18, fontWeight: 'bold' },
-  modalActionRow: { flexDirection: 'row', width: '100%' },
-  modalBtn: { flex: 1, paddingVertical: 14, borderRadius: 25, alignItems: 'center', marginHorizontal: 5 },
-  cancelBtn: { backgroundColor: '#F3F4F6', borderWidth: 1, borderColor: '#D1D5DB' },
-  cancelBtnText: { color: '#4B5563', fontWeight: '600' },
-  confirmBtn: { backgroundColor: '#000' },
-  confirmBtnText: { color: '#FFF', fontWeight: '600' }
+  modalOverlay: { 
+    flex: 1, 
+    backgroundColor: 'rgba(0,0,0,0.75)',  
+    padding: 20, 
+    marginTop:2 
+  },
+  modalContent: { 
+    width: '100%', 
+    backgroundColor: '#FFF', 
+    borderRadius: 30, 
+    padding: 25, 
+    alignItems: 'center', 
+    elevation: 10 
+  },
+  modalHeader: { 
+    fontSize: 22, 
+    fontWeight: 'bold', 
+    color: '#000', 
+    marginBottom: 10 
+  },
+  modalSubtext: { 
+    fontSize: 14, 
+    color: '#4B5563', 
+    textAlign: 'center', 
+    lineHeight: 22, 
+    marginBottom: 20 
+  },
+  centerText: { 
+    textAlign: 'center', 
+    letterSpacing: 4, 
+    fontSize: 18, 
+    fontWeight: 'bold' 
+  },
+  modalActionRow: { 
+    flexDirection: 'row', 
+    width: '100%' 
+  },
+  modalBtn: { 
+    flex: 1, 
+    paddingVertical: 14, 
+    borderRadius: 25, 
+    alignItems: 'center', 
+    marginHorizontal: 5 
+  },
+  cancelBtn: { 
+    backgroundColor: '#F3F4F6', 
+    borderWidth: 1, 
+    borderColor: '#D1D5DB' 
+  },
+  cancelBtnText: { 
+    color: '#4B5563', 
+    fontWeight: '600' 
+  },
+  confirmBtn: { 
+    backgroundColor: '#000' 
+  },
+  confirmBtnText: { 
+    color: '#FFF', 
+    fontWeight: '600' 
+  }
 });
