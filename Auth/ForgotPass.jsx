@@ -81,12 +81,10 @@ const ForgotPassword = ({ navigation }) => {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.content}>
 
-          {/* BACK BUTTON */}
           <TouchableOpacity style={styles.backButton} onPress={handleBackToLogin}>
             <Ionicons name="arrow-back" size={24} color="#000" />
           </TouchableOpacity>
 
-          {/* TITLE */}
           <Text style={styles.title}>Forgot{'\n'}Password</Text>
 
           {/* IMAGE */}
@@ -98,12 +96,10 @@ const ForgotPassword = ({ navigation }) => {
             />
           </View> */}
 
-          {/* DESCRIPTION */}
           <Text style={styles.description}>
             Enter your email address and we’ll send you a reset link.
           </Text>
 
-          {/* EMAIL INPUT */}
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Email</Text>
             <View style={styles.inputWrapper}>
@@ -123,7 +119,6 @@ const ForgotPassword = ({ navigation }) => {
         </View>
       </ScrollView>
 
-      {/* FIXED BUTTON */}
       <View style={styles.fixedBottom}>
         <TouchableOpacity style={styles.button} onPress={handleResetPassword}>
           <Text style={styles.buttonText}>Reset Password</Text>

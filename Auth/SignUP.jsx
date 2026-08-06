@@ -40,7 +40,6 @@ export default function SignUP({ navigation }) {
 
 const handleSignUp = async () => {
   try {
-    // validation
     if (!email || !password || !name || !surname || !role) {
       alert('Please fill in all required fields');
       return;
@@ -66,7 +65,6 @@ const handleSignUp = async () => {
 
     const user = data.user;
 
-    // insert into tables
     const { error: userError } = await supabase
       .from('users')
       .insert([
@@ -80,7 +78,6 @@ const handleSignUp = async () => {
 
     if (userError) throw userError;
 
-    //drivers table
     if (role === 'Driver') {
       const { error: driverError } = await supabase
         .from('drivers')
@@ -97,7 +94,6 @@ const handleSignUp = async () => {
       if (driverError) throw driverError;
     }
 
-    //managers table
     if (role === 'Manager') {
       await supabase.from('managers').insert([
         { 
@@ -107,14 +103,12 @@ const handleSignUp = async () => {
       ]);
     }
 
-    //admin table
     if (role === 'Admin') {
       await supabase.from('admins').insert([{ user_id: user.id }]);
     }
 
     alert('Account created successfully');
 
-    //navigate to login
     navigation.navigate('Login');
 
   } catch (err) {
@@ -177,7 +171,6 @@ const handleSignUp = async () => {
               )}
             </View>
 
-            {/* NAME */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Name</Text>
               <View style={styles.inputWrapper}>
@@ -191,7 +184,6 @@ const handleSignUp = async () => {
               </View>
             </View>
 
-            {/* SURNAME */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Surname</Text>
               <View style={styles.inputWrapper}>
@@ -205,7 +197,6 @@ const handleSignUp = async () => {
               </View>
             </View>
 
-            {/* EMAIL */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Email</Text>
               <View style={styles.inputWrapper}>
@@ -221,7 +212,6 @@ const handleSignUp = async () => {
               </View>
             </View>
 
-            {/* Inputs only the driver gets */}
             {role === 'Driver' && (
               <>
                 {/* PHONE */}
@@ -281,7 +271,6 @@ const handleSignUp = async () => {
         </View>
       </ScrollView>
 
-      {/* FIXED BUTTON */}
       <View style={styles.fixedBottom}>
         <TouchableOpacity style={styles.button} onPress={handleSignUp}>
           <Text style={styles.buttonText}>Create Account</Text>
