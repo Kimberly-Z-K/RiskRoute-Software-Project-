@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Zap, MapPin, Loader, Cloud, CloudRain, CloudSun, Wind, Sun, CloudFog, AlertTriangle, RefreshCw, Navigation, Thermometer } from 'lucide-react';
+import { Zap, MapPin, Loader, Cloud, CloudRain, CloudSun, Wind, Sun, CloudFog, AlertTriangle, RefreshCw, Navigation, Thermometer, Layers, Shield } from 'lucide-react';
 
 // Your API Keys
 const TOMTOM_API_KEY = "boAgd49GhcpqsqaQ6qlAfmC6YEBORJVF";
@@ -107,7 +107,6 @@ const SimulationControls = ({
   const [enrichedRoutes, setEnrichedRoutes] = useState([]);
   const [enriching, setEnriching] = useState(false);
   
-  // ✅ Weather State - Shows current temperature
   const [liveWeather, setLiveWeather] = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(null);
@@ -121,13 +120,15 @@ const SimulationControls = ({
   const [trafficIncidents, setTrafficIncidents] = useState([]);
   const [verificationStatus, setVerificationStatus] = useState('');
   const [simulationRunCount, setSimulationRunCount] = useState(0);
+  const [routeRecommendations, setRouteRecommendations] = useState([]);
   const [isRouteAffected, setIsRouteAffected] = useState(false);
   const [affectedReasons, setAffectedReasons] = useState([]);
+  const [alternativeRouteNames, setAlternativeRouteNames] = useState([]);
+  const [showAlternatives, setShowAlternatives] = useState(false);
   
   const abortControllerRef = useRef(null);
   const weatherUpdateInterval = useRef(null);
 
-  // ✅ FIXED: Weather Service - Shows current temperature
   const fetchLiveWeather = useCallback(async (lat, lng) => {
     setWeatherLoading(true);
     setWeatherError(null);
@@ -145,11 +146,10 @@ const SimulationControls = ({
       const data = await response.json();
       console.log('🌡️ Weather data received:', data);
       
-      // ✅ Extract temperature and condition
       const mappedWeather = mapToSouthAfricaWeather(data.current.condition.text);
       
       const weatherData = {
-        temperature: data.current.temp_c, // ✅ Current temperature in Celsius
+        temperature: data.current.temp_c,
         condition: mappedWeather,
         conditionText: data.current.condition.text,
         windKph: data.current.wind_kph,
@@ -164,11 +164,9 @@ const SimulationControls = ({
         impacts: WEATHER_IMPACTS[mappedWeather] || WEATHER_IMPACTS.sunny
       };
       
-      // ✅ Store weather data with temperature
       setLiveWeather(weatherData);
       console.log(`✅ Current Temperature: ${weatherData.temperature}°C, Condition: ${weatherData.conditionText}`);
       
-      // ✅ Update params with the weather condition
       if (useLiveWeather && setParams) {
         setParams(prev => ({
           ...prev,
@@ -243,7 +241,6 @@ const SimulationControls = ({
     return closestCity || 'Johannesburg';
   };
 
-  // Reverse geocode
   const reverseGeocodePoint = async (lat, lng) => {
     try {
       const tomtomUrl = `https://api.tomtom.com/search/2/reverseGeocode/${lat},${lng}.json?key=${TOMTOM_API_KEY}`;
@@ -292,7 +289,6 @@ const SimulationControls = ({
     return parts[0]?.trim() || 'Unknown Location';
   };
 
-  // Extract coordinates from route
   const extractCoordinates = useCallback((route) => {
     let coords = [];
     
@@ -315,7 +311,364 @@ const SimulationControls = ({
     return coords;
   }, []);
 
-  // Main simulation function - WITH TEMPERATURE APPLIED
+  // Generate proper route names from TomTom instructions
+  const generateRouteName = useCallback((route, index) => {
+    const instructions = route.guidance?.instructions || [];
+    
+    const streetNames = [];
+    const highwayNames = [];
+    const roadNumbers = [];
+    
+    instructions.forEach(inst => {
+      const street = inst.street || inst.road || '';
+      const roadNumber = inst.roadNumber || '';
+      
+      // Look for N routes (N1, N2, N3, etc.) - South African national routes
+      if (street.match(/N\d+/i) || roadNumber.match(/N\d+/i)) {
+        const match = street.match(/N\d+/i) || roadNumber.match(/N\d+/i);
+        if (match && !highwayNames.includes(match[0].toUpperCase())) {
+          highwayNames.push(match[0].toUpperCase());
+        }
+      }
+      
+      // Look for R routes (R21, R24, etc.) - South African regional routes
+      if (street.match(/R\d+/i) || roadNumber.match(/R\d+/i)) {
+        const match = street.match(/R\d+/i) || roadNumber.match(/R\d+/i);
+        if (match && !roadNumbers.includes(match[0].toUpperCase())) {
+          roadNumbers.push(match[0].toUpperCase());
+        }
+      }
+      
+      // Look for M routes (M1, M2, etc.) - South African metropolitan routes
+      if (street.match(/M\d+/i) || roadNumber.match(/M\d+/i)) {
+        const match = street.match(/M\d+/i) || roadNumber.match(/M\d+/i);
+        if (match && !roadNumbers.includes(match[0].toUpperCase())) {
+          roadNumbers.push(match[0].toUpperCase());
+        }
+      }
+      
+      // Collect other street names
+      if (street && street.length > 1 && !street.match(/^[A-Z]\d+$/i)) {
+        const cleanStreet = street.replace(/\s*\([^)]*\)/g, '').trim();
+        if (cleanStreet && cleanStreet.length > 1 && !streetNames.includes(cleanStreet)) {
+          streetNames.push(cleanStreet);
+        }
+      }
+    });
+    
+    // Build the route name
+    let nameParts = [];
+    
+    // Add highway names first (N1, N2, etc.)
+    if (highwayNames.length > 0) {
+      nameParts.push(highwayNames.join(' & '));
+    }
+    
+    // Add road numbers (R21, M1, etc.)
+    if (roadNumbers.length > 0 && nameParts.length < 2) {
+      nameParts.push(roadNumbers.join(' & '));
+    }
+    
+    // Add major street names
+    if (streetNames.length > 0 && nameParts.length === 0) {
+      const majorStreets = streetNames.slice(0, 2);
+      nameParts.push(majorStreets.join(' → '));
+    }
+    
+    // Add direction or area information
+    if (nameParts.length === 0) {
+      const locations = [];
+      instructions.forEach(inst => {
+        if (inst.street && inst.street.includes('Off-ramp')) {
+          const match = inst.street.match(/to\s+([^,]+)/i);
+          if (match) locations.push(match[1].trim());
+        }
+      });
+      
+      if (locations.length > 0) {
+        nameParts.push(`Via ${locations.slice(0, 2).join(' & ')}`);
+      } else {
+        const totalDistance = route.summary.lengthInMeters / 1000;
+        nameParts.push(totalDistance > 10 ? `Long Route ${index + 1}` : `Short Route ${index + 1}`);
+      }
+    }
+    
+    // Build the final name
+    let finalName = nameParts.join(' via ');
+    
+    if (index > 0) {
+      finalName = `Alt ${index} • ${finalName}`;
+    } else {
+      finalName = `Main • ${finalName}`;
+    }
+    
+    return finalName;
+  }, []);
+
+  // Fetch alternative routes with proper naming
+  const fetchAlternativeRoutes = useCallback(async (originLat, originLng, destLat, destLng) => {
+    try {
+      let url = `https://api.tomtom.com/routing/1/calculateRoute/${originLat},${originLng}:${destLat},${destLng}/json?key=${TOMTOM_API_KEY}&routeType=fastest&traffic=true&computeTravelTimeFor=all&travelMode=car&alternatives=true&maxAlternatives=3&routeRepresentation=polyline&instructionFormat=text&language=en-GB`;
+      
+      if (params.accident || params.roadClosure) {
+        url += '&avoid=unpavedRoads';
+      }
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Routing API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.routes && data.routes.length > 0) {
+        const routes = await Promise.all(data.routes.map(async (route, index) => {
+          const duration = route.summary.travelTimeInSeconds / 60;
+          const distance = route.summary.lengthInMeters / 1000;
+          const trafficDelay = (route.summary.trafficDelayInSeconds || 0) / 60;
+          
+          const routeName = generateRouteName(route, index);
+          
+          return {
+            id: `alternative-${index}`,
+            index: index,
+            duration: Math.round(duration),
+            distance: Math.round(distance * 10) / 10,
+            trafficDelay: Math.round(trafficDelay),
+            isOriginal: index === 0,
+            isAlternative: index > 0,
+            points: route.legs.map(leg => leg.points).flat(),
+            summary: route.summary,
+            instructions: route.guidance?.instructions || [],
+            hasTraffic: trafficDelay > 0,
+            name: routeName,
+            displayName: `${routeName} (${Math.round(duration)} min)`
+          };
+        }));
+        
+        const altNames = routes
+          .filter((r, idx) => idx > 0)
+          .map(r => ({
+            id: r.id,
+            name: r.name,
+            displayName: r.displayName,
+            duration: r.duration,
+            distance: r.distance,
+            trafficDelay: r.trafficDelay,
+            isRecommended: false
+          }));
+        
+        setAlternativeRouteNames(altNames);
+        setShowAlternatives(altNames.length > 0);
+        setAlternativeRoutes(routes);
+        return routes;
+      }
+      
+      return [];
+      
+    } catch (error) {
+      console.error('Failed to fetch alternative routes:', error);
+      return [];
+    }
+  }, [params.accident, params.roadClosure, generateRouteName]);
+
+  // Check if route is affected by incidents
+  const checkRouteAffected = useCallback((route, incidents) => {
+    const reasons = [];
+    let affected = false;
+
+    if (params.accident) {
+      reasons.push('🚗 Accident reported on route');
+      affected = true;
+    }
+
+    if (params.roadClosure) {
+      reasons.push('🚧 Road closure on route');
+      affected = true;
+    }
+
+    incidents.forEach(incident => {
+      if (incident.severity >= 3) {
+        reasons.push(`⚠️ ${incident.type} (Severity ${incident.severity})`);
+        affected = true;
+      }
+    });
+
+    if (liveWeather && liveWeather.impacts && liveWeather.impacts.riskLevel === 'high') {
+      reasons.push(`🌧️ Severe weather: ${liveWeather.conditionText}`);
+      affected = true;
+    }
+
+    if (route && route.trafficDelay > 10) {
+      reasons.push(`🚦 Heavy traffic delay: +${Math.round(route.trafficDelay)} minutes`);
+      affected = true;
+    }
+
+    return { affected, reasons };
+  }, [params.accident, params.roadClosure, liveWeather]);
+
+  // Analyze and recommend the best route
+  const analyzeAndRecommendRoute = useCallback((routes, incidents, originalDuration) => {
+    if (!routes || routes.length === 0) {
+      return null;
+    }
+
+    let recommendations = [];
+    let bestRoute = routes[0];
+    let bestScore = Infinity;
+
+    const { affected, reasons } = checkRouteAffected(routes[0], incidents);
+    setIsRouteAffected(affected);
+    setAffectedReasons(reasons);
+
+    routes.forEach((route, index) => {
+      let score = route.duration;
+      let issues = [];
+      let benefits = [];
+
+      if (incidents.length > 0) {
+        incidents.forEach(incident => {
+          const routeText = JSON.stringify(route.instructions).toLowerCase();
+          const incidentText = incident.description.toLowerCase();
+          
+          if (incident.type === 'Road Closure' || incident.type === 'Accident') {
+            if (routeText.includes('avoid') || routeText.includes('closure') || 
+                routeText.includes('accident') || routeText.includes('incident')) {
+              benefits.push(`Avoids ${incident.type.toLowerCase()}`);
+            } else if (routeText.includes(incidentText.split(' ').slice(0, 3).join(' '))) {
+              const penalty = incident.type === 'Road Closure' ? 30 : 20;
+              score += penalty;
+              issues.push(`May be affected by ${incident.type.toLowerCase()}`);
+            }
+          }
+        });
+
+        if (route.trafficDelay > 5) {
+          score += route.trafficDelay * 0.5;
+          issues.push(`${Math.round(route.trafficDelay)} min traffic delay`);
+        }
+
+        if (route.congestionLevel < 0.5) {
+          score += 10;
+          issues.push('Heavy congestion on route');
+        }
+      }
+
+      if (liveWeather && liveWeather.impacts) {
+        const weatherPenalty = (liveWeather.impacts.delayMultiplier - 1) * route.duration;
+        if (weatherPenalty > 2) {
+          score += weatherPenalty;
+          issues.push(`Weather impact: +${Math.round(weatherPenalty)} min`);
+        }
+      }
+
+      if (route.isAlternative) {
+        const timeSaved = originalDuration - route.duration;
+        if (timeSaved > 2) {
+          benefits.push(`Saves ${Math.round(timeSaved)} minutes`);
+        }
+        
+        if (params.accident && !issues.some(i => i.includes('Accident'))) {
+          benefits.push('Avoids accident zone');
+          score -= 10;
+        }
+        if (params.roadClosure && !issues.some(i => i.includes('Road Closure'))) {
+          benefits.push('Avoids road closure');
+          score -= 15;
+        }
+        if (route.congestionLevel > 0.7) {
+          benefits.push('Better traffic flow');
+          score -= 5;
+        }
+      }
+
+      const recommendation = {
+        route: route,
+        score: score,
+        issues: issues,
+        benefits: benefits,
+        isRecommended: false,
+        reason: ''
+      };
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestRoute = route;
+      }
+
+      recommendations.push(recommendation);
+    });
+
+    const bestRecommendation = recommendations.find(r => r.route.id === bestRoute.id);
+    if (bestRecommendation) {
+      bestRecommendation.isRecommended = true;
+      
+      let reasonParts = [];
+      
+      if (bestRecommendation.benefits.length > 0) {
+        reasonParts.push(bestRecommendation.benefits.join(' and '));
+      }
+
+      if (bestRecommendation.issues.length === 0 && bestRoute.isAlternative) {
+        reasonParts.push('has no significant delays or incidents');
+      }
+
+      if (params.accident && bestRoute.isAlternative) {
+        reasonParts.push('bypasses the accident zone');
+      }
+      if (params.roadClosure && bestRoute.isAlternative) {
+        reasonParts.push('avoids the road closure');
+      }
+
+      if (affected && bestRoute.isAlternative) {
+        reasonParts.push('provides the safest and fastest alternative');
+      }
+
+      if (bestRoute.isOriginal && !affected) {
+        reasonParts = ['original route is the fastest and safest option'];
+      } else if (bestRoute.isOriginal && affected) {
+        reasonParts = ['original route affected but still recommended with caution'];
+      }
+
+      bestRecommendation.reason = reasonParts.length > 0 
+        ? `Recommended because it ${reasonParts.join(', ')}`
+        : 'Recommended as the fastest and safest route';
+
+      if (bestRoute.isAlternative) {
+        setAlternativeRouteNames(prev => 
+          prev.map(alt => ({
+            ...alt,
+            isRecommended: alt.id === bestRoute.id
+          }))
+        );
+      }
+    }
+
+    const bestRouteObj = bestRecommendation?.route || bestRoute;
+    const timeSaved = bestRouteObj.isAlternative 
+      ? Math.round(originalDuration - bestRouteObj.duration)
+      : 0;
+
+    const finalRecommendation = {
+      route: bestRouteObj,
+      timeSaved: Math.max(0, timeSaved),
+      reason: bestRecommendation?.reason || 'Recommended as optimal route',
+      benefits: bestRecommendation?.benefits || [],
+      issues: bestRecommendation?.issues || [],
+      isAlternative: bestRouteObj.isAlternative,
+      recommendationText: timeSaved > 0 
+        ? `Take alternative route saving ${timeSaved} minutes. ${bestRecommendation?.reason || ''}`
+        : affected 
+          ? `Current route is affected but remains optimal. ${bestRecommendation?.reason || ''}`
+          : `Stay on current route. ${bestRecommendation?.reason || ''}`
+    };
+
+    setRouteRecommendations(recommendations);
+    return finalRecommendation;
+
+  }, [params.accident, params.roadClosure, liveWeather, checkRouteAffected]);
+
+  // Main simulation function
   const runEnhancedSimulation = useCallback(async () => {
     if (!selectedRouteId) {
       console.warn('No route selected');
@@ -346,29 +699,80 @@ const SimulationControls = ({
         weatherData = await fetchLiveWeather(midPoint.lat, midPoint.lng);
       }
 
-      // ✅ Get the current temperature
       const currentTemp = weatherData?.temperature || 25;
       console.log(`🌡️ Current temperature for simulation: ${currentTemp}°C`);
 
       const originalDuration = parseFloat(selectedRoute.duration_min) || 60;
       const weatherImpact = weatherData?.impacts || WEATHER_IMPACTS[params.weather] || WEATHER_IMPACTS.sunny;
       
-      // ✅ Apply temperature impact on simulation
       const delayImpact = parseInt(params.delay) || 0;
       const accidentImpact = params.accident ? 15 : 0;
       const roadClosureImpact = params.roadClosure ? 25 : 0;
       const weatherDelay = originalDuration * (weatherImpact.delayMultiplier - 1);
       
-      // ✅ Temperature affects the simulation - hotter = more delays
       const tempImpact = currentTemp > 30 ? 0.15 : currentTemp > 25 ? 0.1 : currentTemp > 20 ? 0.05 : 0;
       const tempDelay = originalDuration * tempImpact;
       
       const totalDelay = delayImpact + accidentImpact + roadClosureImpact + weatherDelay + tempDelay;
       const simulatedDuration = originalDuration + totalDelay;
 
-      setVerificationStatus(`🌡️ Applying ${currentTemp}°C weather conditions...`);
+      setVerificationStatus('Calculating alternative routes...');
+      const alternatives = await fetchAlternativeRoutes(
+        origin.lat, origin.lng,
+        destination.lat, destination.lng
+      );
 
-      // Compile results with temperature
+      if ((params.accident || params.roadClosure) && alternatives.length > 1) {
+        const altNames = alternatives
+          .filter((r, idx) => idx > 0 || r.isAlternative)
+          .map(r => r.displayName || r.name);
+        
+        setAlternativeRouteNames(alternatives
+          .filter((r, idx) => idx > 0 || r.isAlternative)
+          .map(r => ({
+            id: r.id,
+            name: r.name,
+            displayName: r.displayName || r.name,
+            duration: r.duration,
+            distance: r.distance,
+            trafficDelay: r.trafficDelay,
+            isRecommended: false
+          }))
+        );
+        
+        setShowAlternatives(true);
+        setVerificationStatus(`🚧 Route affected! Found ${alternatives.length - 1} alternative routes: ${altNames.join(', ')}`);
+      } else {
+        setShowAlternatives(false);
+      }
+
+      setVerificationStatus('Analyzing route recommendations...');
+      const recommendation = analyzeAndRecommendRoute(
+        alternatives.length > 0 ? alternatives : [{
+          id: 'original',
+          index: 0,
+          duration: originalDuration,
+          distance: selectedRoute.distance_km || 0,
+          trafficDelay: 0,
+          isOriginal: true,
+          isAlternative: false,
+          points: coords,
+          instructions: [],
+          congestionLevel: 0.8,
+          hasTraffic: false
+        }],
+        trafficIncidents,
+        originalDuration
+      );
+
+      if (recommendation) {
+        setRecommendedRoute({
+          ...recommendation,
+          duration: recommendation.route.duration,
+          distance: recommendation.route.distance
+        });
+      }
+
       const results = {
         runId: simulationRunCount + 1,
         originalRoute: {
@@ -378,20 +782,26 @@ const SimulationControls = ({
           simulatedDuration: simulatedDuration,
           distance: selectedRoute.distance_km,
           delay: totalDelay,
-          temperature: currentTemp, // ✅ Store temperature in results
+          temperature: currentTemp,
           weatherImpact: weatherImpact,
-          incidents: [],
+          incidents: trafficIncidents,
           isAffected: isRouteAffected,
           affectedReasons: affectedReasons
         },
+        alternatives: alternatives,
+        recommendedRoute: recommendation,
+        trafficIncidents: trafficIncidents,
+        weather: weatherData,
         simulationParams: { ...params, temperature: currentTemp },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        routeRecommendations: routeRecommendations,
+        isRouteAffected: isRouteAffected,
+        affectedReasons: affectedReasons
       };
 
       setSimulationResults(results);
       setSimulationRunCount(prev => prev + 1);
       
-      // Add to history with temperature
       setSimulationHistory(prev => [{
         timestamp: results.timestamp,
         runId: results.runId,
@@ -400,9 +810,12 @@ const SimulationControls = ({
         originalDuration: originalDuration,
         simulatedDuration: simulatedDuration,
         delay: totalDelay,
-        temperature: currentTemp, // ✅ Temperature in history
+        temperature: currentTemp,
         params: { ...params },
-        weather: weatherData
+        weather: weatherData,
+        timeSaved: recommendation?.timeSaved || 0,
+        isAffected: isRouteAffected,
+        affectedReasons: affectedReasons
       }, ...prev]);
 
       setVerificationStatus(`✅ Simulation complete! Temperature: ${currentTemp}°C`);
@@ -423,8 +836,15 @@ const SimulationControls = ({
     params, 
     useLiveWeather, 
     fetchLiveWeather,
+    fetchAlternativeRoutes,
+    analyzeAndRecommendRoute,
     onRunSimulation,
-    simulationRunCount
+    simulationRunCount,
+    routeRecommendations,
+    isRouteAffected,
+    affectedReasons,
+    trafficIncidents,
+    extractCoordinates
   ]);
 
   // Process routes when they change
@@ -451,7 +871,6 @@ const SimulationControls = ({
         if (routesToProcess.length > 0 && !selectedRouteId) {
           setSelectedRouteId(routesToProcess[0].id);
           
-          // ✅ Fetch weather for the first route
           const firstRoute = routesToProcess[0];
           const coords = extractCoordinates(firstRoute);
           if (coords.length > 0) {
@@ -474,6 +893,14 @@ const SimulationControls = ({
       setVerificationStatus('Route changed. Ready for new simulation.');
     }
   }, [selectedRouteId]);
+
+  // Reset simulation when parameters change
+  useEffect(() => {
+    if (simulationResults) {
+      setSimulationResults(null);
+      setVerificationStatus('Parameters changed. Ready for new simulation.');
+    }
+  }, [params.delay, params.weather, params.accident, params.roadClosure]);
 
   // Cleanup
   useEffect(() => {
@@ -552,7 +979,6 @@ const SimulationControls = ({
             </span>
           )}
           
-          {/* ✅ LIVE WEATHER DISPLAY WITH TEMPERATURE */}
           {liveWeather && (
             <div className="flex items-center gap-3 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
               <Thermometer className="w-4 h-4 text-red-500" />
@@ -591,7 +1017,7 @@ const SimulationControls = ({
           </div>
         )}
 
-        {/* ✅ WEATHER STATUS BANNER WITH TEMPERATURE */}
+        {/* Weather Status Banner */}
         {liveWeather && (
           <div className={`p-3 rounded-lg border ${
             liveWeather.impacts.riskLevel === 'high' ? 'bg-red-50 border-red-200' :
@@ -617,7 +1043,6 @@ const SimulationControls = ({
               </div>
             </div>
             
-            {/* Temperature impact on simulation */}
             <div className="mt-2 text-xs text-gray-600 border-t border-gray-200 pt-2">
               <span className="font-medium">Temperature impact: </span>
               {liveWeather.temperature > 30 ? (
@@ -753,13 +1178,66 @@ const SimulationControls = ({
           </label>
         </div>
 
-        {/* Simulation Results with Temperature */}
+        {/* Alternative Route Names Display */}
+        {showAlternatives && alternativeRouteNames.length > 0 && (params.accident || params.roadClosure) && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Navigation className="w-4 h-4 text-blue-600" />
+              <span className="text-sm font-medium text-blue-700">Alternative Routes Available</span>
+            </div>
+            <div className="space-y-2">
+              {alternativeRouteNames.map((alt, idx) => (
+                <div key={alt.id} className="bg-white rounded p-2 border border-blue-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-800">{alt.displayName || alt.name}</span>
+                    <span className="text-xs text-gray-500">({alt.duration} min • {alt.distance} km)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {alt.trafficDelay > 0 && (
+                      <span className="text-xs text-orange-500">+{alt.trafficDelay} min delay</span>
+                    )}
+                    {alt.isRecommended && (
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Best Alternative</span>
+                    )}
+                    {idx === 0 && !alt.isRecommended && (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Option {idx + 1}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-xs text-blue-600">
+              💡 These routes will get you to the same destination while avoiding the {params.accident ? 'accident' : ''} {params.accident && params.roadClosure ? 'and ' : ''} {params.roadClosure ? 'road closure' : ''}
+            </div>
+          </div>
+        )}
+
+        {/* Route Affected Warning */}
+        {isRouteAffected && !simulationResults && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <div className="text-sm font-medium text-red-700">Route Affected</div>
+                <ul className="text-xs text-red-600 mt-1 list-disc list-inside">
+                  {affectedReasons.map((reason, index) => (
+                    <li key={index}>{reason}</li>
+                  ))}
+                </ul>
+                <div className="text-xs text-red-500 mt-1">
+                  Run simulation to find alternative routes
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Simulation Results */}
         {simulationResults && (
           <div className="space-y-3">
             <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
               <h4 className="text-sm font-semibold text-gray-700 mb-2">Simulation Results</h4>
               
-              {/* ✅ Temperature Display in Results */}
               <div className="bg-white p-2 rounded border border-gray-200 mb-2">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-gray-600">🌡️ Current Temperature</span>
@@ -793,6 +1271,114 @@ const SimulationControls = ({
                 )}
               </div>
             </div>
+
+            {/* Recommended Route */}
+            {recommendedRoute && (
+              <div className={`rounded-lg p-3 border ${
+                recommendedRoute.isAlternative 
+                  ? 'bg-green-50 border-green-300' 
+                  : simulationResults.isRouteAffected 
+                    ? 'bg-yellow-50 border-yellow-300'
+                    : 'bg-purple-50 border-purple-200'
+              }`}>
+                <div className="flex items-center gap-2 text-sm font-medium mb-2">
+                  <Navigation className={`w-4 h-4 ${
+                    recommendedRoute.isAlternative ? 'text-green-600' : 
+                    simulationResults.isRouteAffected ? 'text-yellow-600' : 'text-purple-600'
+                  }`} />
+                  <span className={
+                    recommendedRoute.isAlternative ? 'text-green-700' : 
+                    simulationResults.isRouteAffected ? 'text-yellow-700' : 'text-purple-700'
+                  }>
+                    {recommendedRoute.isAlternative ? '🌟 Recommended Alternative Route' : 
+                     simulationResults.isRouteAffected ? '⚠️ Recommended Route (Affected)' : 'Recommended Route'}
+                  </span>
+                </div>
+                
+                <div className="bg-white rounded p-3 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-medium text-gray-800">
+                      {recommendedRoute.timeSaved > 0 
+                        ? `⏱️ Save ${recommendedRoute.timeSaved} minutes` 
+                        : '✅ Optimal Route'}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {recommendedRoute.duration} min • {recommendedRoute.distance} km
+                    </span>
+                  </div>
+                  
+                  {recommendedRoute.benefits && recommendedRoute.benefits.length > 0 && (
+                    <div className="text-xs text-green-600 bg-green-50 p-2 rounded border border-green-100">
+                      <div className="font-medium mb-1">✅ Benefits:</div>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {recommendedRoute.benefits.map((benefit, idx) => (
+                          <li key={idx}>{benefit}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {recommendedRoute.issues && recommendedRoute.issues.length > 0 && (
+                    <div className="text-xs text-orange-600 bg-orange-50 p-2 rounded border border-orange-100">
+                      <div className="font-medium mb-1">⚠️ Issues avoided:</div>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {recommendedRoute.issues.map((issue, idx) => (
+                          <li key={idx}>{issue}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  
+                  <div className="text-xs text-gray-600 bg-gray-50 p-2 rounded border border-gray-100">
+                    <div className="flex items-start gap-1">
+                      <MapPin className="w-3 h-3 text-purple-500 mt-0.5 flex-shrink-0" />
+                      <span className="font-medium">{recommendedRoute.recommendationText}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-gray-500 bg-blue-50 p-2 rounded border border-blue-100">
+                    <div className="flex items-start gap-1">
+                      <Shield className="w-3 h-3 text-blue-500 mt-0.5 flex-shrink-0" />
+                      <span>{recommendedRoute.reason}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Alternative Routes List */}
+            {alternativeRoutes.length > 1 && (
+              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                  <Layers className="w-4 h-4" />
+                  Alternative Routes Available
+                </h4>
+                <div className="space-y-2">
+                  {alternativeRoutes.map((alt, index) => (
+                    <div key={alt.id} className={`bg-white p-2 rounded border text-xs ${
+                      index === 0 ? 'border-blue-300 bg-blue-50' : 'border-gray-100'
+                    }`}>
+                      <div className="flex justify-between">
+                        <span className="font-medium">
+                          {index === 0 ? '📍 Original Route' : `🔄 ${alt.displayName || alt.name}`}
+                        </span>
+                        <span className="text-gray-500">{alt.duration} min • {alt.distance} km</span>
+                      </div>
+                      {alt.trafficDelay > 0 && (
+                        <div className="text-orange-500 mt-1">
+                          Traffic: +{Math.round(alt.trafficDelay)} min delay
+                        </div>
+                      )}
+                      {alt.isAlternative && (
+                        <div className="text-green-500 mt-1 text-xs">
+                          {index === 1 ? '🟢 Recommended alternative' : 'ℹ️ Additional option'}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -817,7 +1403,7 @@ const SimulationControls = ({
           )}
         </button>
 
-        {/* Simulation History with Temperature */}
+        {/* Simulation History */}
         {simulationHistory.length > 0 && (
           <div className="mt-2">
             <details className="text-xs">
@@ -826,7 +1412,7 @@ const SimulationControls = ({
               </summary>
               <div className="mt-2 space-y-1 max-h-32 overflow-y-auto">
                 {simulationHistory.map((entry, index) => (
-                  <div key={index} className="bg-gray-50 p-2 rounded text-gray-600">
+                  <div key={index} className={`bg-gray-50 p-2 rounded text-gray-600 ${entry.error ? 'border-l-2 border-red-400' : entry.isAffected ? 'border-l-2 border-yellow-400' : ''}`}>
                     <div className="flex justify-between">
                       <span className="font-medium">#{entry.runId || index + 1}</span>
                       <span>{entry.routeName}</span>
@@ -834,8 +1420,17 @@ const SimulationControls = ({
                     </div>
                     <div className="flex gap-2 text-gray-400">
                       <span>Delay: +{Math.round(entry.delay)}min</span>
+                      {entry.timeSaved > 0 && (
+                        <span className="text-green-600">✓ Save {entry.timeSaved}min</span>
+                      )}
                       {entry.temperature && (
                         <span className="text-red-500">🌡️ {entry.temperature}°C</span>
+                      )}
+                      {entry.isAffected && (
+                        <span className="text-yellow-600">⚠️ Route affected</span>
+                      )}
+                      {entry.error && (
+                        <span className="text-red-500">⚠️ Error</span>
                       )}
                     </div>
                   </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   ThumbsUp, Zap, Clock, DollarSign, AlertTriangle, BarChart3,
   CheckCircle, TrendingDown, CloudRain, Car, Construction,
-  Loader2, ArrowRight, Radio
+  Loader2, ArrowRight, Radio, Navigation, Layers
 } from 'lucide-react';
 
 // ---------- helpers ----------
@@ -154,7 +154,7 @@ const DisruptionBadges = ({ params }) => {
 
 // ---------- main scenario card ----------
 
-const SimulationResultCard = ({ scenario, impact, isRecommended }) => {
+const SimulationResultCard = ({ scenario, impact, isRecommended, routeName }) => {
   if (!impact) {
     return (
       <div className="bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
@@ -176,7 +176,20 @@ const SimulationResultCard = ({ scenario, impact, isRecommended }) => {
       )}
       <div className="flex items-center justify-between gap-4">
         <div className="flex-1 space-y-2">
-          <p className="font-semibold text-sm">{scenario}</p>
+          <p className="font-semibold text-sm flex items-center gap-2">
+            {isRecommended ? (
+              <Navigation className="w-4 h-4 text-green-600" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-orange-500" />
+            )}
+            {scenario}
+          </p>
+          {routeName && routeName !== 'Current Route' && routeName !== 'Optimal Route' && (
+            <p className="text-xs text-gray-500 flex items-center gap-1">
+              <Layers className="w-3 h-3" />
+              {routeName}
+            </p>
+          )}
           <p className="flex items-center gap-1.5 text-sm">
             <Clock className="w-3.5 h-3.5 text-gray-400" />
             <span className="font-medium">{impact.time || 'N/A'}</span>
@@ -194,6 +207,62 @@ const SimulationResultCard = ({ scenario, impact, isRecommended }) => {
           {impact.alternative}
         </p>
       )}
+    </div>
+  );
+};
+
+// ---------- Alternative Routes List ----------
+
+const AlternativeRoutesList = ({ alternatives }) => {
+  if (!alternatives || alternatives.length === 0) return null;
+
+  // Filter out the main route if it exists
+  const altRoutes = alternatives.filter(alt => alt.isAlternative !== false);
+  if (altRoutes.length === 0) return null;
+
+  return (
+    <div className="bg-white dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+      <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+        <Layers className="w-4 h-4" />
+        Alternative Routes Available
+      </h4>
+      <div className="space-y-2">
+        {altRoutes.map((alt, index) => (
+          <div key={alt.id || index} className={`p-2 rounded border text-xs ${
+            alt.isRecommended 
+              ? 'border-green-300 bg-green-50 dark:bg-green-900/20' 
+              : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50'
+          }`}>
+            <div className="flex justify-between items-start">
+              <div className="flex-1">
+                <span className="font-medium">
+                  {alt.isRecommended ? '⭐ ' : ''}
+                  {alt.displayName || alt.name || `Alternative ${index + 1}`}
+                </span>
+                {alt.name && alt.name.includes('via') && (
+                  <div className="text-gray-500 text-xs mt-0.5">
+                    {alt.name}
+                  </div>
+                )}
+              </div>
+              <div className="text-right flex-shrink-0 ml-2">
+                <span className="text-gray-700">{alt.duration || 'N/A'} min</span>
+                <span className="text-gray-400 ml-2">{alt.distance || 'N/A'} km</span>
+              </div>
+            </div>
+            {alt.trafficDelay > 0 && (
+              <div className="text-orange-500 mt-1">
+                Traffic: +{Math.round(alt.trafficDelay)} min delay
+              </div>
+            )}
+            {alt.isRecommended && (
+              <div className="text-green-600 mt-1 text-xs font-medium">
+                ✅ Recommended alternative
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -222,6 +291,13 @@ const SimulationResults = ({ results, params, isRunning = false }) => {
 
   const current = results.current || { time: 'N/A', cost: 'N/A', riskScore: 0, alternative: 'N/A' };
   const optimal = results.optimal || { time: 'N/A', cost: 'N/A', riskScore: 0, alternative: 'N/A' };
+  
+  // Get route names from results
+  const currentRouteName = results.currentRouteName || results.current?.routeName || 'Current Route';
+  const optimalRouteName = results.optimalRouteName || results.optimal?.routeName || 'Optimal Route';
+  
+  // Get alternative routes list
+  const alternatives = results.alternatives || [];
 
   const currentTime = parseNumber(current.time);
   const optimalTime = parseNumber(optimal.time);
@@ -241,6 +317,10 @@ const SimulationResults = ({ results, params, isRunning = false }) => {
     ? `Taking the recommended route, you ${summaryParts.join(', ')} compared to the current route.`
     : 'The recommended route holds up better under these conditions than the current one.';
 
+  // Find the recommended route name from alternatives
+  const recommendedAlt = alternatives.find(alt => alt.isRecommended);
+  const displayOptimalName = recommendedAlt?.displayName || optimalRouteName;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -256,9 +336,24 @@ const SimulationResults = ({ results, params, isRunning = false }) => {
       <DisruptionBadges params={params} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <SimulationResultCard scenario="Current Route (with disruption)" impact={current} isRecommended={false} />
-        <SimulationResultCard scenario="Optimal Alternative Route" impact={optimal} isRecommended={true} />
+        <SimulationResultCard 
+          scenario="Current Route (with disruption)" 
+          impact={current} 
+          isRecommended={false}
+          routeName={currentRouteName}
+        />
+        <SimulationResultCard 
+          scenario="Optimal Alternative Route" 
+          impact={optimal} 
+          isRecommended={true}
+          routeName={displayOptimalName}
+        />
       </div>
+
+      {/* Show alternative routes list if available */}
+      {alternatives.length > 1 && (
+        <AlternativeRoutesList alternatives={alternatives} />
+      )}
 
       <div className="bg-white dark:bg-gray-900 rounded-lg p-4 border border-gray-200 dark:border-gray-700 space-y-4">
         <CompareBar
@@ -288,6 +383,12 @@ const SimulationResults = ({ results, params, isRunning = false }) => {
           <ArrowRight className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-blue-500" />
           {summaryText}
         </p>
+        {displayOptimalName && displayOptimalName !== 'Optimal Route' && (
+          <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 flex items-center gap-1">
+            <Navigation className="w-3 h-3" />
+            Recommended: {displayOptimalName}
+          </p>
+        )}
       </div>
     </div>
   );
