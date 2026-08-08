@@ -119,9 +119,11 @@ const handleLogin = (userData) => {
 
   // ============ ADDED: Handle logout ============
   const handleLogout = () => {
-    setIsAuthenticated(false);
-    localStorage.removeItem('token');
-  };
+  setIsAuthenticated(false);
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  console.log('👋 User logged out');
+};
 
   // Initialize data only once
   useEffect(() => {
