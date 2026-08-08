@@ -278,7 +278,7 @@ export default function LocationScreen({ route }) {
           },
           routeLoading: false,
         });
-        await findFuelStationsAlongRoute([startPoint, endPoint]);
+        // await findFuelStationsAlongRoute([startPoint, endPoint]);
         return;
       }
 
@@ -291,7 +291,7 @@ export default function LocationScreen({ route }) {
         routeLoading: false,
       });
 
-      await findFuelStationsAlongRoute(coords);
+      // await findFuelStationsAlongRoute(coords);
 
     } catch (error) {
       console.error("Route error:", error);
@@ -302,107 +302,107 @@ export default function LocationScreen({ route }) {
     }
   }, [fetchOSRMRoute, updateState]);
 
-  const findFuelStationsAlongRoute = useCallback(async (routePoints) => {
-    if (!routePoints || routePoints.length < 2) {
-      console.log("Not enough route points to find stations");
-      return;
-    }
+  // const findFuelStationsAlongRoute = useCallback(async (routePoints) => {
+  //   if (!routePoints || routePoints.length < 2) {
+  //     console.log("Not enough route points to find stations");
+  //     return;
+  //   }
 
-    try {
-      updateState({ searchingStations: true });
+  //   try {
+  //     updateState({ searchingStations: true });
 
-      const samplePoints = [];
-      const totalDistance = routePoints.reduce((acc, point, i) => {
-        if (i === 0) return 0;
-        return acc + haversineKm(
-          routePoints[i-1].latitude, routePoints[i-1].longitude,
-          point.latitude, point.longitude
-        );
-      }, 0);
+  //     const samplePoints = [];
+  //     const totalDistance = routePoints.reduce((acc, point, i) => {
+  //       if (i === 0) return 0;
+  //       return acc + haversineKm(
+  //         routePoints[i-1].latitude, routePoints[i-1].longitude,
+  //         point.latitude, point.longitude
+  //       );
+  //     }, 0);
 
-      const numSamples = Math.max(5, Math.min(20, Math.ceil(totalDistance / 5)));
-      const step = Math.max(1, Math.floor(routePoints.length / numSamples));
+  //     const numSamples = Math.max(5, Math.min(20, Math.ceil(totalDistance / 5)));
+  //     const step = Math.max(1, Math.floor(routePoints.length / numSamples));
 
-      for (let i = 0; i < routePoints.length; i += step) {
-        samplePoints.push(routePoints[i]);
-      }
+  //     for (let i = 0; i < routePoints.length; i += step) {
+  //       samplePoints.push(routePoints[i]);
+  //     }
 
-      if (samplePoints[samplePoints.length - 1] !== routePoints[routePoints.length - 1]) {
-        samplePoints.push(routePoints[routePoints.length - 1]);
-      }
+  //     if (samplePoints[samplePoints.length - 1] !== routePoints[routePoints.length - 1]) {
+  //       samplePoints.push(routePoints[routePoints.length - 1]);
+  //     }
 
-      console.log(`Sampling ${samplePoints.length} points along route for fuel stations`);
+  //     console.log(`Sampling ${samplePoints.length} points along route for fuel stations`);
 
-      const allStations = [];
-      const seenStationIds = new Set();
+  //     const allStations = [];
+  //     const seenStationIds = new Set();
 
-      for (const point of samplePoints) {
-        const stations = await fetchNearbyStations(point.latitude, point.longitude);
+  //     for (const point of samplePoints) {
+  //       const stations = await fetchNearbyStations(point.latitude, point.longitude);
         
-        if (stations && stations.length > 0) {
+  //       if (stations && stations.length > 0) {
 
-          for (const station of stations) {
-            if (!seenStationIds.has(station.id)) {
-              seenStationIds.add(station.id);
+  //         for (const station of stations) {
+  //           if (!seenStationIds.has(station.id)) {
+  //             seenStationIds.add(station.id);
               
-              let minDistToRoute = Infinity;
-              for (const routePoint of routePoints) {
-                const dist = haversineKm(
-                  station.latitude, station.longitude,
-                  routePoint.latitude, routePoint.longitude
-                );
-                if (dist < minDistToRoute) minDistToRoute = dist;
-              }
-              station.distanceToRoute = minDistToRoute;
-              allStations.push(station);
-            }
-          }
-        }
-      }
+  //             let minDistToRoute = Infinity;
+  //             for (const routePoint of routePoints) {
+  //               const dist = haversineKm(
+  //                 station.latitude, station.longitude,
+  //                 routePoint.latitude, routePoint.longitude
+  //               );
+  //               if (dist < minDistToRoute) minDistToRoute = dist;
+  //             }
+  //             station.distanceToRoute = minDistToRoute;
+  //             allStations.push(station);
+  //           }
+  //         }
+  //       }
+  //     }
 
-      const sortedStations = allStations
-        .sort((a, b) => a.distanceToRoute - b.distanceToRoute)
-        .slice(0, CONFIG.STATIONS_ALONG_ROUTE);
+  //     const sortedStations = allStations
+  //       .sort((a, b) => a.distanceToRoute - b.distanceToRoute)
+  //       .slice(0, CONFIG.STATIONS_ALONG_ROUTE);
 
-      console.log(`Found ${sortedStations.length} unique fuel stations along route`);
+  //     console.log(`Found ${sortedStations.length} unique fuel stations along route`);
 
-      updateState({ 
-        fuelStations: sortedStations,
-        searchingStations: false 
-      });
+  //     updateState({ 
+  //       fuelStations: sortedStations,
+  //       searchingStations: false 
+  //     });
 
-      if (sortedStations.length > 0) {
-        const bestStation = sortedStations[0];
-        updateState({ recommendedStation: bestStation });
+  //     if (sortedStations.length > 0) {
+  //       const bestStation = sortedStations[0];
+  //       updateState({ recommendedStation: bestStation });
 
-        if (location && destination) {
-          const station = sortedStations[0];
-          const distToStation = haversineKm(
-            location.latitude, location.longitude,
-            station.latitude, station.longitude
-          );
-          const distToDest = haversineKm(
-            location.latitude, location.longitude,
-            destination.latitude, destination.longitude
-          );
+  //       if (location && destination) {
+  //         const station = sortedStations[0];
+  //         const distToStation = haversineKm(
+  //           location.latitude, location.longitude,
+  //           station.latitude, station.longitude
+  //         );
+  //         const distToDest = haversineKm(
+  //           location.latitude, location.longitude,
+  //           destination.latitude, destination.longitude
+  //         );
           
-          updateState({
-            destinationDistanceToStation: {
-              station: distToStation,
-              destination: distToDest,
-              stationCloser: distToStation < distToDest
-            }
-          });
-        }
-      }
+  //         updateState({
+  //           destinationDistanceToStation: {
+  //             station: distToStation,
+  //             destination: distToDest,
+  //             stationCloser: distToStation < distToDest
+  //           }
+  //         });
+  //       }
+  //     }
 
-      return sortedStations;
-    } catch (error) {
-      console.error("Error finding stations along route:", error);
-      updateState({ searchingStations: false, stationSearchFailed: true });
-      return [];
-    }
-  }, [fetchNearbyStations, location, destination, updateState]);
+  //     return sortedStations;
+  //   } catch (error) {
+  //     console.error("Error finding stations along route:", error);
+  //     updateState({ searchingStations: false, stationSearchFailed: true });
+  //     return [];
+  //   }
+  // }, [fetchNearbyStations, location, destination, updateState]);
 
   const loadTrip = useCallback(async () => {
     try {
