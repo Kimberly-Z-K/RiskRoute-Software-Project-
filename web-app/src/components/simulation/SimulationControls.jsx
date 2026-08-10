@@ -16,10 +16,15 @@ import {
   ThumbsUp,
   TrendingDown,
   Zap,
+  Save,
+  History,
+  Trash2,
+  Eye,
+  X
 } from "lucide-react";
 
 /* ============================================================
-   DEFAULT ROUTES
+   DEFAULT ROUTES (Fallback if API fails)
 ============================================================ */
 
 const DEFAULT_ROUTES = [
@@ -277,7 +282,7 @@ const CompareBar = ({
    RESULTS PANEL
 ============================================================ */
 
-const ResultsPanel = ({ results, history }) => {
+const ResultsPanel = ({ results, history, onSave, isSaving }) => {
   if (!results) return null;
 
   return (
@@ -293,10 +298,29 @@ const ResultsPanel = ({ results, history }) => {
             {results.routeName}
           </p>
         </div>
-        <span className="flex items-center gap-1 text-sm text-green-600 font-medium">
-          <Radio className="w-4 h-4" />
-          Completed
-        </span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onSave}
+            disabled={isSaving}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            {isSaving ? (
+              <>
+                <Loader className="w-4 h-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                Save
+              </>
+            )}
+          </button>
+          <span className="flex items-center gap-1 text-sm text-green-600 font-medium">
+            <Radio className="w-4 h-4" />
+            Completed
+          </span>
+        </div>
       </div>
 
       {/* DISRUPTION SUMMARY */}
@@ -469,24 +493,258 @@ const ResultsPanel = ({ results, history }) => {
 };
 
 /* ============================================================
-   MAIN COMPONENT - With Persistence Fix
+   SAVED SIMULATIONS LIST
+============================================================ */
+
+const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
+  if (loading) {
+    return (
+      <div className="text-center py-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mx-auto"></div>
+        <p className="mt-2 text-gray-500">Loading saved simulations...</p>
+      </div>
+    );
+  }
+
+  if (!simulations || simulations.length === 0) {
+    return (
+      <div className="text-center py-8 text-gray-500">
+        <History className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+        <p>No saved simulations yet</p>
+        <p className="text-sm">Run a simulation and save it to see it here</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <h3 className="font-semibold text-lg flex items-center gap-2">
+        <History className="w-5 h-5" />
+        Saved Simulations ({simulations.length})
+      </h3>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {simulations.map((sim) => (
+          <div
+            key={sim.id}
+            className="bg-white dark:bg-gray-800 border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow"
+          >
+            <div className="flex justify-between items-start">
+              <div className="flex-1">
+                <h4 className="font-medium text-gray-900 dark:text-white">
+                  {sim.route_name || sim.routeName}
+                </h4>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {new Date(sim.created_at || sim.timestamp).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => onLoad?.(sim)}
+                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  title="Load this simulation"
+                >
+                  <Eye className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => onDelete?.(sim.id)}
+                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title="Delete this simulation"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="text-xs">
+                <span className="text-gray-500">Duration</span>
+                <p className="font-medium">{sim.current_route?.duration || sim.current?.duration || 0} min</p>
+              </div>
+              <div className="text-xs">
+                <span className="text-gray-500">Cost</span>
+                <p className="font-medium">{sim.current_route?.cost || sim.current?.cost || 'R0'}</p>
+              </div>
+              <div className="text-xs">
+                <span className="text-gray-500">Risk</span>
+                <p className={`font-medium ${
+                  (sim.current_route?.riskScore || sim.current?.riskScore || 0) >= 70 ? 'text-red-600' :
+                  (sim.current_route?.riskScore || sim.current?.riskScore || 0) >= 40 ? 'text-orange-600' :
+                  'text-green-600'
+                }`}>
+                  {sim.current_route?.riskScore || sim.current?.riskScore || 0}%
+                </p>
+              </div>
+            </div>
+            
+            {sim.parameters && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {sim.parameters.delay > 0 && (
+                  <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">
+                    +{sim.parameters.delay}min
+                  </span>
+                )}
+                {sim.parameters.accident && (
+                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
+                    🚗 Accident
+                  </span>
+                )}
+                {sim.parameters.roadClosure && (
+                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
+                    🚧 Closure
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================
+   SAVE MODAL
+============================================================ */
+
+const SaveModal = ({ 
+  isOpen, 
+  onClose, 
+  onSave, 
+  results,
+  isSaving,
+  error 
+}) => {
+  const [name, setName] = useState("");
+
+  useEffect(() => {
+    if (isOpen && results) {
+      setName(results.routeName || "");
+    }
+  }, [isOpen, results]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSave(name);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-xl font-bold">Save Simulation</h3>
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Simulation Name
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g., Route 19 - Rainy Day Simulation"
+                className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                required
+              />
+            </div>
+
+            {results && (
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-sm text-gray-600">
+                  <strong>Route:</strong> {results.routeName}
+                </p>
+                <p className="text-sm text-gray-600">
+                  <strong>Duration:</strong> {results.current?.duration} min
+                </p>
+                <p className="text-sm text-gray-600">
+                  <strong>Risk Score:</strong> {results.current?.riskScore}%
+                </p>
+              </div>
+            )}
+
+            {error && (
+              <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm">
+                {error}
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end pt-4">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 border-2 border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSaving || !name.trim()}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader className="w-4 h-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    Save
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+/* ============================================================
+   MAIN COMPONENT - Self-contained with API fetch
 ============================================================ */
 
 const SimulationControls = ({
-  routes = DEFAULT_ROUTES,
+  // Optional props - component now handles everything internally
+  apiUrl = 'http://localhost:5000/api/routes',
   onSimulationComplete,
+  onSaveSimulation,
+  savedSimulations = [],
+  onLoadSimulation,
+  onDeleteSimulation,
+  isLoadingSaved = false,
 }) => {
   /* ----------------------------------------------------------
      STATE
   ---------------------------------------------------------- */
 
+  const [routes, setRoutes] = useState([]);
+  const [routesLoading, setRoutesLoading] = useState(true);
+  const [routesError, setRoutesError] = useState(null);
+  
   const [selectedRouteId, setSelectedRouteId] = useState("");
   const [delay, setDelay] = useState(30);
   const [weather, setWeather] = useState("moderate_rain");
   const [hasAccident, setHasAccident] = useState(false);
   const [hasRoadClosure, setHasRoadClosure] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [statusMessage, setStatusMessage] = useState(""); // ✅ ADDED THIS
+  const [statusMessage, setStatusMessage] = useState("");
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [showSavedList, setShowSavedList] = useState(false);
 
   // CRITICAL: Use refs to persist data across re-renders
   const resultsRef = useRef(null);
@@ -495,7 +753,50 @@ const SimulationControls = ({
   
   // Force re-render trigger
   const [, forceUpdate] = useState({});
-  
+
+  /* ==========================================================
+     FETCH ROUTES FROM BACKEND
+  ========================================================== */
+
+  useEffect(() => {
+    const fetchRoutes = async () => {
+      try {
+        setRoutesLoading(true);
+        setStatusMessage("🔄 Loading routes...");
+        
+        console.log('📡 Fetching routes from:', apiUrl);
+        const response = await fetch(apiUrl);
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch routes: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('✅ Fetched routes:', data);
+        
+        if (Array.isArray(data) && data.length > 0) {
+          setRoutes(data);
+          setRoutesError(null);
+          setStatusMessage(`✅ Loaded ${data.length} routes from database`);
+        } else {
+          // No routes from API, use defaults
+          setRoutes(DEFAULT_ROUTES);
+          setStatusMessage("⚠️ Using default routes (no data from API)");
+        }
+      } catch (err) {
+        console.error('❌ Error fetching routes:', err);
+        setRoutesError(err.message);
+        // Fallback to default routes
+        setRoutes(DEFAULT_ROUTES);
+        setStatusMessage("⚠️ Using default routes (API unavailable)");
+      } finally {
+        setRoutesLoading(false);
+      }
+    };
+
+    fetchRoutes();
+  }, [apiUrl]);
+
   /* ----------------------------------------------------------
      AVAILABLE ROUTES
   ---------------------------------------------------------- */
@@ -681,12 +982,155 @@ const SimulationControls = ({
   }, []);
 
   /* ==========================================================
-     RENDER - Uses refs for data
+     SAVE SIMULATION
+  ========================================================== */
+
+  const handleSaveClick = useCallback(() => {
+    if (!resultsRef.current) {
+      setSaveError("No simulation results to save");
+      return;
+    }
+    setShowSaveModal(true);
+    setSaveError(null);
+  }, []);
+
+  const handleSave = useCallback(async (name) => {
+    if (!resultsRef.current) {
+      setSaveError("No simulation results to save");
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveError(null);
+
+    try {
+      const simulationData = {
+        ...resultsRef.current,
+        routeId: selectedRoute ? getRouteId(selectedRoute) : null,
+        name: name.trim() || resultsRef.current.routeName,
+        savedAt: new Date().toISOString()
+      };
+
+      if (typeof onSaveSimulation === 'function') {
+        const result = await onSaveSimulation(simulationData);
+        
+        if (result?.error) {
+          throw result.error;
+        }
+        
+        setShowSaveModal(false);
+        setStatusMessage("✅ Simulation saved successfully!");
+      } else {
+        // If no save function provided, just store in localStorage
+        const saved = JSON.parse(localStorage.getItem('savedSimulations') || '[]');
+        saved.unshift({
+          ...simulationData,
+          id: `saved-${Date.now()}`,
+          created_at: new Date().toISOString()
+        });
+        localStorage.setItem('savedSimulations', JSON.stringify(saved));
+        setShowSaveModal(false);
+        setStatusMessage("✅ Simulation saved locally!");
+      }
+    } catch (error) {
+      console.error("Save error:", error);
+      setSaveError(error.message || "Failed to save simulation");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [selectedRoute, onSaveSimulation]);
+
+  /* ==========================================================
+     LOAD SIMULATION
+  ========================================================== */
+
+  const handleLoadSimulation = useCallback((simulation) => {
+    try {
+      // Parse the simulation data
+      const loadedResult = {
+        id: simulation.id || `loaded-${Date.now()}`,
+        routeName: simulation.route_name || simulation.routeName,
+        timestamp: simulation.created_at || simulation.timestamp || new Date().toISOString(),
+        params: simulation.parameters || simulation.params || {},
+        current: simulation.current_route || simulation.current || {},
+        optimal: simulation.optimal_route || simulation.optimal || {},
+        alternatives: simulation.alternatives || []
+      };
+
+      // Set the results
+      resultsRef.current = loadedResult;
+      hasRunSimulationRef.current = true;
+      
+      // Update form values from the loaded simulation
+      if (loadedResult.params) {
+        if (loadedResult.params.delay) setDelay(loadedResult.params.delay);
+        if (loadedResult.params.weather) setWeather(loadedResult.params.weather);
+        if (loadedResult.params.accident !== undefined) setHasAccident(loadedResult.params.accident);
+        if (loadedResult.params.roadClosure !== undefined) setHasRoadClosure(loadedResult.params.roadClosure);
+      }
+
+      setStatusMessage("📂 Simulation loaded successfully!");
+      forceUpdate({});
+
+      if (typeof onLoadSimulation === 'function') {
+        onLoadSimulation(loadedResult);
+      }
+    } catch (error) {
+      console.error("Load error:", error);
+      setStatusMessage("❌ Failed to load simulation");
+    }
+  }, [onLoadSimulation]);
+
+  /* ==========================================================
+     DELETE SIMULATION
+  ========================================================== */
+
+  const handleDeleteSimulation = useCallback(async (id) => {
+    if (!id) return;
+    
+    if (window.confirm('Are you sure you want to delete this simulation?')) {
+      try {
+        if (typeof onDeleteSimulation === 'function') {
+          const result = await onDeleteSimulation(id);
+          if (result?.error) {
+            throw result.error;
+          }
+          setStatusMessage("🗑️ Simulation deleted successfully!");
+        } else {
+          // If no delete function provided, remove from localStorage
+          const saved = JSON.parse(localStorage.getItem('savedSimulations') || '[]');
+          const filtered = saved.filter(sim => sim.id !== id);
+          localStorage.setItem('savedSimulations', JSON.stringify(filtered));
+          setStatusMessage("🗑️ Simulation deleted locally!");
+        }
+      } catch (error) {
+        console.error("Delete error:", error);
+        setStatusMessage("❌ Failed to delete simulation");
+      }
+    }
+  }, [onDeleteSimulation]);
+
+  /* ==========================================================
+     RENDER
   ========================================================== */
 
   const results = resultsRef.current;
   const hasRunSimulation = hasRunSimulationRef.current;
   const history = historyRef.current;
+
+  // Show loading state
+  if (routesLoading) {
+    return (
+      <div className="w-full bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
+            <p className="mt-4 text-gray-600">Loading routes from database...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
@@ -701,25 +1145,60 @@ const SimulationControls = ({
           <p className="text-sm text-gray-500 mt-1">
             Simulate route disruptions and compare alternatives.
           </p>
+          {routesError && (
+            <p className="text-xs text-yellow-600 mt-1">
+              ⚠️ Using default routes (API unavailable: {routesError})
+            </p>
+          )}
+          {!routesError && routes.length > 0 && (
+            <p className="text-xs text-green-600 mt-1">
+              ✅ Using {routes.length} routes from optimized_routes table
+            </p>
+          )}
         </div>
-        {hasRunSimulation && (
-          <span className="text-sm bg-green-100 text-green-700 px-4 py-2 rounded-full font-medium">
-            ✅ Simulation complete
-          </span>
-        )}
+        <div className="flex gap-3">
+          {/* Toggle Saved Simulations */}
+          <button
+            onClick={() => setShowSavedList(!showSavedList)}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-medium transition-colors"
+          >
+            <History className="w-4 h-4" />
+            Saved ({savedSimulations?.length || 0})
+          </button>
+          
+          {hasRunSimulation && (
+            <span className="text-sm bg-green-100 text-green-700 px-4 py-2 rounded-full font-medium">
+              ✅ Simulation complete
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* SAVED SIMULATIONS LIST */}
+      {showSavedList && (
+        <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
+          <SavedSimulationsList
+            simulations={savedSimulations || []}
+            onLoad={handleLoadSimulation}
+            onDelete={handleDeleteSimulation}
+            loading={isLoadingSaved}
+          />
+        </div>
+      )}
 
       {/* TWO-COLUMN LAYOUT */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
         
         {/* LEFT COLUMN - Controls */}
         <div className="xl:col-span-4 space-y-5">
-          {/* STATUS - Now defined */}
+          {/* STATUS */}
           {statusMessage && (
             <div
               className={`p-4 rounded-xl text-sm ${
-                statusMessage.includes("complete")
+                statusMessage.includes("complete") || statusMessage.includes("successfully")
                   ? "bg-green-50 border border-green-200 text-green-700"
+                  : statusMessage.includes("Failed") || statusMessage.includes("failed")
+                  ? "bg-red-50 border border-red-200 text-red-700"
                   : "bg-blue-50 border border-blue-200 text-blue-700"
               }`}
             >
@@ -864,7 +1343,12 @@ const SimulationControls = ({
         {/* RIGHT COLUMN - Results */}
         <div className="xl:col-span-8">
           {hasRunSimulation && results ? (
-            <ResultsPanel results={results} history={history} />
+            <ResultsPanel 
+              results={results} 
+              history={history}
+              onSave={handleSaveClick}
+              isSaving={isSaving}
+            />
           ) : (
             <div className="h-full min-h-[500px] flex items-center justify-center bg-gray-50 rounded-xl border-2 border-dashed border-gray-300 p-12">
               <div className="text-center">
@@ -879,6 +1363,16 @@ const SimulationControls = ({
         </div>
 
       </div>
+
+      {/* SAVE MODAL */}
+      <SaveModal
+        isOpen={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        onSave={handleSave}
+        results={results}
+        isSaving={isSaving}
+        error={saveError}
+      />
     </div>
   );
 };

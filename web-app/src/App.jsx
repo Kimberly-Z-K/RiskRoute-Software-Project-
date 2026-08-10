@@ -68,7 +68,7 @@ const updateDriverScore = (currentScore) => {
   return Math.max(60, Math.min(100, (currentScore || 85) + change));
 };
 
-// 🔥 MOVED OUTSIDE: DashboardContent as a separate component
+//  MOVED OUTSIDE: DashboardContent as a separate component
 const DashboardContent = React.memo(({ 
   darkMode, 
   sidebarOpen, 
@@ -391,6 +391,8 @@ function App() {
   const isInitializedRef = useRef(false);
   const mountedRef = useRef(false);
   const statsUpdateTimeout = useRef(null);
+
+  
 
   // Check authentication - runs once
   useEffect(() => {
