@@ -20,7 +20,17 @@ import {
   History,
   Trash2,
   Eye,
-  X
+  X,
+  Calendar,
+  Award,
+  TrendingUp,
+  AlertCircle,
+  Cloud,
+  Wind,
+  Thermometer,
+  CheckCircle2,
+  Compass,
+  RefreshCw as RefreshIcon
 } from "lucide-react";
 
 /* ============================================================
@@ -33,6 +43,10 @@ const DEFAULT_ROUTES = [
     display_name: "Route #19 - Johannesburg to Durban",
     origin_name: "Johannesburg",
     destination_name: "Durban",
+    origin_lat: -26.2041,
+    origin_lng: 28.0473,
+    dest_lat: -29.8587,
+    dest_lng: 31.0218,
     distance_km: 570.29,
     duration_min: 333,
     estimated_cost: 950,
@@ -43,6 +57,10 @@ const DEFAULT_ROUTES = [
     display_name: "Route #18 - OR Tambo to Sandton",
     origin_name: "OR Tambo International Airport",
     destination_name: "Sandton",
+    origin_lat: -26.1392,
+    origin_lng: 28.2460,
+    dest_lat: -26.1076,
+    dest_lng: 28.0567,
     distance_km: 36.649,
     duration_min: 47,
     estimated_cost: 180,
@@ -182,6 +200,267 @@ const getRiskClasses = (score) => {
   }
 
   return "bg-green-100 text-green-700 border-green-200";
+};
+
+/* ============================================================
+   WEATHER DISPLAY COMPONENT - UPDATED
+============================================================ */
+
+const WeatherDisplay = ({ weather, loading, onRefresh, originName, destinationName }) => {
+  if (loading) {
+    return (
+      <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+        <div className="flex items-center justify-center py-4">
+          <Loader className="w-6 h-6 animate-spin text-blue-500" />
+          <span className="ml-2 text-blue-600">Loading current weather...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!weather) {
+    return (
+      <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+        <div className="text-center py-4">
+          <Cloud className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+          <p className="text-gray-500 text-sm">Weather data unavailable</p>
+          <button
+            onClick={onRefresh}
+            className="mt-2 text-blue-500 hover:text-blue-700 text-sm flex items-center gap-1 mx-auto"
+          >
+            <RefreshIcon className="w-4 h-4" />
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const getWeatherIcon = (condition) => {
+    const text = condition?.toLowerCase() || '';
+    if (text.includes('sunny') || text.includes('clear')) return <Sun className="w-5 h-5 text-yellow-500" />;
+    if (text.includes('rain') || text.includes('drizzle')) return <CloudRain className="w-5 h-5 text-blue-500" />;
+    if (text.includes('cloud')) return <Cloud className="w-5 h-5 text-gray-500" />;
+    if (text.includes('wind')) return <Wind className="w-5 h-5 text-gray-400" />;
+    if (text.includes('fog') || text.includes('mist')) return <Cloud className="w-5 h-5 text-gray-400" />;
+    if (text.includes('snow')) return <Cloud className="w-5 h-5 text-blue-300" />;
+    return <Cloud className="w-5 h-5 text-gray-400" />;
+  };
+
+  const formatTime = (dateString) => {
+    if (!dateString) return 'Unknown';
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('en-ZA', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+  };
+
+  // Use the route names passed from parent
+  const originDisplayName = originName || 'Origin';
+  const destDisplayName = destinationName || 'Destination';
+  
+  // Get location names from weather data (if available)
+  const originLocation = weather.origin?.location?.name || originDisplayName;
+  const destLocation = weather.destination?.location?.name || destDisplayName;
+  const midLocation = weather.midpoint?.location?.name || 'Midpoint';
+
+  return (
+    <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="font-semibold text-sm flex items-center gap-2">
+          <Cloud className="w-4 h-4 text-blue-600" />
+          Current Weather Along Route
+        </h4>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">
+            Updated: {formatTime(weather.origin?.current?.last_updated)}
+          </span>
+          <button
+            onClick={onRefresh}
+            className="p-1 hover:bg-blue-200 rounded-lg transition-colors"
+            title="Refresh weather"
+          >
+            <RefreshIcon className="w-4 h-4 text-blue-600" />
+          </button>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-white/80 rounded-lg p-3 text-center">
+          <p className="text-xs text-gray-500 font-medium">Origin</p>
+          <p className="text-xs text-gray-700 truncate font-semibold">{originLocation}</p>
+          <div className="flex items-center justify-center gap-1 mt-1">
+            {getWeatherIcon(weather.origin?.current?.condition?.text)}
+            <span className="text-xl font-bold">{Math.round(weather.origin?.current?.temp_c || 0)}°C</span>
+          </div>
+          <p className="text-xs text-gray-600 truncate">{weather.origin?.current?.condition?.text || 'Unknown'}</p>
+          <div className="flex justify-center gap-3 mt-1 text-xs text-gray-500">
+            <span>💧 {weather.origin?.current?.humidity || 0}%</span>
+            <span>💨 {Math.round(weather.origin?.current?.wind_kph || 0)} km/h</span>
+          </div>
+        </div>
+        
+        <div className="bg-white/80 rounded-lg p-3 text-center">
+          <p className="text-xs text-gray-500 font-medium">Midpoint</p>
+          <p className="text-xs text-gray-700 truncate">{midLocation}</p>
+          <div className="flex items-center justify-center gap-1 mt-1">
+            {getWeatherIcon(weather.midpoint?.current?.condition?.text)}
+            <span className="text-xl font-bold">{Math.round(weather.midpoint?.current?.temp_c || 0)}°C</span>
+          </div>
+          <p className="text-xs text-gray-600 truncate">{weather.midpoint?.current?.condition?.text || 'Unknown'}</p>
+          <div className="flex justify-center gap-3 mt-1 text-xs text-gray-500">
+            <span>💧 {weather.midpoint?.current?.humidity || 0}%</span>
+            <span>💨 {Math.round(weather.midpoint?.current?.wind_kph || 0)} km/h</span>
+          </div>
+        </div>
+        
+        <div className="bg-white/80 rounded-lg p-3 text-center">
+          <p className="text-xs text-gray-500 font-medium">Destination</p>
+          <p className="text-xs text-gray-700 truncate font-semibold">{destLocation}</p>
+          <div className="flex items-center justify-center gap-1 mt-1">
+            {getWeatherIcon(weather.destination?.current?.condition?.text)}
+            <span className="text-xl font-bold">{Math.round(weather.destination?.current?.temp_c || 0)}°C</span>
+          </div>
+          <p className="text-xs text-gray-600 truncate">{weather.destination?.current?.condition?.text || 'Unknown'}</p>
+          <div className="flex justify-center gap-3 mt-1 text-xs text-gray-500">
+            <span>💧 {weather.destination?.current?.humidity || 0}%</span>
+            <span>💨 {Math.round(weather.destination?.current?.wind_kph || 0)} km/h</span>
+          </div>
+        </div>
+      </div>
+      
+      {weather.summary?.recommendation && (
+        <div className="mt-3 pt-3 border-t border-blue-200">
+          <p className={`text-sm flex items-start gap-2 ${
+            weather.summary.recommendation.includes('Adverse') ? 'text-red-600' :
+            weather.summary.recommendation.includes('Partly') ? 'text-yellow-600' :
+            'text-blue-700'
+          }`}>
+            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            {weather.summary.recommendation}
+          </p>
+          <div className="flex gap-4 mt-2 text-xs text-gray-600">
+            <span>🌡️ Avg: {weather.summary.average_temp || 0}°C</span>
+            <span>☁️ {weather.summary.conditions || 'Unknown'}</span>
+            <span className="flex gap-1">
+              {weather.summary.weather_icons?.origin} {weather.summary.weather_icons?.midpoint} {weather.summary.weather_icons?.destination}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ============================================================
+   TRAFFIC DISPLAY COMPONENT
+============================================================ */
+
+const TrafficDisplay = ({ traffic }) => {
+  if (!traffic) return null;
+  
+  return (
+    <div className={`rounded-lg p-4 border ${
+      traffic.hasAccident || traffic.hasRoadClosure ? 'bg-red-50 border-red-200' :
+      traffic.hasTraffic ? 'bg-orange-50 border-orange-200' :
+      'bg-green-50 border-green-200'
+    }`}>
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="font-semibold text-sm flex items-center gap-2">
+          <AlertCircle className="w-4 h-4" />
+          Traffic Conditions
+        </h4>
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+          traffic.hasAccident || traffic.hasRoadClosure ? 'bg-red-200 text-red-700' :
+          traffic.hasTraffic ? 'bg-orange-200 text-orange-700' :
+          'bg-green-200 text-green-700'
+        }`}>
+          {traffic.hasAccident ? 'Accident' :
+           traffic.hasRoadClosure ? 'Road Closure' :
+           traffic.hasTraffic ? 'Heavy Traffic' :
+           'Clear'}
+        </span>
+      </div>
+      
+      {traffic.trafficDelayMinutes > 0 && (
+        <p className="text-sm text-gray-600">
+          ⏱️ {traffic.trafficDelayMinutes} min delay expected
+        </p>
+      )}
+      
+      {traffic.totalTimeMinutes > 0 && (
+        <p className="text-sm text-gray-600">
+          🕐 Total travel time: {traffic.totalTimeMinutes} min
+        </p>
+      )}
+      
+      {traffic.recommendation && (
+        <p className="text-sm mt-2 font-medium text-gray-700">
+          {traffic.recommendation}
+        </p>
+      )}
+    </div>
+  );
+};
+
+/* ============================================================
+   ALTERNATIVE ROUTES DISPLAY
+============================================================ */
+
+const AlternativeRoutesDisplay = ({ alternatives, onSelect }) => {
+  if (!alternatives || alternatives.length === 0) return null;
+  
+  return (
+    <div className="space-y-3">
+      <h4 className="font-semibold text-sm flex items-center gap-2">
+        <Compass className="w-4 h-4" />
+        Alternative Routes
+      </h4>
+      
+      {alternatives.map((alt, index) => (
+        <div
+          key={alt.id || index}
+          className={`p-4 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md ${
+            alt.isRecommended || index === 0 ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-gray-50'
+          }`}
+          onClick={() => onSelect?.(alt)}
+        >
+          <div className="flex justify-between items-start">
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium">{alt.displayName || alt.name}</span>
+                {(alt.isRecommended || index === 0) && (
+                  <span className="text-xs bg-green-200 text-green-700 px-2 py-0.5 rounded-full">Recommended</span>
+                )}
+                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                  alt.risk_level === 'low' ? 'bg-green-100 text-green-700' :
+                  alt.risk_level === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                  'bg-red-100 text-red-700'
+                }`}>
+                  {alt.risk_level || 'Medium'} risk
+                </span>
+              </div>
+              {alt.description && (
+                <p className="text-xs text-gray-500 mt-1">{alt.description}</p>
+              )}
+            </div>
+            <div className="text-right">
+              <p className="text-sm font-medium">{alt.duration || 0} min</p>
+              <p className="text-xs text-gray-500">{alt.distance || 0} km</p>
+            </div>
+          </div>
+          {alt.recommendation && (
+            <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+              <CheckCircle2 className="w-3 h-3" />
+              {alt.recommendation}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 };
 
 /* ============================================================
@@ -341,9 +620,19 @@ const ResultsPanel = ({ results, history, onSave, isSaving }) => {
           </span>
         )}
         <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-700 text-sm font-medium">
-          🌦️ {results.params.weather.replace("_", " ")}
+          🌦️ {results.params.weather?.replace("_", " ") || 'Unknown'}
         </span>
       </div>
+
+      {/* WEATHER DISPLAY */}
+      {results.params?.realWeather && (
+        <WeatherDisplay weather={results.params.realWeather} />
+      )}
+
+      {/* TRAFFIC DISPLAY */}
+      {results.params?.realTraffic && (
+        <TrafficDisplay traffic={results.params.realTraffic} />
+      )}
 
       {/* CARDS */}
       <div className="grid grid-cols-2 gap-4">
@@ -398,39 +687,15 @@ const ResultsPanel = ({ results, history, onSave, isSaving }) => {
         </div>
       </div>
 
-      {/* ALTERNATIVES */}
-      <div className="border-2 border-gray-200 rounded-xl p-5">
-        <h4 className="font-bold text-base mb-3 flex items-center gap-2">
-          <Navigation className="w-5 h-5" />
-          Alternative Routes
-        </h4>
-        <div className="space-y-3">
-          {results.alternatives.map((alternative) => (
-            <div
-              key={alternative.id}
-              className={`p-4 rounded-lg border-2 ${
-                alternative.isRecommended
-                  ? "border-green-300 bg-green-50"
-                  : "border-gray-200 bg-gray-50"
-              }`}
-            >
-              <div className="flex justify-between items-center">
-                <span className="font-medium text-base">
-                  {alternative.isRecommended ? "⭐ " : ""}
-                  {alternative.displayName}
-                </span>
-                <span className="font-bold text-lg">
-                  {alternative.duration} min
-                </span>
-              </div>
-              <div className="text-sm text-gray-500 mt-1">
-                {alternative.distance} km{" • "}
-                +{alternative.trafficDelay} min traffic
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* ALTERNATIVE ROUTES */}
+      {results.alternatives && results.alternatives.length > 0 && (
+        <AlternativeRoutesDisplay 
+          alternatives={results.alternatives}
+          onSelect={(alt) => {
+            console.log('Selected alternative:', alt);
+          }}
+        />
+      )}
 
       {/* COMPARISON */}
       <div className="border-2 border-gray-200 rounded-xl p-5 space-y-4">
@@ -466,6 +731,11 @@ const ResultsPanel = ({ results, history, onSave, isSaving }) => {
             {Math.max(results.current.riskScore - results.optimal.riskScore, 0)}%
           </strong>.
         </p>
+        {results.recommendation && (
+          <p className="text-sm mt-3 text-blue-700 bg-blue-100 p-3 rounded-lg">
+            💡 {results.recommendation}
+          </p>
+        )}
       </div>
 
       {/* HISTORY */}
@@ -508,96 +778,150 @@ const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
 
   if (!simulations || simulations.length === 0) {
     return (
-      <div className="text-center py-8 text-gray-500">
-        <History className="w-12 h-12 mx-auto mb-3 text-gray-400" />
-        <p>No saved simulations yet</p>
-        <p className="text-sm">Run a simulation and save it to see it here</p>
+      <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
+        <History className="w-16 h-16 mx-auto mb-4 text-gray-400" />
+        <p className="text-gray-500 text-lg font-medium">No saved simulations yet</p>
+        <p className="text-gray-400 text-sm mt-2">
+          Run a simulation and click "Save" to store it here
+        </p>
       </div>
     );
   }
 
+  const formatDate = (dateString) => {
+    if (!dateString) return 'Unknown date';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-ZA', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   return (
     <div className="space-y-4">
-      <h3 className="font-semibold text-lg flex items-center gap-2">
-        <History className="w-5 h-5" />
-        Saved Simulations ({simulations.length})
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold text-lg flex items-center gap-2">
+          <History className="w-5 h-5 text-purple-600" />
+          Saved Simulations
+          <span className="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+            {simulations.length}
+          </span>
+        </h3>
+      </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {simulations.map((sim) => (
-          <div
-            key={sim.id}
-            className="bg-white dark:bg-gray-800 border border-gray-200 rounded-xl p-4 hover:shadow-md transition-shadow"
-          >
-            <div className="flex justify-between items-start">
-              <div className="flex-1">
-                <h4 className="font-medium text-gray-900 dark:text-white">
-                  {sim.route_name || sim.routeName}
-                </h4>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {new Date(sim.created_at || sim.timestamp).toLocaleString()}
-                </p>
+        {simulations.map((sim) => {
+          const riskScore = sim.current_route?.riskScore || sim.current?.riskScore || 0;
+          const duration = sim.current_route?.duration || sim.current?.duration || 0;
+          const cost = sim.current_route?.cost || sim.current?.cost || 'R0';
+          const routeName = sim.route_name || sim.routeName || 'Unknown Route';
+          const weather = sim.parameters?.weather || 'unknown';
+          const delay = sim.parameters?.delay || 0;
+          const hasAccident = sim.parameters?.accident || false;
+          const hasClosure = sim.parameters?.roadClosure || false;
+
+          return (
+            <div
+              key={sim.id}
+              className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-lg transition-all duration-200 hover:border-purple-300"
+            >
+              <div className="flex justify-between items-start">
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-semibold text-gray-900 text-base truncate">
+                    {sim.name || routeName}
+                  </h4>
+                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    {formatDate(sim.created_at || sim.timestamp)}
+                  </p>
+                </div>
+                <div className="flex gap-1 flex-shrink-0 ml-2">
+                  <button
+                    onClick={() => onLoad?.(sim)}
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="Load this simulation"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => onDelete?.(sim.id)}
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete this simulation"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => onLoad?.(sim)}
-                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                  title="Load this simulation"
-                >
-                  <Eye className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => onDelete?.(sim.id)}
-                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                  title="Delete this simulation"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+
+              <div className="mt-2 flex items-center gap-1 text-sm text-gray-600">
+                <Navigation className="w-4 h-4 text-gray-400" />
+                <span className="truncate">{routeName}</span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-3">
+                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                  <p className="text-xs text-gray-500">Duration</p>
+                  <p className="font-bold text-purple-600 text-sm">{duration} min</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                  <p className="text-xs text-gray-500">Cost</p>
+                  <p className="font-bold text-green-600 text-sm">{cost}</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2 text-center">
+                  <p className="text-xs text-gray-500">Risk</p>
+                  <p className={`font-bold text-sm ${
+                    riskScore >= 70 ? 'text-red-600' :
+                    riskScore >= 40 ? 'text-orange-600' :
+                    'text-green-600'
+                  }`}>
+                    {riskScore}%
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {delay > 0 && (
+                  <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    +{delay}min
+                  </span>
+                )}
+                {hasAccident && (
+                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    Accident
+                  </span>
+                )}
+                {hasClosure && (
+                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    Closure
+                  </span>
+                )}
+                {weather && weather !== 'sunny' && weather !== 'unknown' && (
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
+                    {weather.replace('_', ' ')}
+                  </span>
+                )}
+                {riskScore >= 70 && (
+                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    High Risk
+                  </span>
+                )}
+                {riskScore < 30 && riskScore > 0 && (
+                  <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" />
+                    Low Risk
+                  </span>
+                )}
               </div>
             </div>
-            
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <div className="text-xs">
-                <span className="text-gray-500">Duration</span>
-                <p className="font-medium">{sim.current_route?.duration || sim.current?.duration || 0} min</p>
-              </div>
-              <div className="text-xs">
-                <span className="text-gray-500">Cost</span>
-                <p className="font-medium">{sim.current_route?.cost || sim.current?.cost || 'R0'}</p>
-              </div>
-              <div className="text-xs">
-                <span className="text-gray-500">Risk</span>
-                <p className={`font-medium ${
-                  (sim.current_route?.riskScore || sim.current?.riskScore || 0) >= 70 ? 'text-red-600' :
-                  (sim.current_route?.riskScore || sim.current?.riskScore || 0) >= 40 ? 'text-orange-600' :
-                  'text-green-600'
-                }`}>
-                  {sim.current_route?.riskScore || sim.current?.riskScore || 0}%
-                </p>
-              </div>
-            </div>
-            
-            {sim.parameters && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {sim.parameters.delay > 0 && (
-                  <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full">
-                    +{sim.parameters.delay}min
-                  </span>
-                )}
-                {sim.parameters.accident && (
-                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
-                    🚗 Accident
-                  </span>
-                )}
-                {sim.parameters.roadClosure && (
-                  <span className="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded-full">
-                    🚧 Closure
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -713,11 +1037,10 @@ const SaveModal = ({
 };
 
 /* ============================================================
-   MAIN COMPONENT - Self-contained with API fetch
+   MAIN COMPONENT
 ============================================================ */
 
 const SimulationControls = ({
-  // Optional props - component now handles everything internally
   apiUrl = 'http://localhost:5000/api/routes',
   onSimulationComplete,
   onSaveSimulation,
@@ -745,14 +1068,81 @@ const SimulationControls = ({
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [showSavedList, setShowSavedList] = useState(false);
+  const [localSavedSimulations, setLocalSavedSimulations] = useState([]);
+  
+  // Weather state
+  const [currentWeather, setCurrentWeather] = useState(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState(null);
 
-  // CRITICAL: Use refs to persist data across re-renders
   const resultsRef = useRef(null);
   const hasRunSimulationRef = useRef(false);
   const historyRef = useRef([]);
-  
-  // Force re-render trigger
   const [, forceUpdate] = useState({});
+
+  /* ==========================================================
+     FETCH WEATHER FOR CURRENT ROUTE
+  ========================================================== */
+
+  const fetchWeatherForRoute = useCallback(async (route) => {
+    if (!route) {
+      console.warn('⚠️ No route provided for weather fetch');
+      return;
+    }
+    
+    // Get coordinates
+    const originLat = route.origin_lat || route.start_point?.lat || 0;
+    const originLng = route.origin_lng || route.start_point?.lng || 0;
+    const destLat = route.dest_lat || route.stops?.[route.stops.length - 1]?.lat || 0;
+    const destLng = route.dest_lng || route.stops?.[route.stops.length - 1]?.lng || 0;
+    
+    // Get the actual names from the route
+    const originName = route.origin_name || 'Origin';
+    const destinationName = route.destination_name || 'Destination';
+    
+    console.log(`🌤️ Fetching weather for route: ${originName} → ${destinationName}`);
+    console.log(`📍 Origin: ${originLat}, ${originLng}`);
+    console.log(`📍 Destination: ${destLat}, ${destLng}`);
+    
+    if (!originLat || !originLng || !destLat || !destLng || 
+        originLat === 0 || originLng === 0 || destLat === 0 || destLng === 0) {
+      console.warn('⚠️ Missing coordinates for weather fetch');
+      setCurrentWeather(null);
+      return;
+    }
+    
+    setWeatherLoading(true);
+    setWeatherError(null);
+    
+    try {
+      const weatherUrl = `http://localhost:5000/api/weather/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`;
+      console.log(`📡 Calling weather API: ${weatherUrl}`);
+      
+      const response = await fetch(weatherUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Weather API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Add the route names to the weather data for display
+      if (data) {
+        data.originName = originName;
+        data.destinationName = destinationName;
+      }
+      
+      console.log('✅ Weather data received:', data);
+      setCurrentWeather(data);
+      
+    } catch (error) {
+      console.error('❌ Error fetching weather:', error);
+      setWeatherError(error.message);
+      setCurrentWeather(null);
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, []);
 
   /* ==========================================================
      FETCH ROUTES FROM BACKEND
@@ -778,24 +1168,54 @@ const SimulationControls = ({
           setRoutes(data);
           setRoutesError(null);
           setStatusMessage(`✅ Loaded ${data.length} routes from database`);
+          
+          if (data.length > 0) {
+            console.log('🌤️ Auto-fetching weather for first route:', data[0].display_name);
+            fetchWeatherForRoute(data[0]);
+          }
         } else {
-          // No routes from API, use defaults
           setRoutes(DEFAULT_ROUTES);
           setStatusMessage("⚠️ Using default routes (no data from API)");
+          fetchWeatherForRoute(DEFAULT_ROUTES[0]);
         }
       } catch (err) {
         console.error('❌ Error fetching routes:', err);
         setRoutesError(err.message);
-        // Fallback to default routes
         setRoutes(DEFAULT_ROUTES);
         setStatusMessage("⚠️ Using default routes (API unavailable)");
+        fetchWeatherForRoute(DEFAULT_ROUTES[0]);
       } finally {
         setRoutesLoading(false);
       }
     };
 
     fetchRoutes();
-  }, [apiUrl]);
+  }, [apiUrl, fetchWeatherForRoute]);
+
+  /* ==========================================================
+     FETCH SAVED SIMULATIONS FROM DATABASE
+  ========================================================== */
+
+  const fetchSavedSimulations = useCallback(async () => {
+    try {
+      console.log('📋 Fetching saved simulations from database...');
+      const response = await fetch('http://localhost:5000/api/simulations');
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`📋 Loaded ${data.length} saved simulations`);
+        setLocalSavedSimulations(data);
+        return data;
+      }
+      return [];
+    } catch (error) {
+      console.error('Error fetching saved simulations:', error);
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSavedSimulations();
+  }, [fetchSavedSimulations]);
 
   /* ----------------------------------------------------------
      AVAILABLE ROUTES
@@ -828,6 +1248,14 @@ const SimulationControls = ({
     return found || availableRoutes[0];
   }, [availableRoutes, selectedRouteId]);
 
+  // Fetch weather when selected route changes
+  useEffect(() => {
+    if (selectedRoute) {
+      console.log('🔄 Route changed, fetching weather for:', selectedRoute.display_name);
+      fetchWeatherForRoute(selectedRoute);
+    }
+  }, [selectedRoute, fetchWeatherForRoute]);
+
   /* ----------------------------------------------------------
      WEATHER
   ---------------------------------------------------------- */
@@ -843,7 +1271,7 @@ const SimulationControls = ({
      RUN SIMULATION
   ========================================================== */
 
-  const runSimulation = useCallback(() => {
+  const runSimulation = useCallback(async () => {
     if (!selectedRoute || isRunning) {
       return;
     }
@@ -851,109 +1279,157 @@ const SimulationControls = ({
     console.log("SIMULATION STARTED");
 
     setIsRunning(true);
-    setStatusMessage("🔄 Running simulation...");
+    setStatusMessage("🔄 Running simulation with real-time data...");
 
-    const baseDuration = getDuration(selectedRoute);
-    const baseDistance = getDistance(selectedRoute);
-    const baseCost = getCost(selectedRoute);
-    const trafficDelay = Number(selectedRoute.traffic_delay) || 0;
+    try {
+      const originLat = selectedRoute.origin_lat || 0;
+      const originLng = selectedRoute.origin_lng || 0;
+      const destLat = selectedRoute.dest_lat || 0;
+      const destLng = selectedRoute.dest_lng || 0;
+      
+      let weatherData = currentWeather;
+      
+      if (!weatherData || weatherData.is_mock) {
+        console.log('🌤️ Fetching fresh weather data for simulation...');
+        const weatherResponse = await fetch(
+          `http://localhost:5000/api/weather/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`
+        );
+        if (weatherResponse.ok) {
+          weatherData = await weatherResponse.json();
+          setCurrentWeather(weatherData);
+        }
+      }
 
-    let totalDelay = Number(delay) || 0;
-    totalDelay += trafficDelay;
-    totalDelay += baseDuration * (selectedWeather.multiplier - 1);
-    if (hasAccident) totalDelay += 20;
-    if (hasRoadClosure) totalDelay += 30;
-    totalDelay = Math.max(Math.round(totalDelay), 0);
+      let trafficData = null;
+      try {
+        const trafficResponse = await fetch(
+          `http://localhost:5000/api/traffic/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`
+        );
+        if (trafficResponse.ok) {
+          trafficData = await trafficResponse.json();
+          console.log('✅ Traffic data fetched:', trafficData);
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not fetch traffic data:', err.message);
+      }
 
-    const currentDuration = Math.round(baseDuration + totalDelay);
+      const baseDuration = getDuration(selectedRoute);
+      const baseDistance = getDistance(selectedRoute);
+      const baseCost = getCost(selectedRoute);
+      
+      let totalDelay = Number(delay) || 0;
+      totalDelay += Number(trafficData?.trafficDelayMinutes || 0);
+      totalDelay += Number(selectedRoute.traffic_delay) || 0;
+      totalDelay += baseDuration * (selectedWeather.multiplier - 1);
+      
+      if (hasAccident) totalDelay += 20;
+      if (hasRoadClosure) totalDelay += 30;
+      totalDelay = Math.max(Math.round(totalDelay), 0);
 
-    let currentCost = baseCost;
-    if (currentCost <= 0) {
-      currentCost = baseDistance > 0 ? baseDistance * 2 : currentDuration * 3;
+      const currentDuration = Math.round(baseDuration + totalDelay);
+
+      let currentCost = baseCost;
+      if (currentCost <= 0) {
+        currentCost = baseDistance > 0 ? baseDistance * 2 : currentDuration * 3;
+      }
+      currentCost += totalDelay * 1.2;
+      currentCost = Math.round(currentCost);
+
+      let riskScore = 15;
+      riskScore += totalDelay * 0.35;
+      riskScore += selectedWeather.risk || 0;
+      
+      if (weatherData?.summary?.conditions?.includes('Rain')) riskScore += 15;
+      if (weatherData?.summary?.conditions?.includes('Storm')) riskScore += 30;
+      if (weatherData?.summary?.conditions?.includes('Snow')) riskScore += 25;
+      
+      if (trafficData?.hasAccident) riskScore += 25;
+      if (trafficData?.hasRoadClosure) riskScore += 30;
+      if (trafficData?.hasTraffic) riskScore += 10;
+      
+      if (hasAccident) riskScore += 20;
+      if (hasRoadClosure) riskScore += 20;
+      riskScore = Math.min(Math.max(Math.round(riskScore), 0), 100);
+
+      const optimalDuration = Math.max(Math.round(baseDuration * 0.85), 1);
+      const optimalCost = Math.max(Math.round(currentCost * 0.9), 1);
+      const optimalRisk = Math.max(Math.round(riskScore - 30), 5);
+
+      let alternatives = [];
+      try {
+        const altResponse = await fetch(
+          `http://localhost:5000/api/routes/alternatives?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}&origin_name=${encodeURIComponent(selectedRoute.origin_name || 'Origin')}&destination_name=${encodeURIComponent(selectedRoute.destination_name || 'Destination')}&has_accident=${hasAccident}&has_road_closure=${hasRoadClosure}`
+        );
+        if (altResponse.ok) {
+          const altData = await altResponse.json();
+          alternatives = altData.alternatives || [];
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not fetch alternatives:', err.message);
+      }
+
+      let recommendation = '';
+      if (trafficData?.hasRoadClosure) {
+        recommendation = '🚧 URGENT: Road closure detected. Use alternative route immediately!';
+      } else if (trafficData?.hasAccident) {
+        recommendation = '🚗 Accident detected on route. Consider alternative route to avoid delays.';
+      } else if (weatherData?.summary?.recommendation?.includes('Adverse')) {
+        recommendation = `⚠️ ${weatherData.summary.recommendation}`;
+      } else if (trafficData?.hasTraffic) {
+        recommendation = `⚠️ Traffic delay of ${trafficData.trafficDelayMinutes} minutes expected. Consider alternative route.`;
+      } else {
+        recommendation = '✅ All clear! The current route is optimal for travel.';
+      }
+
+      const simulationResult = {
+        id: `simulation-${Date.now()}`,
+        routeName: getRouteName(selectedRoute),
+        timestamp: new Date().toISOString(),
+        params: {
+          delay,
+          weather,
+          accident: hasAccident,
+          roadClosure: hasRoadClosure,
+          realWeather: weatherData,
+          realTraffic: trafficData
+        },
+        current: {
+          duration: currentDuration,
+          cost: `R${currentCost.toLocaleString("en-ZA")}`,
+          riskScore,
+          delay: totalDelay,
+        },
+        optimal: {
+          duration: optimalDuration,
+          cost: `R${optimalCost.toLocaleString("en-ZA")}`,
+          riskScore: optimalRisk,
+          delay: 0,
+        },
+        alternatives,
+        recommendation
+      };
+
+      console.log("SIMULATION RESULT:", simulationResult);
+
+      resultsRef.current = simulationResult;
+      hasRunSimulationRef.current = true;
+      historyRef.current = [simulationResult, ...historyRef.current].slice(0, 10);
+
+      setStatusMessage(`✅ Simulation complete — ${currentDuration} minutes`);
+      setIsRunning(false);
+
+      forceUpdate({});
+
+      if (typeof onSimulationComplete === "function") {
+        onSimulationComplete(simulationResult);
+      }
+
+    } catch (error) {
+      console.error('❌ Simulation error:', error);
+      setStatusMessage('❌ Failed to run simulation with real-time data');
+      setIsRunning(false);
     }
-    currentCost += totalDelay * 1.2;
-    currentCost = Math.round(currentCost);
-
-    let riskScore = 15;
-    riskScore += totalDelay * 0.35;
-    riskScore += selectedWeather.risk || 0;
-    if (hasAccident) riskScore += 20;
-    if (hasRoadClosure) riskScore += 20;
-    riskScore = Math.min(Math.max(Math.round(riskScore), 0), 100);
-
-    const optimalDuration = Math.max(Math.round(baseDuration * 0.85), 1);
-    const optimalCost = Math.max(Math.round(currentCost * 0.9), 1);
-    const optimalRisk = Math.max(Math.round(riskScore - 30), 5);
-
-    const alternatives = [
-      {
-        id: "alt-1",
-        displayName: "N1 Western Bypass",
-        duration: Math.round(baseDuration * 0.85),
-        distance: Math.round(baseDistance * 0.95),
-        trafficDelay: Math.round(totalDelay * 0.5),
-        isRecommended: true,
-      },
-      {
-        id: "alt-2",
-        displayName: "R21 Eastern Route",
-        duration: Math.round(baseDuration * 0.9),
-        distance: Math.round(baseDistance * 1.05),
-        trafficDelay: Math.round(totalDelay * 0.65),
-        isRecommended: false,
-      },
-      {
-        id: "alt-3",
-        displayName: "M1 Alternative Route",
-        duration: Math.round(baseDuration * 0.95),
-        distance: Math.round(baseDistance * 0.9),
-        trafficDelay: Math.round(totalDelay * 0.8),
-        isRecommended: false,
-      },
-    ];
-
-    const simulationResult = {
-      id: `simulation-${Date.now()}`,
-      routeName: getRouteName(selectedRoute),
-      timestamp: new Date().toISOString(),
-      params: {
-        delay,
-        weather,
-        accident: hasAccident,
-        roadClosure: hasRoadClosure,
-      },
-      current: {
-        duration: currentDuration,
-        cost: `R${currentCost.toLocaleString("en-ZA")}`,
-        riskScore,
-        delay: totalDelay,
-      },
-      optimal: {
-        duration: optimalDuration,
-        cost: `R${optimalCost.toLocaleString("en-ZA")}`,
-        riskScore: optimalRisk,
-        delay: 0,
-      },
-      alternatives,
-    };
-
-    console.log("SIMULATION RESULT:", simulationResult);
-
-    // Store in refs for persistence
-    resultsRef.current = simulationResult;
-    hasRunSimulationRef.current = true;
-    historyRef.current = [simulationResult, ...historyRef.current].slice(0, 10);
-
-    setStatusMessage(`✅ Simulation complete — ${currentDuration} minutes`);
-    setIsRunning(false);
-
-    // Force re-render to show results
-    forceUpdate({});
-
-    if (typeof onSimulationComplete === "function") {
-      onSimulationComplete(simulationResult);
-    }
-  }, [selectedRoute, isRunning, delay, hasAccident, hasRoadClosure, selectedWeather, onSimulationComplete]);
+  }, [selectedRoute, isRunning, delay, hasAccident, hasRoadClosure, selectedWeather, currentWeather, onSimulationComplete]);
 
   /* ==========================================================
      RESET
@@ -977,12 +1453,30 @@ const SimulationControls = ({
   ========================================================== */
 
   const handleRouteChange = useCallback((event) => {
-    setSelectedRouteId(event.target.value);
-    setStatusMessage("Route changed. Run the simulation again to update the result.");
-  }, []);
+    const routeId = event.target.value;
+    setSelectedRouteId(routeId);
+    setStatusMessage("🔄 Loading weather for selected route...");
+    
+    const route = availableRoutes.find(r => getRouteId(r) === routeId);
+    if (route) {
+      console.log('📍 Route changed to:', route.display_name);
+      fetchWeatherForRoute(route);
+    }
+  }, [availableRoutes, fetchWeatherForRoute]);
 
   /* ==========================================================
-     SAVE SIMULATION
+     REFRESH WEATHER
+  ========================================================== */
+
+  const refreshWeather = useCallback(() => {
+    if (selectedRoute) {
+      setStatusMessage("🔄 Refreshing current weather data...");
+      fetchWeatherForRoute(selectedRoute);
+    }
+  }, [selectedRoute, fetchWeatherForRoute]);
+
+  /* ==========================================================
+     SAVE BUTTON CLICK
   ========================================================== */
 
   const handleSaveClick = useCallback(() => {
@@ -993,6 +1487,10 @@ const SimulationControls = ({
     setShowSaveModal(true);
     setSaveError(null);
   }, []);
+
+  /* ==========================================================
+     SAVE SIMULATION TO DATABASE
+  ========================================================== */
 
   const handleSave = useCallback(async (name) => {
     if (!resultsRef.current) {
@@ -1005,63 +1503,84 @@ const SimulationControls = ({
 
     try {
       const simulationData = {
-        ...resultsRef.current,
-        routeId: selectedRoute ? getRouteId(selectedRoute) : null,
         name: name.trim() || resultsRef.current.routeName,
-        savedAt: new Date().toISOString()
+        routeId: selectedRoute ? getRouteId(selectedRoute) : null,
+        routeName: resultsRef.current.routeName,
+        params: resultsRef.current.params || {},
+        current: resultsRef.current.current || {},
+        optimal: resultsRef.current.optimal || {},
+        alternatives: resultsRef.current.alternatives || [],
+        recommendation: resultsRef.current.recommendation || '',
+        timestamp: new Date().toISOString()
       };
 
-      if (typeof onSaveSimulation === 'function') {
-        const result = await onSaveSimulation(simulationData);
-        
-        if (result?.error) {
-          throw result.error;
-        }
-        
-        setShowSaveModal(false);
-        setStatusMessage("✅ Simulation saved successfully!");
-      } else {
-        // If no save function provided, just store in localStorage
-        const saved = JSON.parse(localStorage.getItem('savedSimulations') || '[]');
-        saved.unshift({
-          ...simulationData,
-          id: `saved-${Date.now()}`,
-          created_at: new Date().toISOString()
-        });
-        localStorage.setItem('savedSimulations', JSON.stringify(saved));
-        setShowSaveModal(false);
-        setStatusMessage("✅ Simulation saved locally!");
+      console.log('💾 Saving simulation to database:', simulationData);
+
+      const response = await fetch('http://localhost:5000/api/simulations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(simulationData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to save simulation (${response.status})`);
       }
+
+      const saved = await response.json();
+      console.log('✅ Simulation saved:', saved);
+      
+      setLocalSavedSimulations(prev => [saved, ...prev]);
+      
+      if (typeof onSaveSimulation === 'function') {
+        onSaveSimulation(saved);
+      }
+      
+      setShowSaveModal(false);
+      setStatusMessage("✅ Simulation saved to database!");
+      
     } catch (error) {
-      console.error("Save error:", error);
-      setSaveError(error.message || "Failed to save simulation");
+      console.error("❌ Save error:", error);
+      setSaveError(error.message || "Failed to save simulation. Please check if the server is running.");
+      setStatusMessage(`❌ Save failed: ${error.message}`);
     } finally {
       setIsSaving(false);
     }
   }, [selectedRoute, onSaveSimulation]);
 
   /* ==========================================================
-     LOAD SIMULATION
+     LOAD SIMULATION FROM DATABASE
   ========================================================== */
 
-  const handleLoadSimulation = useCallback((simulation) => {
+  const handleLoadSimulation = useCallback(async (simulation) => {
     try {
-      // Parse the simulation data
+      console.log('📂 Loading simulation:', simulation);
+      
+      let fullData = simulation;
+      if (simulation.id && !simulation.current_route) {
+        const response = await fetch(`http://localhost:5000/api/simulations/${simulation.id}`);
+        if (response.ok) {
+          fullData = await response.json();
+          console.log('📂 Fetched full simulation data:', fullData);
+        }
+      }
+      
       const loadedResult = {
-        id: simulation.id || `loaded-${Date.now()}`,
-        routeName: simulation.route_name || simulation.routeName,
-        timestamp: simulation.created_at || simulation.timestamp || new Date().toISOString(),
-        params: simulation.parameters || simulation.params || {},
-        current: simulation.current_route || simulation.current || {},
-        optimal: simulation.optimal_route || simulation.optimal || {},
-        alternatives: simulation.alternatives || []
+        id: fullData.id || `loaded-${Date.now()}`,
+        routeName: fullData.route_name || fullData.routeName || 'Unknown Route',
+        timestamp: fullData.created_at || fullData.timestamp || new Date().toISOString(),
+        params: fullData.parameters || fullData.params || {},
+        current: fullData.current_route || fullData.current || {},
+        optimal: fullData.optimal_route || fullData.optimal || {},
+        alternatives: fullData.alternatives || [],
+        recommendation: fullData.recommendation || ''
       };
 
-      // Set the results
       resultsRef.current = loadedResult;
       hasRunSimulationRef.current = true;
       
-      // Update form values from the loaded simulation
       if (loadedResult.params) {
         if (loadedResult.params.delay) setDelay(loadedResult.params.delay);
         if (loadedResult.params.weather) setWeather(loadedResult.params.weather);
@@ -1069,20 +1588,20 @@ const SimulationControls = ({
         if (loadedResult.params.roadClosure !== undefined) setHasRoadClosure(loadedResult.params.roadClosure);
       }
 
-      setStatusMessage("📂 Simulation loaded successfully!");
+      setStatusMessage("📂 Simulation loaded from database!");
       forceUpdate({});
 
       if (typeof onLoadSimulation === 'function') {
         onLoadSimulation(loadedResult);
       }
     } catch (error) {
-      console.error("Load error:", error);
+      console.error("❌ Load error:", error);
       setStatusMessage("❌ Failed to load simulation");
     }
   }, [onLoadSimulation]);
 
   /* ==========================================================
-     DELETE SIMULATION
+     DELETE SIMULATION FROM DATABASE
   ========================================================== */
 
   const handleDeleteSimulation = useCallback(async (id) => {
@@ -1090,25 +1609,51 @@ const SimulationControls = ({
     
     if (window.confirm('Are you sure you want to delete this simulation?')) {
       try {
-        if (typeof onDeleteSimulation === 'function') {
-          const result = await onDeleteSimulation(id);
-          if (result?.error) {
-            throw result.error;
-          }
-          setStatusMessage("🗑️ Simulation deleted successfully!");
-        } else {
-          // If no delete function provided, remove from localStorage
-          const saved = JSON.parse(localStorage.getItem('savedSimulations') || '[]');
-          const filtered = saved.filter(sim => sim.id !== id);
-          localStorage.setItem('savedSimulations', JSON.stringify(filtered));
-          setStatusMessage("🗑️ Simulation deleted locally!");
+        console.log('🗑️ Deleting simulation:', id);
+        
+        const response = await fetch(`http://localhost:5000/api/simulations/${id}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Failed to delete simulation');
         }
+
+        const result = await response.json();
+        console.log('✅ Simulation deleted:', result);
+        
+        setLocalSavedSimulations(prev => prev.filter(sim => sim.id !== id));
+        
+        if (typeof onDeleteSimulation === 'function') {
+          onDeleteSimulation(id);
+        }
+        
+        if (resultsRef.current && resultsRef.current.id === id) {
+          resultsRef.current = null;
+          hasRunSimulationRef.current = false;
+          forceUpdate({});
+        }
+        
+        setStatusMessage("🗑️ Simulation deleted from database!");
+        
       } catch (error) {
-        console.error("Delete error:", error);
-        setStatusMessage("❌ Failed to delete simulation");
+        console.error("❌ Delete error:", error);
+        setStatusMessage(`❌ Failed to delete: ${error.message}`);
       }
     }
   }, [onDeleteSimulation]);
+
+  /* ==========================================================
+     TOGGLE SAVED LIST
+  ========================================================== */
+
+  const toggleSavedList = useCallback(() => {
+    setShowSavedList(!showSavedList);
+    if (!showSavedList) {
+      fetchSavedSimulations();
+    }
+  }, [showSavedList, fetchSavedSimulations]);
 
   /* ==========================================================
      RENDER
@@ -1118,7 +1663,8 @@ const SimulationControls = ({
   const hasRunSimulation = hasRunSimulationRef.current;
   const history = historyRef.current;
 
-  // Show loading state
+  const allSavedSimulations = savedSimulations.length > 0 ? savedSimulations : localSavedSimulations;
+
   if (routesLoading) {
     return (
       <div className="w-full bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
@@ -1143,7 +1689,7 @@ const SimulationControls = ({
             What-If Simulation
           </h2>
           <p className="text-sm text-gray-500 mt-1">
-            Simulate route disruptions and compare alternatives.
+            Simulate route disruptions, weather, traffic and compare alternatives.
           </p>
           {routesError && (
             <p className="text-xs text-yellow-600 mt-1">
@@ -1157,13 +1703,12 @@ const SimulationControls = ({
           )}
         </div>
         <div className="flex gap-3">
-          {/* Toggle Saved Simulations */}
           <button
-            onClick={() => setShowSavedList(!showSavedList)}
+            onClick={toggleSavedList}
             className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-medium transition-colors"
           >
             <History className="w-4 h-4" />
-            Saved ({savedSimulations?.length || 0})
+            Saved ({allSavedSimulations?.length || 0})
           </button>
           
           {hasRunSimulation && (
@@ -1176,9 +1721,9 @@ const SimulationControls = ({
 
       {/* SAVED SIMULATIONS LIST */}
       {showSavedList && (
-        <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
+        <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200 max-h-[600px] overflow-y-auto">
           <SavedSimulationsList
-            simulations={savedSimulations || []}
+            simulations={allSavedSimulations}
             onLoad={handleLoadSimulation}
             onDelete={handleDeleteSimulation}
             loading={isLoadingSaved}
@@ -1234,6 +1779,15 @@ const SimulationControls = ({
             )}
           </div>
 
+          {/* WEATHER DISPLAY - Pass the route names */}
+          <WeatherDisplay 
+            weather={currentWeather}
+            loading={weatherLoading}
+            onRefresh={refreshWeather}
+            originName={selectedRoute?.origin_name}
+            destinationName={selectedRoute?.destination_name}
+          />
+
           {/* DELAY */}
           <div>
             <div className="flex justify-between mb-2">
@@ -1258,7 +1812,7 @@ const SimulationControls = ({
           {/* WEATHER */}
           <div>
             <label className="text-sm font-semibold text-gray-700 block mb-2">
-              Weather
+              Manual Weather Override
             </label>
             <div className="relative">
               {weather === "sunny" ? (
@@ -1278,6 +1832,7 @@ const SimulationControls = ({
                 ))}
               </select>
             </div>
+            <p className="text-xs text-gray-400 mt-1">Override real weather for simulation</p>
           </div>
 
           {/* DISRUPTIONS */}
