@@ -564,6 +564,9 @@ export default function LocationScreen({ route }) {
     }
   }, [updateState, showNotification]);
 
+  // ============================================
+  // RECEIPT FUNCTIONS - ADDED
+  // ============================================
   const requestCameraPermission = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
@@ -724,6 +727,17 @@ export default function LocationScreen({ route }) {
     }
   }, [fuelPercent, updateState, showNotification, checkFuelAndRedirect]);
 
+  const openReceiptModal = useCallback(() => {
+    updateState({ 
+      showReceiptModal: true,
+      isAtFuelStation: true,
+      waitingForReceipt: true 
+    });
+  }, [updateState]);
+  // ============================================
+  // END RECEIPT FUNCTIONS
+  // ============================================
+
   useEffect(() => {
     console.log('[location screen]', !!user);
     getLocation();
@@ -822,6 +836,9 @@ export default function LocationScreen({ route }) {
     </TouchableOpacity>
   );
 
+  // ============================================
+  // RECEIPT MODAL - ADDED
+  // ============================================
   const renderReceiptModal = () => (
     <Modal
       animationType="slide"
@@ -938,6 +955,9 @@ export default function LocationScreen({ route }) {
       </View>
     </Modal>
   );
+  // ============================================
+  // END RECEIPT MODAL
+  // ============================================
 
   const renderFuelModal = () => (
     <Modal
@@ -1283,6 +1303,7 @@ export default function LocationScreen({ route }) {
         </View>
       )}
 
+      {/* Receipt Submitted Status */}
       {receiptSubmitted && (
         <View style={[styles.card, { backgroundColor: '#2e7d32' }]}>
           <Text style={styles.heading}>✓ Receipt Submitted</Text>
@@ -1365,6 +1386,18 @@ export default function LocationScreen({ route }) {
         <Text style={styles.buttonText}>View Fuel Stations Along Route</Text>
       </TouchableOpacity>
 
+      {/* ============================================ */}
+      {/* RECEIPT BUTTON - ALWAYS VISIBLE */}
+      {/* ============================================ */}
+      <TouchableOpacity
+        style={[styles.primaryButton, styles.receiptButton]}
+        onPress={openReceiptModal}
+      >
+        <Ionicons name="receipt-outline" size={20} color="#fff" />
+        <Text style={styles.buttonText}>📄 Scan Fuel Receipt</Text>
+      </TouchableOpacity>
+
+      {/* Fuel Warning Receipt Button */}
       {fuelWarning && (
         <TouchableOpacity
           style={[styles.primaryButton, { backgroundColor: '#ff6f00' }]}
@@ -1380,6 +1413,9 @@ export default function LocationScreen({ route }) {
           <Text style={styles.buttonText}>I've Refueled (Scan Receipt)</Text>
         </TouchableOpacity>
       )}
+      {/* ============================================ */}
+      {/* END RECEIPT BUTTONS */}
+      {/* ============================================ */}
     </ScrollView>
   );
 
@@ -1476,6 +1512,11 @@ const styles = StyleSheet.create({
   },
   fuelButton: {
     backgroundColor: "#f44336",
+  },
+  receiptButton: {
+    backgroundColor: "#ff6f00",
+    marginTop: 15,
+    padding: 16,
   },
   buttonText: { color: "#fff", marginLeft: 8, fontWeight: "bold", fontSize: 15 },
   
@@ -1764,6 +1805,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
 
+  // Receipt Modal Styles
   receiptImageContainer: {
     width: '100%',
     height: 200,
@@ -1816,6 +1858,13 @@ const styles = StyleSheet.create({
     color: '#333',
     marginVertical: 2,
   },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 20,
+    textAlign: 'center',
+    paddingHorizontal: 10,
+  },
   modalButtonContainer: {
     width: '100%',
     flexDirection: 'column',
@@ -1846,6 +1895,7 @@ const styles = StyleSheet.create({
   skipButton: {
     marginTop: 15,
     padding: 10,
+    alignItems: 'center',
   },
   skipButtonText: {
     color: '#999',
