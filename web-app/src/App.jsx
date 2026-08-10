@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import Login from './components/Login'; // Make sure this path is correct
 import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
 import StatCard from './components/dashboard/StatCard';
@@ -28,6 +30,7 @@ import {
 } from 'lucide-react';
 import './styles/globals.css';
 import { useRoutes } from '../src/hooks/useRoutes';
+import { supabase } from './components/supabaseClientforLogin'; // Import Supabase client
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -90,8 +93,37 @@ function App() {
   const [simulationParams, setSimulationParams] = useState({ delay: 30, weather: 'moderate', accident: false, roadClosure: false });
   const [simulationResults, setSimulationResults] = useState(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  
+  // ============ ADDED: Authentication State ============
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  
   const { updateSignal, isActive: isRealTimeActive, setIsActive: setIsRealTimeActive } = useRealTimeUpdates(8000);
   const { routes, loading: routesLoading, error: routesError } = useRoutes(); 
+
+  // ============ ADDED: Check if user is already logged in ============
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  // ============ ADDED: Handle login ============
+  // ============ ADDED: Handle login ============
+const handleLogin = (userData) => {
+  setIsAuthenticated(true);
+  localStorage.setItem('token', 'authenticated');
+  localStorage.setItem('user', JSON.stringify(userData));
+  console.log('✅ User logged in:', userData);
+};
+
+  // ============ ADDED: Handle logout ============
+  const handleLogout = () => {
+  setIsAuthenticated(false);
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  console.log('👋 User logged out');
+};
 
   // Initialize data only once
   useEffect(() => {
@@ -293,7 +325,8 @@ const statsCards = [
     );
   }
 
-  return (
+  // ============ MOVED: Dashboard Content into a variable ============
+  const DashboardContent = () => (
     <div className={`min-h-screen ${darkMode ? 'dark' : ''}`}>
       <div className="flex h-screen bg-gray-50 dark:bg-gray-900 overflow-hidden">
         <Sidebar 
@@ -303,6 +336,7 @@ const statsCards = [
           setActiveTab={setActiveTab}
           darkMode={darkMode}
           setDarkMode={setDarkMode}
+          onLogout={handleLogout} // Pass logout to sidebar
         />
         
         <main className="flex-1 overflow-y-auto">
@@ -701,6 +735,31 @@ const statsCards = [
         </main>
       </div>
     </div>
+  );
+
+  // ============ CHANGED: Return with proper routing ============
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Login Route */}
+        <Route 
+          path="/login" 
+          element={<Login onLogin={handleLogin} />} 
+        />
+        
+        {/* Protected Routes - Only show if authenticated */}
+        <Route 
+          path="/*" 
+          element={
+            isAuthenticated ? (
+              <DashboardContent />
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

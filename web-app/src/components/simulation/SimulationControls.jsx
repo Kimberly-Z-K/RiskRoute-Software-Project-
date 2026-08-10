@@ -147,6 +147,7 @@ const SimulationControls = ({
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(null);
   const [useLiveWeather, setUseLiveWeather] = useState(true);
+  const [currentWeatherLocation, setCurrentWeatherLocation] = useState('Johannesburg');
   
   const [simulationHistory, setSimulationHistory] = useState([]);
   const [simulationResults, setSimulationResults] = useState(null);
@@ -166,61 +167,48 @@ const SimulationControls = ({
   const abortControllerRef = useRef(null);
   const weatherUpdateInterval = useRef(null);
 
-  const fetchLiveWeather = useCallback(async (lat, lng) => {
-    setWeatherLoading(true);
-    setWeatherError(null);
+  // Helper function to get nearby city
+  const getNearbyCity = useCallback((lat, lng) => {
+    let closestCity = null;
+    let closestDistance = Infinity;
     
-    try {
-      const url = `${WEATHER_API_URL}?lat=${lat}&lng=${lng}`;
-      console.log('🌤️ Fetching weather from:', url);
+    for (const city of SA_CITIES) {
+      const distance = Math.sqrt(
+        Math.pow(lat - city.lat, 2) + 
+        Math.pow(lng - city.lng, 2)
+      );
       
-      const response = await fetch(url);
-      
-      if (!response.ok) {
-        throw new Error(`Weather API error: ${response.status}`);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestCity = city.name;
       }
-      
-      const data = await response.json();
-      console.log('🌡️ Weather data received:', data);
-      
-      const mappedWeather = mapToSouthAfricaWeather(data.current.condition.text);
-      
-      const weatherData = {
-        temperature: data.current.temp_c,
-        condition: mappedWeather,
-        conditionText: data.current.condition.text,
-        windKph: data.current.wind_kph,
-        humidity: data.current.humidity,
-        precipMm: data.current.precip_mm || 0,
-        location: data.location.name,
-        country: data.location.country,
-        lastUpdated: data.current.last_updated,
-        isRainy: ['light_rain', 'moderate_rain', 'heavy_rain'].includes(mappedWeather),
-        isWindy: mappedWeather === 'windy',
-        isFoggy: mappedWeather === 'fog',
-        impacts: WEATHER_IMPACTS[mappedWeather] || WEATHER_IMPACTS.sunny
-      };
-      
-      setLiveWeather(weatherData);
-      console.log(`✅ Current Temperature: ${weatherData.temperature}°C, Condition: ${weatherData.conditionText}`);
-      
-      if (useLiveWeather && setParams) {
-        setParams(prev => ({
-          ...prev,
-          weather: mappedWeather
-        }));
-      }
-      
-      return weatherData;
-      
-    } catch (error) {
-      console.error('❌ Failed to fetch weather:', error);
-      setWeatherError(error.message);
-      return getFallbackWeather(lat, lng);
-    } finally {
-      setWeatherLoading(false);
     }
-  }, [useLiveWeather, setParams]);
+    
+    return closestCity || 'Johannesburg';
+  }, []);
+
+  // Extract coordinates from route - MOVED UP BEFORE IT'S USED
+  const extractCoordinates = useCallback((route) => {
+    let coords = [];
+    
+    if (route.stops && Array.isArray(route.stops)) {
+      coords = route.stops.map(stop => ({
+        lat: stop.latitude || stop.lat,
+        lng: stop.longitude || stop.lng
+      })).filter(coord => coord.lat && coord.lng);
+    }
+    
+    if (coords.length === 0) {
+      if (route.start_lat && route.start_lng) {
+        coords.push({ lat: route.start_lat, lng: route.start_lng });
+      }
+      if (route.end_lat && route.end_lng) {
+        coords.push({ lat: route.end_lat, lng: route.end_lng });
+      }
+    }
+    
+    return coords;
+  }, []);
 
   const mapToSouthAfricaWeather = (conditionText) => {
     const text = conditionText.toLowerCase();
@@ -255,28 +243,91 @@ const SimulationControls = ({
       isRainy: false,
       isWindy: false,
       isFoggy: false,
-      impacts: WEATHER_IMPACTS[randomWeather] || WEATHER_IMPACTS.sunny
+      impacts: WEATHER_IMPACTS[randomWeather] || WEATHER_IMPACTS.sunny,
+      lat: lat,
+      lng: lng
     };
   };
 
-  const getNearbyCity = (lat, lng) => {
-    let closestCity = null;
-    let closestDistance = Infinity;
+  const fetchLiveWeather = useCallback(async (lat, lng, locationName = null) => {
+    setWeatherLoading(true);
+    setWeatherError(null);
     
-    for (const city of SA_CITIES) {
-      const distance = Math.sqrt(
-        Math.pow(lat - city.lat, 2) + 
-        Math.pow(lng - city.lng, 2)
-      );
+    try {
+      const url = `${WEATHER_API_URL}?lat=${lat}&lng=${lng}`;
+      console.log('🌤️ Fetching weather from:', url);
       
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestCity = city.name;
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Weather API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('🌡️ Weather data received:', data);
+      
+      const mappedWeather = mapToSouthAfricaWeather(data.current.condition.text);
+      
+      const weatherData = {
+        temperature: data.current.temp_c,
+        condition: mappedWeather,
+        conditionText: data.current.condition.text,
+        windKph: data.current.wind_kph,
+        humidity: data.current.humidity,
+        precipMm: data.current.precip_mm || 0,
+        location: data.location.name,
+        country: data.location.country,
+        lastUpdated: data.current.last_updated,
+        isRainy: ['light_rain', 'moderate_rain', 'heavy_rain'].includes(mappedWeather),
+        isWindy: mappedWeather === 'windy',
+        isFoggy: mappedWeather === 'fog',
+        impacts: WEATHER_IMPACTS[mappedWeather] || WEATHER_IMPACTS.sunny,
+        lat: lat,
+        lng: lng
+      };
+      
+      setLiveWeather(weatherData);
+      setCurrentWeatherLocation(weatherData.location);
+      console.log(`✅ Current Temperature: ${weatherData.temperature}°C, Condition: ${weatherData.conditionText} in ${weatherData.location}`);
+      
+      if (useLiveWeather && setParams) {
+        setParams(prev => ({
+          ...prev,
+          weather: mappedWeather
+        }));
+      }
+      
+      setVerificationStatus(`🌤️ Weather updated for ${weatherData.location}: ${weatherData.temperature}°C, ${weatherData.conditionText}`);
+      
+      return weatherData;
+      
+    } catch (error) {
+      console.error('❌ Failed to fetch weather:', error);
+      setWeatherError(error.message);
+      setVerificationStatus(`❌ Weather fetch failed: ${error.message}`);
+      return getFallbackWeather(lat, lng);
+    } finally {
+      setWeatherLoading(false);
+    }
+  }, [useLiveWeather, setParams]);
+
+  // Function to refresh weather for current location - MOVED AFTER extractCoordinates
+  const refreshWeather = useCallback(() => {
+    if (selectedRouteId && useLiveWeather) {
+      const route = enrichedRoutes.find(r => r.id === selectedRouteId);
+      if (route) {
+        const coords = extractCoordinates(route);
+        if (coords.length > 0) {
+          const midPoint = coords[Math.floor(coords.length / 2)];
+          const cityName = getNearbyCity(midPoint.lat, midPoint.lng);
+          fetchLiveWeather(midPoint.lat, midPoint.lng, cityName);
+          return;
+        }
       }
     }
-    
-    return closestCity || 'Johannesburg';
-  };
+    // Fallback to Johannesburg
+    fetchLiveWeather(-26.2041, 28.0473, 'Johannesburg');
+  }, [selectedRouteId, enrichedRoutes, useLiveWeather, fetchLiveWeather, extractCoordinates, getNearbyCity]);
 
   const reverseGeocodePoint = async (lat, lng) => {
     try {
@@ -325,28 +376,6 @@ const SimulationControls = ({
     
     return parts[0]?.trim() || 'Unknown Location';
   };
-
-  const extractCoordinates = useCallback((route) => {
-    let coords = [];
-    
-    if (route.stops && Array.isArray(route.stops)) {
-      coords = route.stops.map(stop => ({
-        lat: stop.latitude || stop.lat,
-        lng: stop.longitude || stop.lng
-      })).filter(coord => coord.lat && coord.lng);
-    }
-    
-    if (coords.length === 0) {
-      if (route.start_lat && route.start_lng) {
-        coords.push({ lat: route.start_lat, lng: route.start_lng });
-      }
-      if (route.end_lat && route.end_lng) {
-        coords.push({ lat: route.end_lat, lng: route.end_lng });
-      }
-    }
-    
-    return coords;
-  }, []);
 
   // Get alternative route suggestions based on the current route
   const getAlternativeRouteSuggestions = useCallback((routeName) => {
@@ -767,7 +796,8 @@ const SimulationControls = ({
       setVerificationStatus('🌤️ Fetching current weather data...');
       let weatherData = selectedRoute.weather;
       if (useLiveWeather) {
-        weatherData = await fetchLiveWeather(midPoint.lat, midPoint.lng);
+        const cityName = getNearbyCity(midPoint.lat, midPoint.lng);
+        weatherData = await fetchLiveWeather(midPoint.lat, midPoint.lng, cityName);
       }
 
       const currentTemp = weatherData?.temperature || 25;
@@ -918,7 +948,8 @@ const SimulationControls = ({
     affectedReasons,
     trafficIncidents,
     extractCoordinates,
-    alternativeRouteSuggestions
+    alternativeRouteSuggestions,
+    getNearbyCity
   ]);
 
   // Process routes when they change
@@ -944,13 +975,6 @@ const SimulationControls = ({
         
         if (routesToProcess.length > 0 && !selectedRouteId) {
           setSelectedRouteId(routesToProcess[0].id);
-          
-          const firstRoute = routesToProcess[0];
-          const coords = extractCoordinates(firstRoute);
-          if (coords.length > 0) {
-            const midPoint = coords[Math.floor(coords.length / 2)];
-            fetchLiveWeather(midPoint.lat, midPoint.lng);
-          }
         }
       } else {
         setEnrichedRoutes([]);
@@ -958,13 +982,36 @@ const SimulationControls = ({
     };
 
     processRoutes();
-  }, [routes, fetchLiveWeather, extractCoordinates]);
+  }, [routes]);
+
+  // Fetch Johannesburg weather on component mount
+  useEffect(() => {
+    const johannesburgLat = -26.2041;
+    const johannesburgLng = 28.0473;
+    fetchLiveWeather(johannesburgLat, johannesburgLng, 'Johannesburg');
+    setVerificationStatus('🌤️ Loading Johannesburg weather...');
+  }, []);
+
+  // Fetch weather when route changes
+  useEffect(() => {
+    if (selectedRouteId && useLiveWeather) {
+      const route = enrichedRoutes.find(r => r.id === selectedRouteId);
+      if (route) {
+        const coords = extractCoordinates(route);
+        if (coords.length > 0) {
+          const midPoint = coords[Math.floor(coords.length / 2)];
+          const cityName = getNearbyCity(midPoint.lat, midPoint.lng);
+          fetchLiveWeather(midPoint.lat, midPoint.lng, cityName);
+          setVerificationStatus(`🌤️ Loading weather for ${cityName}...`);
+        }
+      }
+    }
+  }, [selectedRouteId, enrichedRoutes, useLiveWeather, fetchLiveWeather, extractCoordinates, getNearbyCity]);
 
   // Reset simulation when route changes
   useEffect(() => {
     if (selectedRouteId) {
       setSimulationResults(null);
-      setVerificationStatus('Route changed. Ready for new simulation.');
     }
   }, [selectedRouteId]);
 
@@ -1074,15 +1121,9 @@ const SimulationControls = ({
 
   const handleUseLiveWeather = () => {
     setUseLiveWeather(!useLiveWeather);
-    if (!useLiveWeather) {
-      const selectedRoute = enrichedRoutes.find(r => r.id === selectedRouteId);
-      if (selectedRoute) {
-        const coords = extractCoordinates(selectedRoute);
-        if (coords.length > 0) {
-          const midPoint = coords[Math.floor(coords.length / 2)];
-          fetchLiveWeather(midPoint.lat, midPoint.lng);
-        }
-      }
+    if (useLiveWeather) {
+      // When enabling live weather, refresh for current route or Johannesburg
+      refreshWeather();
     }
   };
   
@@ -1119,6 +1160,9 @@ const SimulationControls = ({
               </span>
               <span className="text-xs text-gray-600">
                 {liveWeather.conditionText}
+              </span>
+              <span className="text-xs text-gray-500 ml-1">
+                📍 {liveWeather.location}
               </span>
               {weatherLoading && <Loader className="w-3 h-3 animate-spin text-blue-500" />}
             </div>
@@ -1165,13 +1209,24 @@ const SimulationControls = ({
                   </span>
                 </div>
                 <span className="text-sm font-medium">
-                  {liveWeather.location}
+                  📍 {liveWeather.location}
+                </span>
+                <span className="text-xs text-gray-500">
+                  {liveWeather.conditionText}
                 </span>
               </div>
               <div className="flex items-center gap-3 text-xs">
                 <span>💨 {liveWeather.windKph} km/h</span>
                 <span>💧 {liveWeather.humidity}%</span>
                 {liveWeather.isRainy && <span className="text-blue-600">🌧️ Rain</span>}
+                <button 
+                  onClick={refreshWeather}
+                  disabled={weatherLoading}
+                  className="p-1 hover:bg-blue-100 rounded-full transition"
+                  title="Refresh weather"
+                >
+                  <RefreshCw className={`w-4 h-4 text-blue-600 ${weatherLoading ? 'animate-spin' : ''}`} />
+                </button>
               </div>
             </div>
             
@@ -1186,6 +1241,9 @@ const SimulationControls = ({
               ) : (
                 <span className="text-green-600">Cool conditions - optimal for travel</span>
               )}
+            </div>
+            <div className="mt-1 text-xs text-gray-400">
+              🕐 Updated: {new Date(liveWeather.lastUpdated).toLocaleString()}
             </div>
           </div>
         )}
@@ -1203,8 +1261,15 @@ const SimulationControls = ({
           </label>
           {weatherLoading && <Loader className="w-4 h-4 animate-spin text-purple-500" />}
           {liveWeather && useLiveWeather && (
-            <span className="text-xs text-green-600">✓ Live data</span>
+            <span className="text-xs text-green-600">✓ Live data from {liveWeather.location}</span>
           )}
+          <button
+            onClick={refreshWeather}
+            disabled={weatherLoading}
+            className="text-xs text-purple-600 hover:text-purple-800 underline disabled:opacity-50"
+          >
+            Refresh Weather
+          </button>
         </div>
 
         {/* Route Selection Dropdown */}
@@ -1219,14 +1284,6 @@ const SimulationControls = ({
               setSelectedRouteId(e.target.value);
               setSimulationResults(null);
               setAlternativeRouteSuggestions([]);
-              const route = enrichedRoutes.find(r => r.id === e.target.value);
-              if (route && useLiveWeather) {
-                const coords = extractCoordinates(route);
-                if (coords.length > 0) {
-                  const midPoint = coords[Math.floor(coords.length / 2)];
-                  fetchLiveWeather(midPoint.lat, midPoint.lng);
-                }
-              }
             }}
           >
             {enrichedRoutes.length === 0 ? (
@@ -1283,7 +1340,7 @@ const SimulationControls = ({
           </select>
           {useLiveWeather && liveWeather && (
             <p className="text-xs text-green-600 mt-1">
-              🌡️ Using live temperature: {liveWeather.temperature}°C
+              🌡️ Using live temperature: {liveWeather.temperature}°C from {liveWeather.location}
             </p>
           )}
         </div>
