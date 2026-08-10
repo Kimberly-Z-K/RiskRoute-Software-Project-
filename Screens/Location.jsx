@@ -404,6 +404,51 @@ export default function LocationScreen({ route }) {
   //   }
   // }, [fetchNearbyStations, location, destination, updateState]);
 
+  const endTrip = useCallback(() => {
+    Alert.alert(
+      'End Trip',
+      'Are you sure you want to end this trip?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'End Trip',
+          style: 'destructive',
+          onPress: () => {
+            showNotification('success', 'Trip ended successfully!', 4000);
+            
+            setTimeout(() => {
+              updateState({
+                tripLoaded: false,
+                tripLoading: false,
+                routeCoords: [],
+                routeInfo: null,
+                fuelStations: [],
+                recommendedStation: null,
+                start: null,
+                stops: [],
+                startAddress: '',
+                stopAddresses: [],
+                destination: null,
+                fuelWarning: false,
+                showFuelModal: false,
+                receiptSubmitted: false,
+                receiptImage: null,
+                receiptAmount: '',
+                fuelPurchased: 0,
+                waitingForReceipt: false,
+                isAtFuelStation: false,
+              });
+            }, 1500);
+          },
+        },
+      ]
+    );
+  }, [showNotification, updateState]);
+
+  const canEndTrip = useCallback(() => {
+    return tripLoaded && !tripLoading;
+  }, [tripLoaded, tripLoading]);
+
   const loadTrip = useCallback(async () => {
     try {
       updateState({ tripLoading: true, routeLoading: true, error: "" });
@@ -1386,9 +1431,6 @@ export default function LocationScreen({ route }) {
         <Text style={styles.buttonText}>View Fuel Stations Along Route</Text>
       </TouchableOpacity>
 
-      {/* ============================================ */}
-      {/* RECEIPT BUTTON - ALWAYS VISIBLE */}
-      {/* ============================================ */}
       <TouchableOpacity
         style={[styles.primaryButton, styles.receiptButton]}
         onPress={openReceiptModal}
@@ -1413,9 +1455,16 @@ export default function LocationScreen({ route }) {
           <Text style={styles.buttonText}>I've Refueled (Scan Receipt)</Text>
         </TouchableOpacity>
       )}
-      {/* ============================================ */}
-      {/* END RECEIPT BUTTONS */}
-      {/* ============================================ */}
+
+      {canEndTrip() && (
+        <TouchableOpacity
+          style={[styles.primaryButton, styles.endTripButton]}
+          onPress={endTrip}
+        >
+          <Ionicons name="stop-circle-outline" size={20} color="#fff" />
+          <Text style={styles.buttonText}>End Trip</Text>
+        </TouchableOpacity>
+      )}
     </ScrollView>
   );
 
@@ -1900,5 +1949,10 @@ const styles = StyleSheet.create({
   skipButtonText: {
     color: '#999',
     fontSize: 14,
+  },
+
+  endTripButton: {
+    backgroundColor: '#dc3545',
+    marginTop: 15,
   },
 });
