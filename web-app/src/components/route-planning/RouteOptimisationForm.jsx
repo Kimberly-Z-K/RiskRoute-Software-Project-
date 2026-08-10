@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Navigation, MapPin } from "lucide-react";
+import { Navigation, MapPin, Loader2 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 
 const API_BASE_URL = "http://localhost:5000/api";
@@ -12,6 +12,7 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [assigningLoading, setAssigningLoading] = useState(false);
+  const [resolvingLoading, setResolvingLoading] = useState(false); // 🔥 NEW
   const [message, setMessage] = useState("");
   const [latestResult, setLatestResult] = useState(null);
   const [savedRoutes, setSavedRoutes] = useState([]);
@@ -20,6 +21,7 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
   const [resolvedRouteLabels, setResolvedRouteLabels] = useState({});
   const [vehicles, setVehicles] = useState([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
+  const [resolvingProgress, setResolvingProgress] = useState({ current: 0, total: 0 }); // 🔥 NEW
 
   const log = (...args) => console.log("[RouteOptimisationForm]", ...args);
 
@@ -129,45 +131,110 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
   const reverseGeocodePoint = async (lat, lng) => {
     log("Reverse geocoding point:", { lat, lng });
 
-    const url = `${API_BASE_URL}/reverse-geocode?lat=${lat}&lng=${lng}`;
-    const response = await fetch(url);
-    const data = await parseResponse(response, "GET /reverse-geocode");
+    try {
+      const url = `${API_BASE_URL}/reverse-geocode?lat=${lat}&lng=${lng}`;
+      const response = await fetch(url);
 
-    if (!response.ok) {
-      throw new Error(data.error || "Reverse geocoding failed");
+      if (!response.ok) {
+        console.warn(`Reverse geocoding failed for (${lat}, ${lng}):`, response.status);
+        return null;
+      }
+
+      const data = await parseResponse(response, "GET /reverse-geocode");
+      
+      if (!data || !data.data || !data.data.label) {
+        console.warn(`No label found for (${lat}, ${lng})`);
+        return null;
+      }
+
+      return data.data;
+    } catch (error) {
+      console.error(`Reverse geocoding error for (${lat}, ${lng}):`, error);
+      return null;
     }
-
-    return data.data;
   };
 
   const resolveSavedRoutes = async () => {
-    log("Resolving saved route labels...");
+    if (savedRoutes.length === 0) {
+      setResolvedRouteLabels({});
+      return;
+    }
+
+    log(`Resolving ${savedRoutes.length} saved routes...`);
+    setResolvingLoading(true);
+    setResolvingProgress({ current: 0, total: savedRoutes.length });
+    
     const next = {};
+    let processed = 0;
 
     for (const item of savedRoutes) {
       try {
-        const startLabel = item.start_point
-          ? await reverseGeocodePoint(item.start_point.lat, item.start_point.lng)
-          : null;
+        let startLabel = "Unknown";
+        if (item.start_point) {
+          try {
+            const result = await reverseGeocodePoint(item.start_point.lat, item.start_point.lng);
+            startLabel = result?.label || "Unknown location";
+          } catch (error) {
+            console.error(`Failed to resolve start for route ${item.id}:`, error);
+            startLabel = "Unknown location";
+          }
+        }
 
-        const endLabel = item.end_point
-          ? await reverseGeocodePoint(item.end_point.lat, item.end_point.lng)
-          : null;
+        const stopLabels = [];
+        if (item.stops && Array.isArray(item.stops) && item.stops.length > 0) {
+          // Resolve each stop
+          for (let i = 0; i < item.stops.length; i++) {
+            const stop = item.stops[i];
+            try {
+              const result = await reverseGeocodePoint(stop.lat, stop.lng);
+              if (result?.label) {
+                stopLabels.push(result.label);
+              } else {
+                stopLabels.push(`Stop ${i + 1} (${stop.lat.toFixed(4)}, ${stop.lng.toFixed(4)})`);
+              }
+            } catch (error) {
+              console.error(`Failed to resolve stop ${i} for route ${item.id}:`, error);
+              stopLabels.push(`Stop ${i + 1} (unresolved)`);
+            }
+          }
+        } 
+        else if (item.end_point) {
+          try {
+            const result = await reverseGeocodePoint(item.end_point.lat, item.end_point.lng);
+            if (result?.label) {
+              stopLabels.push(result.label);
+            } else {
+              stopLabels.push(`Destination (${item.end_point.lat.toFixed(4)}, ${item.end_point.lng.toFixed(4)})`);
+            }
+          } catch (error) {
+            console.error(`Failed to resolve end point for route ${item.id}:`, error);
+            stopLabels.push("Destination (unresolved)");
+          }
+        }
 
         next[item.id] = {
-          start: startLabel?.label || "Unknown",
-          stops: endLabel?.label ? [endLabel.label] : [],
+          start: startLabel,
+          stops: stopLabels.length > 0 ? stopLabels : ["No stops"],
         };
+        
+        processed++;
+        setResolvingProgress({ current: processed, total: savedRoutes.length });
+        
       } catch (error) {
         console.error(`[RouteOptimisationForm] Failed resolving route ${item.id}:`, error);
         next[item.id] = {
-          start: "Unknown",
-          stops: [],
+          start: "Error resolving",
+          stops: ["Error resolving"],
         };
+        processed++;
+        setResolvingProgress({ current: processed, total: savedRoutes.length });
       }
     }
 
     setResolvedRouteLabels(next);
+    setResolvingLoading(false);
+    setResolvingProgress({ current: 0, total: 0 });
+    log("Finished resolving routes");
   };
 
   useEffect(() => {
@@ -395,83 +462,134 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
         <div className="pt-3">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold text-gray-900">Saved Optimized Routes</h3>
-            <button onClick={loadSavedRoutes} className="text-sm text-blue-600 hover:text-blue-700">
-              Refresh
+            <button 
+              onClick={loadSavedRoutes} 
+              disabled={historyLoading}
+              className="text-sm text-blue-600 hover:text-blue-700 disabled:opacity-50"
+            >
+              {historyLoading ? "Loading..." : "Refresh"}
             </button>
           </div>
 
+          {resolvingLoading && (
+            <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
+              <div className="flex items-center gap-3">
+                <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                <div>
+                  <p className="text-sm font-medium text-blue-900">
+                    Resolving route locations...
+                  </p>
+                  <p className="text-xs text-blue-700">
+                    {resolvingProgress.current} of {resolvingProgress.total} routes processed
+                  </p>
+                </div>
+              </div>
+              {/* Progress bar */}
+              <div className="mt-2 w-full bg-blue-200 rounded-full h-1.5">
+                <div 
+                  className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                  style={{ 
+                    width: `${resolvingProgress.total > 0 
+                      ? (resolvingProgress.current / resolvingProgress.total) * 100 
+                      : 0}%` 
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
           {historyLoading ? (
-            <p className="text-sm text-gray-500">Loading saved routes...</p>
+            <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading saved routes...
+            </div>
           ) : savedRoutes.length === 0 ? (
             <p className="text-sm text-gray-500">No saved routes yet.</p>
           ) : (
             <div className="space-y-4">
-              {savedRoutes.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:shadow-md transition"
-                >
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div>
-                      <h4 className="text-base font-semibold text-gray-900">
-                        Route #{item.id}
-                      </h4>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {item.created_at
-                          ? new Date(item.created_at).toLocaleString()
-                          : "Unknown date"}
-                      </p>
+              {savedRoutes.map((item) => {
+                const labels = resolvedRouteLabels[item.id];
+                const isResolving = resolvingLoading && !labels;
+                
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:shadow-md transition"
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
+                        <h4 className="text-base font-semibold text-gray-900">
+                          Route #{item.id}
+                        </h4>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {item.created_at
+                            ? new Date(item.created_at).toLocaleString()
+                            : "Unknown date"}
+                        </p>
+                      </div>
+
+                      <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+                        {item.result?.distanceKm ?? "N/A"} km
+                      </span>
                     </div>
 
-                    <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                      {item.result?.distanceKm ?? "N/A"} km
-                    </span>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="rounded-lg bg-gray-50 p-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                          Start
+                        </p>
+                        <p className="mt-1 text-sm font-medium text-gray-900">
+                          {isResolving ? (
+                            <span className="flex items-center gap-2">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Resolving...
+                            </span>
+                          ) : labels?.start || "Unknown"}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg bg-gray-50 p-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                          Stops ({labels?.stops?.length || 0})
+                        </p>
+                        <p className="mt-1 text-sm text-gray-900">
+                          {isResolving ? (
+                            <span className="flex items-center gap-2">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Resolving...
+                            </span>
+                          ) : labels?.stops?.length > 0 ? (
+                            labels.stops.join(" → ")
+                          ) : (
+                            "No stops"
+                          )}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg bg-gray-50 p-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                          Constraints
+                        </p>
+                        <p className="mt-1 text-sm text-gray-900">
+                          {formatConstraints(item.constraints)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-lg bg-gray-50 p-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                          Timing
+                        </p>
+                        <p className="mt-1 text-sm text-gray-900">
+                          Duration: {item.result?.durationMin ?? "N/A"} min
+                        </p>
+                        <p className="text-sm text-gray-900">
+                          Traffic delay: {item.result?.trafficDelayMin ?? "N/A"} min
+                        </p>
+                      </div>
+                    </div>
                   </div>
-
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                        Start
-                      </p>
-                      <p className="mt-1 text-sm font-medium text-gray-900">
-                        {resolvedRouteLabels[item.id]?.start || "Resolving..."}
-                      </p>
-                    </div>
-
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                        Stops
-                      </p>
-                      <p className="mt-1 text-sm text-gray-900">
-                        {resolvedRouteLabels[item.id]?.stops?.length > 0
-                          ? resolvedRouteLabels[item.id].stops.join(", ")
-                          : "Resolving..."}
-                      </p>
-                    </div>
-
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                        Constraints
-                      </p>
-                      <p className="mt-1 text-sm text-gray-900">
-                        {formatConstraints(item.constraints)}
-                      </p>
-                    </div>
-
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
-                        Timing
-                      </p>
-                      <p className="mt-1 text-sm text-gray-900">
-                        Duration: {item.result?.durationMin ?? "N/A"} min
-                      </p>
-                      <p className="text-sm text-gray-900">
-                        Traffic delay: {item.result?.trafficDelayMin ?? "N/A"} min
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
