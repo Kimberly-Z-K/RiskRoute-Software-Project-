@@ -1493,62 +1493,122 @@ const SimulationControls = ({
   ========================================================== */
 
   const handleSave = useCallback(async (name) => {
-    if (!resultsRef.current) {
-      setSaveError("No simulation results to save");
-      return;
-    }
+  console.log('🔵 1. Save function called with name:', name);
+  
+  if (!resultsRef.current) {
+    console.log('🔴 2. No results found');
+    setSaveError("No simulation results to save");
+    return;
+  }
 
-    setIsSaving(true);
-    setSaveError(null);
+  console.log('🔵 3. Results:', resultsRef.current);
+  setIsSaving(true);
+  setSaveError(null);
 
-    try {
-      const simulationData = {
-        name: name.trim() || resultsRef.current.routeName,
-        routeId: selectedRoute ? getRouteId(selectedRoute) : null,
-        routeName: resultsRef.current.routeName,
-        params: resultsRef.current.params || {},
-        current: resultsRef.current.current || {},
-        optimal: resultsRef.current.optimal || {},
-        alternatives: resultsRef.current.alternatives || [],
-        recommendation: resultsRef.current.recommendation || '',
-        timestamp: new Date().toISOString()
+  try {
+    // ============================================
+    // 🔥 FIX: Trim the data to avoid 413 error
+    // ============================================
+    
+    // 1. Clean the params - remove large weather/traffic data
+    const cleanParams = { ...(resultsRef.current.params || {}) };
+    
+    // Remove large weather data (keep only essential info)
+    if (cleanParams.realWeather) {
+      const weather = cleanParams.realWeather;
+      cleanParams.realWeather = {
+        summary: weather.summary || {},
+        origin_weather: weather.origin?.current?.condition?.text || 'Unknown',
+        dest_weather: weather.destination?.current?.condition?.text || 'Unknown',
+        avg_temp: weather.summary?.average_temp || 0,
+        conditions: weather.summary?.conditions || 'Unknown'
       };
-
-      console.log('💾 Saving simulation to database:', simulationData);
-
-      const response = await fetch('http://localhost:5000/api/simulations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(simulationData),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Failed to save simulation (${response.status})`);
-      }
-
-      const saved = await response.json();
-      console.log('✅ Simulation saved:', saved);
-      
-      setLocalSavedSimulations(prev => [saved, ...prev]);
-      
-      if (typeof onSaveSimulation === 'function') {
-        onSaveSimulation(saved);
-      }
-      
-      setShowSaveModal(false);
-      setStatusMessage("✅ Simulation saved to database!");
-      
-    } catch (error) {
-      console.error("❌ Save error:", error);
-      setSaveError(error.message || "Failed to save simulation. Please check if the server is running.");
-      setStatusMessage(`❌ Save failed: ${error.message}`);
-    } finally {
-      setIsSaving(false);
     }
-  }, [selectedRoute, onSaveSimulation]);
+    
+    // Remove large traffic data (keep only essential info)
+    if (cleanParams.realTraffic) {
+      const traffic = cleanParams.realTraffic;
+      cleanParams.realTraffic = {
+        hasTraffic: traffic.hasTraffic || false,
+        hasAccident: traffic.hasAccident || false,
+        hasRoadClosure: traffic.hasRoadClosure || false,
+        trafficDelayMinutes: traffic.trafficDelayMinutes || 0,
+        recommendation: traffic.recommendation || ''
+      };
+    }
+
+    // 2. Clean the current route data
+    const cleanCurrent = { ...(resultsRef.current.current || {}) };
+    // Remove any large nested objects
+    delete cleanCurrent.rawData;
+    delete cleanCurrent.fullDetails;
+
+    // 3. Clean the optimal route data
+    const cleanOptimal = { ...(resultsRef.current.optimal || {}) };
+    delete cleanOptimal.rawData;
+    delete cleanOptimal.fullDetails;
+
+    // 4. Limit alternatives to top 3 and keep only essential fields
+    let cleanAlternatives = [];
+    if (Array.isArray(resultsRef.current.alternatives)) {
+      cleanAlternatives = resultsRef.current.alternatives
+        .slice(0, 3) // Only keep top 3
+        .map(alt => ({
+          name: alt.displayName || alt.name || 'Alternative',
+          duration: alt.duration || 0,
+          distance: alt.distance || 0,
+          risk_level: alt.risk_level || 'medium',
+          recommendation: alt.recommendation || ''
+        }));
+    }
+
+    // 5. Build the final clean data
+    const simulationData = {
+      name: name.trim() || resultsRef.current.routeName || 'Unnamed Simulation',
+      routeId: selectedRoute ? getRouteId(selectedRoute) : null,
+      routeName: resultsRef.current.routeName || 'Unknown Route',
+      params: cleanParams,
+      current: cleanCurrent,
+      optimal: cleanOptimal,
+      alternatives: cleanAlternatives,
+      recommendation: (resultsRef.current.recommendation || '').slice(0, 500), // Limit length
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('🔵 4. Clean data size:', JSON.stringify(simulationData).length, 'bytes');
+    console.log('🔵 5. Sending clean data:', simulationData);
+
+    const response = await fetch('http://localhost:5000/api/simulations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(simulationData),
+    });
+
+    console.log('🔵 6. Response status:', response.status);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.log('🔴 7. Error response:', errorData);
+      throw new Error(errorData.error || `Failed to save simulation (${response.status})`);
+    }
+
+    const saved = await response.json();
+    console.log('✅ 8. Saved successfully:', saved);
+    
+    setLocalSavedSimulations(prev => [saved, ...prev]);
+    setShowSaveModal(false);
+    setStatusMessage("✅ Simulation saved to database!");
+    
+  } catch (error) {
+    console.error('🔴 9. Save error:', error);
+    setSaveError(error.message || "Failed to save simulation");
+    setStatusMessage(`❌ Save failed: ${error.message}`);
+  } finally {
+    setIsSaving(false);
+  }
+}, [selectedRoute]);
 
   /* ==========================================================
      LOAD SIMULATION FROM DATABASE

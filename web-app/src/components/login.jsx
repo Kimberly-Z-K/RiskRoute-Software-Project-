@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import {supabase} from "../components/supabaseClientforLogin" // Import the Supabase client
+import { supabase } from "../components/supabaseClientforLogin";
 import { useNavigate } from "react-router-dom";
 
 const Login = ({ onLogin }) => {
@@ -32,11 +32,34 @@ const Login = ({ onLogin }) => {
 
     try {
       console.log("Attempting login for:", email);
+      console.log("Supabase client:", supabase); // Debug: Check if supabase is loaded
       
+      // Test connection first
+      try {
+        const { data: testData, error: testError } = await supabase
+          .from('fleet_managers')
+          .select('count')
+          .limit(1);
+        
+        console.log("Connection test:", testData, testError);
+        
+        if (testError) {
+          console.error("Connection test failed:", testError);
+          setError(`Cannot connect to database: ${testError.message}. Please check your Supabase configuration.`);
+          setLoading(false);
+          return;
+        }
+      } catch (connErr) {
+        console.error("Connection error:", connErr);
+        setError("Network error. Please check your internet connection and Supabase URL.");
+        setLoading(false);
+        return;
+      }
+
       // Query the fleet_managers table
       const { data, error: queryError } = await supabase
         .from('fleet_managers')
-        .select('id, email, password, created_at')
+        .select('*')
         .eq('email', email);
 
       console.log("Query result:", data);
@@ -68,25 +91,43 @@ const Login = ({ onLogin }) => {
       // Login successful
       console.log("✅ Login successful for:", user.email);
       
-      // Call the onLogin prop to set authentication
+      // ============================================
+      // 🔥 TRACKING CODE
+      // ============================================
+      
+      const userData = {
+        id: user.id,
+        email: user.email,
+        name: user.name || user.full_name || 'Unknown User',
+        role: user.role || 'Unknown Role',
+        created_at: user.created_at
+      };
+      
+      localStorage.setItem('user', JSON.stringify(userData));
+      localStorage.setItem('token', 'authenticated');
+      
+      window.dispatchEvent(new Event('userLoggedIn'));
+      
+      console.log('✅ Login complete - tracking will start');
+      console.log('👤 User data saved:', userData);
+      
       if (onLogin) {
         onLogin(user);
       }
       
       navigate('/dashboard');
-      // Clear form
       setEmail("");
       setPassword("");
       
     } catch (err) {
       console.error('Login error:', err);
-      setError("An error occurred during login. Please try again.");
+      setError(`Login error: ${err.message || 'Please try again.'}`);
     } finally {
       setLoading(false);
     }
   };
 
-  // All styles
+  // Rest of your styles and return statement remain the same...
   const styles = {
     wrapper: {
       minHeight: "100vh",

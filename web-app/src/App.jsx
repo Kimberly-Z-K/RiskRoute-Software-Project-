@@ -26,10 +26,10 @@ import { useRealTimeUpdates } from './hooks/useRealTimeUpdates';
 import { useRoutes } from './hooks/useRoutes';
 import { 
   Truck, CheckCircle, Clock, AlertTriangle, Activity, Bell, 
-  Clock as ClockIcon, Navigation, Shield, Star, Fuel, Pause, Play, 
-  BarChart3, FileText, MapPin, Lightbulb
+  Clock as ClockIcon, Navigation, Shield, Star, Fuel, Pause, Play
 } from 'lucide-react';
 import './styles/globals.css';
+import { supabase } from '../lib/supabase';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -40,7 +40,114 @@ const navItems = [
   { id: 'analytics', label: 'Analytics', icon: Activity },
 ];
 
-// Helper functions
+// ============================================
+// AUDIT LOG DESCRIPTION HELPERS
+// ============================================
+
+// Get the current user role and name
+const getUserIdentity = (userRole, userName) => {
+  return `${userRole} (${userName})`;
+};
+
+// Generate descriptive messages for different actions
+const generateDescription = (action, page, element, targetName, beforeValue, afterValue, userRole, userName) => {
+  const user = getUserIdentity(userRole, userName);
+  
+  switch (action) {
+    case 'LOGIN':
+      return `${user} logged into the fleet management system`;
+      
+    case 'LOGOUT':
+      return `${user} logged out of the fleet management system`;
+      
+    case 'PAGE_VIEW':
+      return `${user} viewed the ${page} page`;
+      
+    case 'CLICK': {
+      const elementName = element?.replace(/[^-]+-\s*/, '').trim() || 'a button';
+      return `${user} clicked on "${elementName}" on the ${page} page`;
+    }
+      
+    case 'CREATE':
+      return `${user} created a new ${targetName || 'record'}${targetName ? `: ${targetName}` : ''}`;
+      
+    case 'UPDATE':
+      if (beforeValue && afterValue) {
+        return `${user} updated ${targetName || 'a record'} from "${beforeValue}" to "${afterValue}" on the ${page} page`;
+      }
+      return `${user} updated ${targetName || 'a record'} on the ${page} page`;
+      
+    case 'DELETE':
+      return `${user} deleted ${targetName || 'a record'} from the ${page} page`;
+      
+    case 'ASSIGN':
+      return `${user} assigned ${targetName || 'a record'} to a new destination`;
+      
+    case 'COMPLETE':
+      return `${user} marked ${targetName || 'a delivery'} as completed`;
+      
+    case 'CANCEL':
+      return `${user} cancelled ${targetName || 'an operation'} on the ${page} page`;
+      
+    case 'VIEW_DETAILS':
+      return `${user} viewed details of ${targetName || 'a record'} on the ${page} page`;
+      
+    case 'EXPORT':
+      return `${user} exported data from the ${page} page`;
+      
+    case 'PRINT':
+      return `${user} printed information from the ${page} page`;
+      
+    case 'UPLOAD':
+      return `${user} uploaded a file to the ${page} page`;
+      
+    case 'DOWNLOAD':
+      return `${user} downloaded a file from the ${page} page`;
+      
+    case 'APPROVE':
+      return `${user} approved ${targetName || 'a request'} on the ${page} page`;
+      
+    case 'REJECT':
+      return `${user} rejected ${targetName || 'a request'} on the ${page} page`;
+      
+    default: {
+      let actionDescription = action?.toLowerCase()?.replace(/_/g, ' ') || 'performed an action';
+      if (targetName) {
+        return `${user} ${actionDescription} ${targetName} on the ${page} page`;
+      }
+      return `${user} ${actionDescription} on the ${page} page`;
+    }
+  }
+};
+
+// Extract target name from various sources
+const extractTargetName = (element, details) => {
+  if (details?.targetName) return details.targetName;
+  if (details?.vehicleName) return details.vehicleName;
+  if (details?.driverName) return details.driverName;
+  if (details?.routeName) return details.routeName;
+  if (details?.recordName) return details.recordName;
+  if (details?.name) return details.name;
+  
+  // Try to extract from element text
+  if (element && element !== 'no-id - no text') {
+    const text = element.replace(/^[^-]+-\s*/, '').trim();
+    if (text && text.length > 0 && text.length < 50) {
+      return text;
+    }
+  }
+  
+  return null;
+};
+
+// Extract before/after values from details
+const extractBeforeAfter = (details) => {
+  const before = details?.before || details?.oldValue || details?.previousValue || null;
+  const after = details?.after || details?.newValue || details?.updatedValue || null;
+  return { before, after };
+};
+
+// Helper functions for vehicle updates
 const updateVehiclePosition = (position) => {
   if (!position) return { lat: 40.7128, lng: -74.0060 };
   return {
@@ -68,7 +175,7 @@ const updateDriverScore = (currentScore) => {
   return Math.max(60, Math.min(100, (currentScore || 85) + change));
 };
 
-//  MOVED OUTSIDE: DashboardContent as a separate component
+// DashboardContent component
 const DashboardContent = React.memo(({ 
   darkMode, 
   sidebarOpen, 
@@ -343,7 +450,6 @@ const DashboardContent = React.memo(({
     </div>
   );
 }, (prevProps, nextProps) => {
-  // Custom comparison to prevent unnecessary re-renders
   return (
     prevProps.vehicles === nextProps.vehicles &&
     prevProps.stats === nextProps.stats &&
@@ -372,49 +478,289 @@ function App() {
   const [alerts, setAlerts] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [selectedRouteId, setSelectedRouteId] = useState('fastest');
-  const [simulationParams, setSimulationParams] = useState({ 
-    delay: 30, 
-    weather: 'moderate', 
-    accident: false, 
-    roadClosure: false 
+  const [simulationParams, setSimulationParams] = useState({
+    delay: 30,
+    weather: 'moderate',
+    accident: false,
+    roadClosure: false
   });
   const [isInitialized, setIsInitialized] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [simulationResults, setSimulationResults] = useState(null);
 
   // Hooks
   const { updateSignal, isActive: isRealTimeActive, setIsActive: setIsRealTimeActive } = useRealTimeUpdates(8000);
   const { routes, loading: routesLoading, error: routesError } = useRoutes();
 
-  // 🔥 CRITICAL FIX: Use refs to prevent infinite loops
+  // Refs
   const updateCounter = useRef(0);
   const prevVehiclesRef = useRef([]);
   const isInitializedRef = useRef(false);
   const mountedRef = useRef(false);
   const statsUpdateTimeout = useRef(null);
+  const previousTabRef = useRef(null);
 
-  
+  // ============================================
+  // CENTRAL AUDIT LOGGER
+  // ============================================
+  const auditLog = useCallback(async ({
+    action,
+    page,
+    description,
+    element = null,
+    targetId = null,
+    targetName = null,
+    beforeValue = null,
+    afterValue = null,
+    details = {}
+  }) => {
+    try {
+      const storedUser = localStorage.getItem('user');
 
-  // Check authentication - runs once
+      if (!storedUser) {
+        console.warn('⚠️ Audit log skipped: no logged-in user');
+        return;
+      }
+
+      const user = JSON.parse(storedUser);
+      const pageName = page || document.title || 'Fleet Management';
+
+      const logData = {
+        user_id: user.id ? Number(user.id) : null,
+        user_email: user.email || null,
+        user_name: user.name || user.full_name || 'Unknown User',
+        user_role: user.role || 'Unknown Role',
+        action,
+        description:
+          description ||
+          `${user.role || 'User'} (${user.name || user.full_name || user.email}) performed ${action.toLowerCase().replace(/_/g, ' ')} on the ${pageName}`,
+        page: pageName,
+        element,
+        target_id: targetId !== null && targetId !== undefined ? String(targetId) : null,
+        target_name: targetName || null,
+        before_value:
+          beforeValue !== null && beforeValue !== undefined
+            ? String(beforeValue)
+            : null,
+        after_value:
+          afterValue !== null && afterValue !== undefined
+            ? String(afterValue)
+            : null,
+        details: {
+          ...details,
+          path: window.location.pathname,
+          search: window.location.search,
+          timestamp: new Date().toISOString()
+        },
+        url: window.location.href
+      };
+
+      console.log('📝 AUDIT:', logData);
+
+      const { error } = await supabase
+        .from('audit_logs')
+        .insert(logData);
+
+      if (error) {
+        console.error('❌ Audit log failed:', error);
+        return;
+      }
+
+      console.log('✅ Audit log saved:', action);
+    } catch (error) {
+      console.error('❌ Audit logger exception:', error);
+    }
+  }, []);
+
+  // Convert internal tab IDs into names an administrator can understand.
+  const getPageName = useCallback((tab) => {
+    const pageNames = {
+      dashboard: 'Dashboard',
+      monitoring: 'Live Monitoring',
+      'route-planning': 'Route Planning',
+      'risk-analysis': 'Risk Analysis',
+      simulation: 'What-If Simulation',
+      analytics: 'Analytics'
+    };
+
+    return pageNames[tab] || tab || 'Fleet Management';
+  }, []);
+
+  // ============================================
+  // TRACK PAGE / TAB CHANGES
+  // ============================================
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    if (previousTabRef.current === activeTab) {
+      return;
+    }
+
+    previousTabRef.current = activeTab;
+    const pageName = getPageName(activeTab);
+
+    auditLog({
+      action: 'PAGE_VIEW',
+      page: pageName,
+      description: `User viewed the ${pageName} page`,
+      details: {
+        tab: activeTab
+      }
+    });
+  }, [activeTab, isAuthenticated, auditLog, getPageName]);
+
+  // ============================================
+  // GLOBAL CLICK TRACKING
+  // ============================================
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const handleGlobalClick = (event) => {
+      const target = event.target.closest(
+        'button, a, [role="button"], [role="tab"], .clickable'
+      );
+
+      if (!target) return;
+
+      const text =
+        target.innerText?.trim() ||
+        target.getAttribute('aria-label') ||
+        target.getAttribute('title') ||
+        target.id ||
+        'Unnamed element';
+
+      const cleanText = text.replace(/\s+/g, ' ').slice(0, 100);
+
+      // Never record password values or password controls.
+      if (
+        cleanText.toLowerCase().includes('password') ||
+        target.type === 'password'
+      ) {
+        return;
+      }
+
+      let action = 'CLICK';
+      const buttonText = cleanText.toLowerCase();
+
+      if (buttonText.includes('edit') || buttonText.includes('update')) action = 'UPDATE';
+      else if (buttonText.includes('delete') || buttonText.includes('remove')) action = 'DELETE';
+      else if (buttonText.includes('create') || buttonText.includes('add')) action = 'CREATE';
+      else if (buttonText.includes('approve')) action = 'APPROVE';
+      else if (buttonText.includes('reject')) action = 'REJECT';
+      else if (buttonText.includes('export')) action = 'EXPORT';
+      else if (buttonText.includes('print')) action = 'PRINT';
+      else if (buttonText.includes('upload')) action = 'UPLOAD';
+      else if (buttonText.includes('download')) action = 'DOWNLOAD';
+      else if (buttonText.includes('view') || buttonText.includes('details')) action = 'VIEW_DETAILS';
+      else if (buttonText.includes('assign')) action = 'ASSIGN';
+      else if (buttonText.includes('complete') || buttonText.includes('finish')) action = 'COMPLETE';
+      else if (buttonText.includes('cancel')) action = 'CANCEL';
+
+      let targetName = cleanText;
+
+      // Try to find the actual record name when the button is inside a card/list/table row.
+      const parent = target.closest(
+        'tr, li, .item, .card, .vehicle-item, .driver-item'
+      );
+
+      if (parent) {
+        const nameElement = parent.querySelector(
+          '.name, .title, .vehicle-name, .driver-name, strong'
+        );
+
+        if (nameElement?.innerText?.trim()) {
+          targetName = nameElement.innerText.trim().slice(0, 100);
+        }
+      }
+
+      auditLog({
+        action,
+        page: getPageName(activeTab),
+        element: cleanText,
+        targetId: target.id || null,
+        targetName,
+        description: generateDescription(
+          action,
+          getPageName(activeTab),
+          cleanText,
+          targetName,
+          null,
+          null,
+          JSON.parse(localStorage.getItem('user') || '{}').role || 'User',
+          JSON.parse(localStorage.getItem('user') || '{}').name || JSON.parse(localStorage.getItem('user') || '{}').email || 'Unknown User'
+        ),
+        details: {
+          tag: target.tagName,
+          id: target.id || null,
+          className:
+            typeof target.className === 'string'
+              ? target.className
+              : null,
+          href: target.href || null
+        }
+      });
+    };
+
+    document.addEventListener('click', handleGlobalClick);
+
+    return () => {
+      document.removeEventListener('click', handleGlobalClick);
+    };
+  }, [isAuthenticated, activeTab, auditLog, getPageName]);
+
+  // Check authentication
   useEffect(() => {
     const token = localStorage.getItem('token');
     setIsAuthenticated(!!token);
     mountedRef.current = true;
   }, []);
 
-  // Handle login/logout - stable references
+  // Handle login/logout
   const handleLogin = useCallback((userData) => {
     setIsAuthenticated(true);
     localStorage.setItem('token', 'authenticated');
     localStorage.setItem('user', JSON.stringify(userData));
-  }, []);
+
+    // Give localStorage one tick to contain the authenticated user before logging.
+    setTimeout(() => {
+      auditLog({
+        action: 'LOGIN',
+        page: 'Login',
+        description: `${userData.role || 'User'} (${userData.name || userData.email}) logged into the fleet management system`,
+        details: {
+          method: 'email_password'
+        }
+      });
+    }, 100);
+  }, [auditLog]);
 
   const handleLogout = useCallback(() => {
-    setIsAuthenticated(false);
+    const storedUser = localStorage.getItem('user');
+
+    if (storedUser) {
+      try {
+        const user = JSON.parse(storedUser);
+
+        // auditLog reads the user before the localStorage values are removed.
+        auditLog({
+          action: 'LOGOUT',
+          page: getPageName(activeTab),
+          description: `${user.role || 'User'} (${user.name || user.email}) logged out of the fleet management system`,
+          details: {
+            logout_time: new Date().toISOString()
+          }
+        });
+      } catch (error) {
+        console.error('Logout audit error:', error);
+      }
+    }
+
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-  }, []);
+    setIsAuthenticated(false);
+  }, [activeTab, auditLog, getPageName]);
 
-  // 🔥 FIX: Initialize data - runs only once
+  // Initialize data
   useEffect(() => {
     if (!isInitializedRef.current) {
       console.log('🚀 Initializing fleet data...');
@@ -427,14 +773,12 @@ function App() {
     }
   }, []);
 
-  // 🔥 FIX: Update vehicles - ONLY when updateSignal changes, with strict equality check
+  // Update vehicles
   useEffect(() => {
-    // Skip if not ready
     if (!isInitialized || !isRealTimeActive || updateSignal === 0) {
       return;
     }
 
-    // 🔥 CRITICAL: Prevent processing the same signal twice
     if (updateCounter.current === updateSignal) {
       console.log('⏭️ Skipping duplicate signal:', updateSignal);
       return;
@@ -443,7 +787,6 @@ function App() {
 
     console.log('📡 Updating vehicles (signal:', updateSignal, ')');
 
-    // Update vehicles
     setVehicles(prevVehicles => {
       if (!prevVehicles || prevVehicles.length === 0) {
         return prevVehicles;
@@ -462,19 +805,17 @@ function App() {
     });
   }, [updateSignal, isRealTimeActive, isInitialized]);
 
-  // 🔥 FIX: Update stats with debouncing and deep comparison
+  // Update stats
   useEffect(() => {
     if (!isInitialized || vehicles.length === 0) {
       return;
     }
 
-    // Clear any pending update
     if (statsUpdateTimeout.current) {
       clearTimeout(statsUpdateTimeout.current);
     }
 
     statsUpdateTimeout.current = setTimeout(() => {
-      // 🔥 Deep comparison: check if vehicles array content actually changed
       const currentIds = vehicles.map(v => v.id).join(',');
       const prevIds = prevVehiclesRef.current.map(v => v.id).join(',');
       
@@ -489,13 +830,12 @@ function App() {
     }, 200);
   }, [vehicles, isInitialized]);
 
-  // 🔥 FIX: Generate alerts with throttling - only once every 10 signals
+  // Generate alerts
   useEffect(() => {
     if (!isInitialized || !isRealTimeActive || updateSignal === 0) {
       return;
     }
 
-    // Only generate alerts on every 5th update
     if (updateSignal % 5 !== 0) {
       return;
     }
@@ -523,12 +863,26 @@ function App() {
   }, [updateSignal, isRealTimeActive, isInitialized]);
 
   const acknowledgeAlert = useCallback((id) => {
+    const alertToAcknowledge = alerts.find(a => a.id === id);
+
     setAlerts(prev => prev.map(a => 
       a.id === id ? { ...a, acknowledged: true } : a
     ));
-  }, []);
 
-  // 🔥 FIX: Memoize simulation function with useMemo to prevent recreation
+    auditLog({
+      action: 'ALERT_ACKNOWLEDGED',
+      page: 'Dashboard',
+      targetId: id,
+      targetName: alertToAcknowledge?.msg || `Alert ${id}`,
+      description: `User acknowledged alert ${alertToAcknowledge?.msg || id}`,
+      details: {
+        alertType: alertToAcknowledge?.type || null,
+        priority: alertToAcknowledge?.priority || null
+      }
+    });
+  }, [alerts, auditLog]);
+
+  // Run simulation
   const runSimulation = useCallback(() => {
     if (routes.length === 0) {
       alert('Please wait for routes to load from the database');
@@ -565,8 +919,27 @@ function App() {
     const optimalTime = Math.round(newTime * 0.7);
     const optimalCost = Math.round((newCost * 0.75) * 100) / 100;
     const optimalRisk = Math.min(Math.round(riskScore * 0.5), 70);
+
+    auditLog({
+      action: 'SIMULATION_RUN',
+      page: 'What-If Simulation',
+      targetId: selectedRouteId,
+      targetName: currentRoute?.name || 'Current Route',
+      description: `User ran a what-if simulation using the ${currentRoute?.name || 'current route'}`,
+      details: {
+        selectedRouteId,
+        parameters: simulationParams,
+        result: {
+          newTime,
+          newCost,
+          riskScore,
+          optimalTime,
+          optimalCost,
+          optimalRisk
+        }
+      }
+    });
     
-    // This doesn't trigger a re-render loop since it's a user action
     setSimulationResults({
       current: {
         time: `${newTime} min (${Math.floor(newTime / 60)}h ${newTime % 60}min)`,
@@ -583,9 +956,9 @@ function App() {
         alternative: `Recommended: ${alternativeRoute?.name || 'Safer Northern corridor'} - avoids incident zone`
       }
     });
-  }, [simulationParams, routes]);
+  }, [simulationParams, routes, selectedRouteId, auditLog]);
 
-  // Stats cards - memoized to prevent recreation
+  // Stats cards
   const statsCards = useMemo(() => [
     { 
       title: 'Active Vehicles', 
@@ -661,7 +1034,7 @@ function App() {
     );
   }
 
-  // Main render with routing
+  // Main render
   return (
     <BrowserRouter>
       <Routes>
