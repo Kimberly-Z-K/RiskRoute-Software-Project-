@@ -1167,7 +1167,7 @@ const SimulationControls = ({
         if (Array.isArray(data) && data.length > 0) {
           setRoutes(data);
           setRoutesError(null);
-          setStatusMessage(`✅ Loaded ${data.length} routes from database`);
+          setStatusMessage(`✅ Loaded ${data.length} routes `);
           
           if (data.length > 0) {
             console.log('🌤️ Auto-fetching weather for first route:', data[0].display_name);
@@ -1731,7 +1731,7 @@ const SimulationControls = ({
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading routes from database...</p>
+            <p className="mt-4 text-gray-600">Loading ...</p>
           </div>
         </div>
       </div>
