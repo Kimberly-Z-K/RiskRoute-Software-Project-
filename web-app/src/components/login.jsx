@@ -360,7 +360,7 @@ const Login = ({ onLogin }) => {
             </div>
           </div>
 
-          <div style={styles.formOptions}>
+          {/* <div style={styles.formOptions}>
             <label style={styles.rememberMe}>
               <input type="checkbox" style={styles.checkbox} />
               Remember me
@@ -368,7 +368,7 @@ const Login = ({ onLogin }) => {
             <a href="/forgot-password" style={styles.forgotLink}>
               Forgot password?
             </a>
-          </div>
+          </div> */}
 
           <button
             type="submit"
@@ -387,12 +387,12 @@ const Login = ({ onLogin }) => {
           </button>
         </form>
 
-        <div style={styles.signupLink}>
+        {/* <div style={styles.signupLink}>
           Don't have an account?{" "}
           <a href="/signup" style={styles.signupAnchor}>
             Sign up
           </a>
-        </div>
+        </div> */}
       </div>
     </div>
   );
