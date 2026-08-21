@@ -10,16 +10,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
-
 import Ionicons from '@expo/vector-icons/Ionicons';
-import {supabase} from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 
 export default function SignUP({ navigation }) {
-
   const [role, setRole] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
-
   const [name, setName] = useState('');
   const [surname, setSurname] = useState('');
   const [email, setEmail] = useState('');
@@ -27,6 +26,7 @@ export default function SignUP({ navigation }) {
   const [license, setLicense] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleSelectRole = (selectedRole) => {
     setRole(selectedRole);
@@ -38,83 +38,108 @@ export default function SignUP({ navigation }) {
     }
   };
 
-const handleSignUp = async () => {
-  try {
+  const handleSignUp = async () => {
+    // Validate inputs
     if (!email || !password || !name || !surname || !role) {
-      alert('Please fill in all required fields');
+      Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
 
     if (role === 'Driver' && (!phoneNo || !license)) {
-      alert('Driver must include phone number and license');
+      Alert.alert('Error', 'Driver must include phone number and license');
       return;
     }
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-       options: {
+    setLoading(true);
+
+    try {
+      console.log('Starting sign up process');
+
+      console.log('Creating auth user');
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
           data: {
-            full_name: name,
+            full_name: name + ' ' + surname,
             phone_number: phoneNo,
           },
         },
-    });
+      });
 
-    if (error) throw error;
+      if (error) throw error;
 
-    const user = data.user;
+      const user = data.user;
+      console.log('Auth user created:', user.id);
 
-    const { error: userError } = await supabase
-      .from('users')
-      .insert([
-        {
-          user_id: user.id,
-          user_name: name + ' ' + surname,
-          user_role: role,
-          email: email,
-        },
-      ]);
-
-    if (userError) throw userError;
-
-    if (role === 'Driver') {
-      const { error: driverError } = await supabase
-        .from('drivers')
+      console.log('Inserting into users table...');
+      const { error: userError } = await supabase
+        .from('users')
         .insert([
           {
-            driver_id: user.id,
-            license_number: license,
-            phone: phoneNo,
-            driver_username: name + ' ' + surname,
+            user_id: user.id,
+            user_name: name + ' ' + surname,
+            user_role: role,
             email: email,
           },
         ]);
 
-      if (driverError) throw driverError;
+      if (userError) throw userError;
+      console.log('User inserted into users table');
+
+      if (role === 'Driver') {
+        console.log('Inserting into drivers table...');
+        const { error: driverError } = await supabase
+          .from('drivers')
+          .insert([
+            {
+              driver_id: user.id,
+              license_number: license,
+              phone: phoneNo,
+              driver_username: name + ' ' + surname,
+              email: email,
+            },
+          ]);
+
+        if (driverError) throw driverError;
+        console.log('Driver inserted');
+      }
+
+      if (role === 'Manager') {
+        console.log('Inserting into managers table...');
+        const { error: managerError } = await supabase
+          .from('managers')
+          .insert([
+            {
+              user_id: user.id,
+              manager_username: name + ' ' + surname,
+            },
+          ]);
+
+        if (managerError) throw managerError;
+        console.log('Manager inserted');
+      }
+
+      if (role === 'Admin') {
+        console.log('Inserting into admins table...');
+        const { error: adminError } = await supabase
+          .from('admins')
+          .insert([{ user_id: user.id }]);
+
+        if (adminError) throw adminError;
+        console.log('Admin inserted');
+      }
+
+      Alert.alert('Success', 'Account created successfully');
+      navigation.navigate('Login');
+
+    } catch (err) {
+      console.error('Sign up error:', err);
+      Alert.alert('Error', err.message);
+    } finally {
+      setLoading(false);
     }
-
-    if (role === 'Manager') {
-      await supabase.from('managers').insert([
-        { 
-          user_id: user.id ,
-          manager_username: name + ' ' + surname,
-        }
-      ]);
-    }
-
-    if (role === 'Admin') {
-      await supabase.from('admins').insert([{ user_id: user.id }]);
-    }
-
-    alert('Account created successfully');
-
-    navigation.navigate('Login');
-
-  } catch (err) {
-    alert(err.message);
-  }
-};
+  };
 
   const handleLoginPress = () => {
     navigation.navigate('Login');
@@ -129,8 +154,6 @@ const handleSignUp = async () => {
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.content}>
-
-         
           <View style={styles.logoContainer}>
             <Text style={styles.title}>Sign-Up</Text>
             <Image
@@ -141,11 +164,9 @@ const handleSignUp = async () => {
           </View>
 
           <View style={styles.InputS}>
-
-            {/* DROPDOWN for roles*/}
+            {/* Role Dropdown */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Select Role</Text>
-
               <TouchableOpacity
                 style={styles.inputWrapper}
                 onPress={() => setShowDropdown(!showDropdown)}
@@ -171,19 +192,21 @@ const handleSignUp = async () => {
               )}
             </View>
 
+            {/* Name */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Name</Text>
               <View style={styles.inputWrapper}>
                 <Ionicons name="person" size={20} color="#9CA3AF" />
                 <TextInput
                   style={styles.input}
-                  placeholder="first name"
+                  placeholder="First name"
                   value={name}
                   onChangeText={setName}
                 />
               </View>
             </View>
 
+            {/* Surname */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Surname</Text>
               <View style={styles.inputWrapper}>
@@ -197,6 +220,7 @@ const handleSignUp = async () => {
               </View>
             </View>
 
+            {/* Email */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Email</Text>
               <View style={styles.inputWrapper}>
@@ -212,9 +236,9 @@ const handleSignUp = async () => {
               </View>
             </View>
 
+            {/* Driver-specific fields */}
             {role === 'Driver' && (
               <>
-                {/* PHONE */}
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>Phone No</Text>
                   <View style={styles.inputWrapper}>
@@ -229,7 +253,6 @@ const handleSignUp = async () => {
                   </View>
                 </View>
 
-                {/* LICENSE */}
                 <View style={styles.inputContainer}>
                   <Text style={styles.label}>License Number</Text>
                   <View style={styles.inputWrapper}>
@@ -245,7 +268,7 @@ const handleSignUp = async () => {
               </>
             )}
 
-            {/* PASSWORD */}
+            {/* Password */}
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Password</Text>
               <View style={styles.inputWrapper}>
@@ -266,14 +289,21 @@ const handleSignUp = async () => {
                 </TouchableOpacity>
               </View>
             </View>
-
           </View>
         </View>
       </ScrollView>
 
       <View style={styles.fixedBottom}>
-        <TouchableOpacity style={styles.button} onPress={handleSignUp}>
-          <Text style={styles.buttonText}>Create Account</Text>
+        <TouchableOpacity
+          style={[styles.button, loading && styles.buttonDisabled]}
+          onPress={handleSignUp}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFF" />
+          ) : (
+            <Text style={styles.buttonText}>Create Account</Text>
+          )}
         </TouchableOpacity>
 
         <View style={styles.footer}>
@@ -283,7 +313,6 @@ const handleSignUp = async () => {
           </TouchableOpacity>
         </View>
       </View>
-
     </KeyboardAvoidingView>
   );
 }
@@ -295,12 +324,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#E6EEFB',
   },
-
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 140,
   },
-
   content: {
     flex: 1,
     paddingHorizontal: 24,
@@ -310,55 +337,41 @@ const styles = StyleSheet.create({
     fontSize: 45,
     fontWeight: 'bold',
     color: '#000',
-   marginTop:'30%',
-   marginLeft:'25%',
-    padding:0,
+    marginTop: '30%',
+    marginLeft: '25%',
+    padding: 0,
   },
-
-
- logoContainer: {
-  top: -20,
-  alignSelf: 'center',
-
-  width: 400,
-  height: 300,
-
-  backgroundColor: 'white',
-
-  borderBottomLeftRadius: 200,
-  borderBottomRightRadius: 200,
-
-  position: 'relative', 
-  marginBottom: '10%',
-},
-
-logo: {
-  position: 'absolute',
-  marginRight:'80%',
-  marginBottom:20,
-  
-  bottom: 0,
-  left: 0,
-
-  width: 500,
-  height: 400,
-},
-
-
+  logoContainer: {
+    top: -20,
+    alignSelf: 'center',
+    width: 400,
+    height: 300,
+    backgroundColor: 'white',
+    borderBottomLeftRadius: 200,
+    borderBottomRightRadius: 200,
+    position: 'relative',
+    marginBottom: '10%',
+  },
+  logo: {
+    position: 'absolute',
+    marginRight: '80%',
+    marginBottom: 20,
+    bottom: 0,
+    left: 0,
+    width: 500,
+    height: 400,
+  },
   InputS: {
     marginTop: 0,
   },
-
   inputContainer: {
     marginBottom: 20,
   },
-
   label: {
     fontSize: 14,
     color: '#6B7280',
     marginBottom: 8,
   },
-
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -368,25 +381,21 @@ logo: {
     paddingVertical: 14,
     elevation: 2,
   },
-
   input: {
     flex: 1,
     marginLeft: 10,
     fontSize: 15,
     color: '#000',
   },
-
   dropdown: {
     backgroundColor: '#FFF',
     borderRadius: 10,
     marginTop: 5,
     elevation: 3,
   },
-
   dropdownItem: {
     padding: 12,
   },
-
   fixedBottom: {
     position: 'absolute',
     bottom: 0,
@@ -397,33 +406,31 @@ logo: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
   },
-
   button: {
     backgroundColor: '#000',
     paddingVertical: 16,
     borderRadius: 25,
     alignItems: 'center',
   },
-
+  buttonDisabled: {
+    opacity: 0.6,
+  },
   buttonText: {
     color: '#FFF',
     fontSize: 16,
     fontWeight: '600',
   },
-
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 10,
   },
-
   footerText: {
     color: '#9CA3AF',
     marginRight: 5,
   },
-
   loginLink: {
-    marginBottom:50,
+    marginBottom: 50,
     color: '#000',
     fontWeight: 'bold',
   },
