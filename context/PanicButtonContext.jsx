@@ -1,3 +1,4 @@
+// context/PanicContext.js
 import React, {
   createContext,
   useContext,
@@ -17,6 +18,8 @@ import {
   ActivityIndicator,
 } from "react-native";
 import * as ExpoLocation from "expo-location";
+import { supabase } from "../lib/supabase"; 
+import { useAuth } from "../context/AuthContext"; 
 
 const PanicContext = createContext(null);
 
@@ -26,6 +29,7 @@ const DEFAULT_CONFIG = {
 };
 
 export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
+  const { user } = useAuth();
   const { CHECK_IN_INTERVAL_MS, RESPONSE_TIME_MS } = config;
 
   const [panicModalVisible, setPanicModalVisible] = useState(false);
@@ -87,7 +91,27 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
     const logEntry = { type, timestamp, location };
     setPanicLog(logEntry);
     console.log("PANIC LOG:", JSON.stringify(logEntry));
-  }, [captureLocation]);
+
+    if (user?.id) {
+      supabase
+        .from("panic_logs")
+        .insert({
+          user_id: user.id,
+          event: type,
+          timestamp,
+          location: location
+            ? { latitude: location.latitude, longitude: location.longitude }
+            : null,
+        })
+        .then(({ error }) => {
+          if (error) {
+            console.error("Error saving panic log:", error);
+          } else {
+            console.log("Panic log saved");
+          }
+        });
+    }
+  }, [captureLocation, user]);
 
   const resetTimers = useCallback(() => {
     if (checkInTimerRef.current) clearTimeout(checkInTimerRef.current);
@@ -127,14 +151,12 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
   }, [CHECK_IN_INTERVAL_MS, RESPONSE_TIME_MS, startGentleVibration, startPanicVibration, resetTimers]);
 
   const handleImOkay = useCallback(async () => {
-
     setPanicModalVisible(false);
     setIsProcessing(true);
 
     await logPanicEvent("USER_CLICKED_IM_OK");
 
     setIsProcessing(false);
-
     startNextCheckInCycle();
   }, [logPanicEvent, startNextCheckInCycle]);
 
@@ -147,7 +169,6 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
     console.log("SEND HELP - no response within allocated time");
 
     setIsProcessing(false);
-
     startNextCheckInCycle();
   }, [logPanicEvent, startNextCheckInCycle, stopPanicVibration]);
 
@@ -279,6 +300,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
+  // Full-screen panic styles
   fullScreenOverlay: {
     flex: 1,
     backgroundColor: "rgba(200, 0, 0, 0.85)",
@@ -318,6 +340,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+
 
   processingOverlay: {
     flex: 1,
