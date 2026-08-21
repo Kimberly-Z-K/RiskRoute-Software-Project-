@@ -1,4 +1,3 @@
-// context/PanicContext.js
 import React, {
   createContext,
   useContext,
@@ -22,8 +21,8 @@ import * as ExpoLocation from "expo-location";
 const PanicContext = createContext(null);
 
 const DEFAULT_CONFIG = {
-  CHECK_IN_INTERVAL_MS: 30000,   // show modal every 30s (for testing)
-  RESPONSE_TIME_MS: 30000,       // user has 10s to respond
+  CHECK_IN_INTERVAL_MS: 30000,   
+  RESPONSE_TIME_MS: 30000,       
 };
 
 export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
@@ -57,13 +56,11 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
   }, []);
 
   const startGentleVibration = useCallback(() => {
-    // Gentle vibration when check-in modal appears
     const pattern = Platform.OS === "android" ? [0, 200, 100, 200] : [200, 100, 200];
     Vibration.vibrate(pattern, false);
   }, []);
 
   const startPanicVibration = useCallback(() => {
-    // Strong, repeating vibration on actual panic
     const pattern =
       Platform.OS === "android"
         ? [0, 500, 200, 500, 200, 500]
@@ -90,7 +87,6 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
     const logEntry = { type, timestamp, location };
     setPanicLog(logEntry);
     console.log("PANIC LOG:", JSON.stringify(logEntry));
-    // Later: send to backend here
   }, [captureLocation]);
 
   const resetTimers = useCallback(() => {
@@ -110,7 +106,6 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
       setPanicModalVisible(true);
       setTimeLeft(RESPONSE_TIME_MS / 1000);
 
-      // Gentle vibration when modal appears
       startGentleVibration();
 
       countdownIntervalRef.current = setInterval(() => {
@@ -132,14 +127,14 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
   }, [CHECK_IN_INTERVAL_MS, RESPONSE_TIME_MS, startGentleVibration, startPanicVibration, resetTimers]);
 
   const handleImOkay = useCallback(async () => {
-    // Close modal immediately
+
     setPanicModalVisible(false);
     setIsProcessing(true);
 
     await logPanicEvent("USER_CLICKED_IM_OK");
 
     setIsProcessing(false);
-    // Start next cycle
+
     startNextCheckInCycle();
   }, [logPanicEvent, startNextCheckInCycle]);
 
@@ -152,12 +147,11 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
     console.log("SEND HELP - no response within allocated time");
 
     setIsProcessing(false);
-    // Start next cycle
+
     startNextCheckInCycle();
   }, [logPanicEvent, startNextCheckInCycle, stopPanicVibration]);
 
   useEffect(() => {
-    // Start the first cycle on mount
     startNextCheckInCycle();
 
     return () => {
@@ -166,7 +160,6 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
       stopPanicVibration();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const value = {
@@ -207,7 +200,6 @@ function PanicModal() {
   const { panicModalVisible, timeLeft, isPanic, handleImOkay, handlePanicAction } =
     usePanic();
 
-  // Check-in modal
   if (!isPanic && panicModalVisible) {
     return (
       <Modal visible={panicModalVisible} transparent animationType="fade">
@@ -226,7 +218,6 @@ function PanicModal() {
     );
   }
 
-  // Full-screen panic state (no logs shown)
   if (isPanic) {
     return (
       <Modal visible={isPanic} transparent animationType="fade">
@@ -288,7 +279,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // Full-screen panic styles
   fullScreenOverlay: {
     flex: 1,
     backgroundColor: "rgba(200, 0, 0, 0.85)",
@@ -329,7 +319,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // Processing overlay
   processingOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
