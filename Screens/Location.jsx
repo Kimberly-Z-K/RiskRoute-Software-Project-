@@ -133,6 +133,9 @@ export default function LocationScreen({ route }) {
     showAmountModal: false,
     amountInput: '',
     pendingReceiptUri: null,
+    isProcessingOCR: false,
+    autoDetectedAmount: null,
+    showOCRConfirmation: false,
     
     // UI
     notification: null,
@@ -188,6 +191,9 @@ export default function LocationScreen({ route }) {
     showAmountModal,
     amountInput,
     pendingReceiptUri,
+    isProcessingOCR,
+    autoDetectedAmount,
+    showOCRConfirmation,
   } = state;
 
   const calculateRemainingRange = useCallback(() => {
@@ -449,6 +455,9 @@ export default function LocationScreen({ route }) {
                 showAmountModal: false,
                 amountInput: '',
                 pendingReceiptUri: null,
+                isProcessingOCR: false,
+                autoDetectedAmount: null,
+                showOCRConfirmation: false,
               });
             }, 1500);
           },
@@ -622,6 +631,125 @@ export default function LocationScreen({ route }) {
   }, [updateState, showNotification]);
 
   // ============================================
+  // EASYOCR INTEGRATION FUNCTIONS
+  // ============================================
+
+  const extractReceiptWithEasyOCR = useCallback(async (imageUri) => {
+    try {
+      updateState({ isProcessingOCR: true });
+      
+      // Your Supabase URL and Anon Key
+      const supabaseUrl = 'https://pyqftjxfbjecjdhdzyor.supabase.co';
+      const supabaseAnonKey = 'sb_publishable_iFcMrb7-9eJ86p0KU2PWyg_UZ77LRFF';
+      
+      console.log('📸 Starting OCR request...');
+      console.log('🖼️ Image URI:', imageUri);
+      
+      // Create form data for React Native
+      const formData = new FormData();
+      
+      // Get the filename and extension
+      const filename = imageUri.split('/').pop() || 'receipt.jpg';
+      const fileExt = filename.split('.').pop() || 'jpg';
+      
+      // Append the image correctly for React Native
+      formData.append('image', {
+        uri: imageUri,
+        type: `image/${fileExt}`,
+        name: filename,
+      });
+      
+      console.log('📤 Sending to Edge Function:', `${supabaseUrl}/functions/v1/easyocr-proxy`);
+      
+      // Call the Supabase Edge Function
+      const response = await fetch(`${supabaseUrl}/functions/v1/easyocr-proxy`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+        },
+      });
+      
+      console.log('📥 Edge Function response status:', response.status);
+      
+      // Get response text first for debugging
+      const responseText = await response.text();
+      console.log('📄 Response text (first 300 chars):', responseText.substring(0, 300));
+      
+      // Parse JSON
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        console.error('❌ Failed to parse JSON:', e);
+        throw new Error('Invalid response from server');
+      }
+      
+      if (!response.ok) {
+        throw new Error(data.error || data.details || `HTTP ${response.status}`);
+      }
+      
+      const rawText = data.text || '';
+      console.log('📝 OCR Raw Text (first 300 chars):', rawText.substring(0, 300));
+      
+      // Parse total amount with regex patterns
+      const patterns = [
+        /(?:total|amount|grand\s*total|amount\s*due|balance\s*due|total\s*amount|total\s*due|subtotal|total\s*including\s*vat)[:\s]*R?\s*([\d,]+[.,]\d{2})/i,
+        /R\s*([\d,]+[.,]\d{2})/i,
+        /([\d,]+[.,]\d{2})\s*(?:total|amount|due|balance)/i,
+      ];
+      
+      let total = null;
+      for (const pattern of patterns) {
+        const match = rawText.match(pattern);
+        if (match && match[1]) {
+          const cleanAmount = match[1].replace(/,/g, '').replace(/,/g, '.');
+          total = parseFloat(cleanAmount);
+          if (total) break;
+        }
+      }
+      
+      // Look for VAT/Tax
+      const taxMatch = rawText.match(/(?:vat|tax)[:\s]*R?\s*([\d,]+[.,]\d{2})/i);
+      let tax = null;
+      if (taxMatch && taxMatch[1]) {
+        const cleanTax = taxMatch[1].replace(/,/g, '').replace(/,/g, '.');
+        tax = parseFloat(cleanTax);
+      }
+      
+      // Look for date
+      const dateMatch = rawText.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+      const date = dateMatch ? dateMatch[1] : null;
+      
+      console.log('💰 Extracted total:', total);
+      console.log('🧾 Extracted tax:', tax);
+      console.log('📅 Extracted date:', date);
+      
+      updateState({ isProcessingOCR: false });
+      
+      return {
+        total,
+        tax,
+        date,
+        rawText,
+        success: total !== null && total > 0,
+      };
+      
+    } catch (error) {
+      console.error('❌ EasyOCR error:', error);
+      updateState({ isProcessingOCR: false });
+      return {
+        total: null,
+        tax: null,
+        date: null,
+        rawText: '',
+        success: false,
+        error: error.message || 'OCR processing failed',
+      };
+    }
+  }, [updateState]);
+
+  // ============================================
   // RECEIPT FUNCTIONS WITH SUPABASE
   // ============================================
 
@@ -667,17 +795,27 @@ export default function LocationScreen({ route }) {
     return true;
   }, []);
 
-  // Handle amount submit from custom modal
-  const handleAmountSubmit = useCallback(async () => {
-    const { amountInput, pendingReceiptUri } = stateRef.current;
+  // Reset receipt state to allow scanning new receipts
+  const resetReceiptState = useCallback(() => {
+    updateState({
+      receiptImage: null,
+      receiptAmount: '',
+      fuelPurchased: 0,
+      receiptSubmitted: false,
+      waitingForReceipt: true,
+      isAtFuelStation: true,
+      pendingReceiptUri: null,
+      isProcessingOCR: false,
+      autoDetectedAmount: null,
+      showOCRConfirmation: false,
+      amountInput: '',
+    });
     
-    if (!amountInput || isNaN(parseFloat(amountInput))) {
-      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
-      return;
-    }
-    
-    const parsedAmount = parseFloat(amountInput);
-    
+    console.log('🔄 Receipt state reset - ready for new scan');
+  }, [updateState]);
+
+  // Handle submitting the receipt with the parsed amount
+  const handleSubmitReceipt = useCallback(async (localUri, parsedAmount) => {
     // Get current user
     let userId = 'temp-user';
     try {
@@ -688,7 +826,7 @@ export default function LocationScreen({ route }) {
     }
     
     // 1. Upload image to Supabase Storage
-    const receiptPath = await uploadReceiptToSupabase(pendingReceiptUri, userId);
+    const receiptPath = await uploadReceiptToSupabase(localUri, userId);
     if (!receiptPath) {
       Alert.alert('Upload Error', 'Failed to upload receipt image. Please try again.');
       return;
@@ -719,7 +857,7 @@ export default function LocationScreen({ route }) {
         return;
       }
       
-      console.log('Receipt saved to database:', receiptData);
+      console.log('✅ Receipt saved to database:', receiptData);
     } catch (dbError) {
       console.error('Database error:', dbError);
       Alert.alert('Database Error', 'Failed to save receipt record.');
@@ -730,21 +868,24 @@ export default function LocationScreen({ route }) {
     updateState({
       receiptAmount: parsedAmount.toFixed(2),
       fuelPurchased: litresPurchased,
-      receiptImage: pendingReceiptUri,
+      receiptImage: localUri,
       receiptSubmitted: true,
       fuelPercent: newFuelPercent,
       waitingForReceipt: false,
       isAtFuelStation: false,
       fuelWarning: false,
-      showReceiptModal: false,
+      showReceiptModal: true,
       showAmountModal: false,
       amountInput: '',
       pendingReceiptUri: null,
+      showOCRConfirmation: false,
+      autoDetectedAmount: null,
+      isProcessingOCR: false,
     });
     
     showNotification(
       'success',
-      `Receipt uploaded! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
+      `✅ Receipt uploaded! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
       5000
     );
 
@@ -754,6 +895,31 @@ export default function LocationScreen({ route }) {
       }, 1000);
     }
   }, [fuelPercent, updateState, showNotification, checkFuelAndRedirect, uploadReceiptToSupabase]);
+
+  // Show fuel amount input modal (with optional prefill)
+  const showFuelAmountInput = useCallback((localUri, prefillAmount = null) => {
+    updateState({
+      pendingReceiptUri: localUri,
+      receiptImage: localUri,
+      showAmountModal: true,
+      amountInput: prefillAmount ? prefillAmount.toString() : '',
+      autoDetectedAmount: prefillAmount,
+      isProcessingOCR: false,
+    });
+  }, [updateState]);
+
+  // Handle fuel modal submit
+  const handleFuelModalSubmit = useCallback(async () => {
+    const { amountInput, pendingReceiptUri } = stateRef.current;
+    
+    if (!amountInput || isNaN(parseFloat(amountInput))) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+      return;
+    }
+    
+    const parsedAmount = parseFloat(amountInput);
+    await handleSubmitReceipt(pendingReceiptUri, parsedAmount);
+  }, [handleSubmitReceipt]);
 
   // Scan receipt with camera
   const scanReceipt = useCallback(async () => {
@@ -773,15 +939,56 @@ export default function LocationScreen({ route }) {
         updateState({
           receiptImage: localUri,
           pendingReceiptUri: localUri,
-          showAmountModal: true,
-          amountInput: '',
         });
+        
+        // Try EasyOCR first
+        const ocrResult = await extractReceiptWithEasyOCR(localUri);
+        
+        if (ocrResult.success && ocrResult.total > 0) {
+          // Show confirmation dialog with auto-detected amount
+          Alert.alert(
+            '💰 Amount Detected',
+            `EasyOCR found R${ocrResult.total.toFixed(2)} on your receipt.`,
+            [
+              {
+                text: '✅ Use This',
+                onPress: () => {
+                  showFuelAmountInput(localUri, ocrResult.total);
+                },
+              },
+              {
+                text: '✏️ Enter Manually',
+                onPress: () => {
+                  showFuelAmountInput(localUri, null);
+                },
+                style: 'cancel',
+              },
+            ]
+          );
+        } else {
+          // OCR failed - fallback to manual entry
+          if (ocrResult.error) {
+            console.log('OCR Error:', ocrResult.error);
+          }
+          Alert.alert(
+            '✏️ Manual Entry Required',
+            'Could not automatically detect the amount. Please enter it manually.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  showFuelAmountInput(localUri, null);
+                },
+              },
+            ]
+          );
+        }
       }
     } catch (error) {
       console.error('Camera error:', error);
       Alert.alert('Error', 'Failed to open camera.');
     }
-  }, [requestCameraPermission, updateState]);
+  }, [requestCameraPermission, extractReceiptWithEasyOCR, showFuelAmountInput, updateState]);
 
   // Pick receipt from gallery
   const pickReceiptImage = useCallback(async () => {
@@ -804,15 +1011,54 @@ export default function LocationScreen({ route }) {
         updateState({
           receiptImage: localUri,
           pendingReceiptUri: localUri,
-          showAmountModal: true,
-          amountInput: '',
         });
+        
+        // Try EasyOCR first
+        const ocrResult = await extractReceiptWithEasyOCR(localUri);
+        
+        if (ocrResult.success && ocrResult.total > 0) {
+          Alert.alert(
+            '💰 Amount Detected',
+            `EasyOCR found R${ocrResult.total.toFixed(2)} on your receipt.`,
+            [
+              {
+                text: '✅ Use This',
+                onPress: () => {
+                  showFuelAmountInput(localUri, ocrResult.total);
+                },
+              },
+              {
+                text: '✏️ Enter Manually',
+                onPress: () => {
+                  showFuelAmountInput(localUri, null);
+                },
+                style: 'cancel',
+              },
+            ]
+          );
+        } else {
+          if (ocrResult.error) {
+            console.log('OCR Error:', ocrResult.error);
+          }
+          Alert.alert(
+            '✏️ Manual Entry Required',
+            'Could not automatically detect the amount. Please enter it manually.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  showFuelAmountInput(localUri, null);
+                },
+              },
+            ]
+          );
+        }
       }
     } catch (error) {
       console.error('Gallery error:', error);
       Alert.alert('Error', 'Failed to open gallery.');
     }
-  }, [updateState]);
+  }, [extractReceiptWithEasyOCR, showFuelAmountInput, updateState]);
 
   // Open receipt modal
   const openReceiptModal = useCallback(() => {
@@ -822,6 +1068,7 @@ export default function LocationScreen({ route }) {
       waitingForReceipt: true 
     });
   }, [updateState]);
+
   // ============================================
   // END RECEIPT FUNCTIONS
   // ============================================
@@ -932,13 +1179,23 @@ export default function LocationScreen({ route }) {
       animationType="slide"
       transparent={true}
       visible={showAmountModal}
-      onRequestClose={() => updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null })}
+      onRequestClose={() => {
+        resetReceiptState();
+        updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null });
+      }}
     >
       <View style={styles.modalContainer}>
         <View style={[styles.modalContent, { padding: 20, maxHeight: height * 0.6 }]}>
           <Text style={styles.modalTitle}>Enter Fuel Amount</Text>
+          
           <Text style={styles.modalSubtitle}>
-            Please enter the total amount spent on fuel (in ZAR):
+            {isProcessingOCR ? (
+              '⏳ Processing receipt with OCR...'
+            ) : autoDetectedAmount ? (
+              `🤖 EasyOCR detected R${autoDetectedAmount.toFixed(2)}. Please confirm or adjust:`
+            ) : (
+              '📝 Please enter the total amount spent on fuel (in ZAR):'
+            )}
           </Text>
           
           {pendingReceiptUri && (
@@ -947,30 +1204,44 @@ export default function LocationScreen({ route }) {
             </View>
           )}
           
-          <TextInput
-            style={styles.amountInput}
-            placeholder="Enter amount in ZAR"
-            keyboardType="numeric"
-            value={amountInput}
-            onChangeText={(text) => updateState({ amountInput: text })}
-            autoFocus={true}
-          />
+          {isProcessingOCR && (
+            <View style={styles.ocrLoadingContainer}>
+              <ActivityIndicator size="large" color="#007bff" />
+              <Text style={styles.ocrLoadingText}>Analyzing receipt...</Text>
+            </View>
+          )}
           
-          <View style={styles.modalButtonContainer}>
-            <TouchableOpacity
-              style={[styles.modalButton, { backgroundColor: '#999', flex: 1, marginRight: 8 }]}
-              onPress={() => updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null })}
-            >
-              <Text style={styles.modalButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[styles.modalButton, { backgroundColor: '#007bff', flex: 1, marginLeft: 8 }]}
-              onPress={handleAmountSubmit}
-            >
-              <Text style={styles.modalButtonText}>Submit</Text>
-            </TouchableOpacity>
-          </View>
+          {!isProcessingOCR && (
+            <>
+              <TextInput
+                style={styles.amountInput}
+                placeholder="Enter amount in ZAR"
+                keyboardType="numeric"
+                value={amountInput}
+                onChangeText={(text) => updateState({ amountInput: text })}
+                autoFocus={true}
+              />
+              
+              <View style={styles.modalButtonContainer}>
+                <TouchableOpacity
+                  style={[styles.modalButton, { backgroundColor: '#999', flex: 1, marginRight: 8 }]}
+                  onPress={() => {
+                    resetReceiptState();
+                    updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null });
+                  }}
+                >
+                  <Text style={styles.modalButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.modalButton, { backgroundColor: '#007bff', flex: 1, marginLeft: 8 }]}
+                  onPress={handleFuelModalSubmit}
+                >
+                  <Text style={styles.modalButtonText}>Submit</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
       </View>
     </Modal>
@@ -995,6 +1266,7 @@ export default function LocationScreen({ route }) {
             [{ text: 'OK', style: 'default' }]
           );
         } else {
+          resetReceiptState();
           updateState({ showReceiptModal: false });
         }
       }}
@@ -1004,7 +1276,7 @@ export default function LocationScreen({ route }) {
           <Text style={styles.modalTitle}>Scan Fuel Receipt</Text>
           
           <Text style={styles.modalSubtitle}>
-            {receiptSubmitted ? 'Receipt submitted successfully!' : 'Please scan or upload your fuel receipt'}
+            {receiptSubmitted ? '✅ Receipt submitted successfully!' : '📸 Please scan or upload your fuel receipt'}
           </Text>
           
           {receiptImage ? (
@@ -1012,7 +1284,7 @@ export default function LocationScreen({ route }) {
               <Image source={{ uri: receiptImage }} style={styles.receiptImage} />
               {receiptSubmitted && (
                 <View style={styles.receiptSubmittedBadge}>
-                  <Text style={styles.receiptSubmittedText}>Submitted</Text>
+                  <Text style={styles.receiptSubmittedText}>✅ Submitted</Text>
                 </View>
               )}
             </View>
@@ -1020,6 +1292,13 @@ export default function LocationScreen({ route }) {
             <View style={styles.receiptPlaceholder}>
               <Ionicons name="document-text-outline" size={60} color="#999" />
               <Text style={styles.receiptPlaceholderText}>No receipt scanned yet</Text>
+            </View>
+          )}
+
+          {isProcessingOCR && (
+            <View style={styles.ocrLoadingContainer}>
+              <ActivityIndicator size="large" color="#007bff" />
+              <Text style={styles.ocrLoadingText}>Analyzing receipt with AI...</Text>
             </View>
           )}
 
@@ -1043,6 +1322,7 @@ export default function LocationScreen({ route }) {
                 <TouchableOpacity
                   style={[styles.modalButton, styles.scanButton]}
                   onPress={scanReceipt}
+                  disabled={isProcessingOCR}
                 >
                   <Ionicons name="camera-outline" size={20} color="#fff" />
                   <Text style={styles.modalButtonText}>Scan Receipt</Text>
@@ -1051,20 +1331,41 @@ export default function LocationScreen({ route }) {
                 <TouchableOpacity
                   style={[styles.modalButton, styles.uploadButton]}
                   onPress={pickReceiptImage}
+                  disabled={isProcessingOCR}
                 >
                   <Ionicons name="images-outline" size={20} color="#fff" />
                   <Text style={styles.modalButtonText}>Upload Photo</Text>
                 </TouchableOpacity>
               </>
             ) : (
-              <TouchableOpacity
-                style={[styles.modalButton, styles.continueButton]}
-                onPress={() => {
-                  updateState({ showReceiptModal: false });
-                }}
-              >
-                <Text style={styles.modalButtonText}>Continue</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.continueButton]}
+                  onPress={() => {
+                    resetReceiptState();
+                    updateState({ 
+                      showReceiptModal: false,
+                      waitingForReceipt: false,
+                      isAtFuelStation: false,
+                    });
+                    showNotification('info', 'Ready for next receipt', 1500);
+                  }}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+                  <Text style={styles.modalButtonText}>Continue</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.scanNewButton]}
+                  onPress={() => {
+                    resetReceiptState();
+                    showNotification('info', '📸 Ready to scan a new receipt', 1500);
+                  }}
+                >
+                  <Ionicons name="camera-outline" size={20} color="#fff" />
+                  <Text style={styles.modalButtonText}>Scan New</Text>
+                </TouchableOpacity>
+              </>
             )}
           </View>
 
@@ -1080,6 +1381,7 @@ export default function LocationScreen({ route }) {
                     {
                       text: 'Skip',
                       onPress: () => {
+                        resetReceiptState();
                         updateState({ 
                           showReceiptModal: false,
                           waitingForReceipt: false,
@@ -1090,6 +1392,7 @@ export default function LocationScreen({ route }) {
                   ]
                 );
               }}
+              disabled={isProcessingOCR}
             >
               <Text style={styles.skipButtonText}>Skip for now</Text>
             </TouchableOpacity>
@@ -1537,11 +1840,51 @@ export default function LocationScreen({ route }) {
         <Text style={styles.buttonText}>📄 Scan Fuel Receipt</Text>
       </TouchableOpacity>
 
+      {/* Reset Receipt Scanner Button */}
+      <TouchableOpacity
+        style={[styles.primaryButton, { backgroundColor: '#FF9800', marginTop: 10 }]}
+        onPress={() => {
+          if (receiptSubmitted || receiptImage) {
+            Alert.alert(
+              'Reset Receipt Scanner',
+              'Reset the receipt state to scan a new receipt?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { 
+                  text: 'Reset', 
+                  onPress: () => {
+                    resetReceiptState();
+                    updateState({ 
+                      showReceiptModal: true,
+                      waitingForReceipt: true,
+                      isAtFuelStation: true,
+                    });
+                    showNotification('info', '🔄 Ready to scan a new receipt', 2000);
+                  }
+                }
+              ]
+            );
+          } else {
+            resetReceiptState();
+            updateState({ 
+              showReceiptModal: true,
+              waitingForReceipt: true,
+              isAtFuelStation: true,
+            });
+            showNotification('info', '🔄 Ready to scan a receipt', 2000);
+          }
+        }}
+      >
+        <Ionicons name="refresh-outline" size={18} color="#fff" />
+        <Text style={styles.buttonText}>Reset Receipt Scanner</Text>
+      </TouchableOpacity>
+
       {/* Fuel Warning Receipt Button */}
       {fuelWarning && (
         <TouchableOpacity
           style={[styles.primaryButton, { backgroundColor: '#ff6f00' }]}
           onPress={() => {
+            resetReceiptState();
             updateState({ 
               showReceiptModal: true,
               isAtFuelStation: true,
@@ -2026,6 +2369,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginVertical: 5,
+    flex: 1,
   },
   scanButton: {
     backgroundColor: '#007bff',
@@ -2035,7 +2379,9 @@ const styles = StyleSheet.create({
   },
   continueButton: {
     backgroundColor: '#FF6B00',
-    width: '100%',
+  },
+  scanNewButton: {
+    backgroundColor: '#2196F3',
   },
   modalButtonText: {
     color: '#fff',
@@ -2062,6 +2408,19 @@ const styles = StyleSheet.create({
     width: '100%',
     marginVertical: 15,
     backgroundColor: '#f9f9f9',
+  },
+
+  // OCR Loading Styles
+  ocrLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  ocrLoadingText: {
+    marginLeft: 10,
+    color: '#666',
+    fontSize: 14,
   },
 
   endTripButton: {
