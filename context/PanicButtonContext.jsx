@@ -24,8 +24,8 @@ import { useAuth } from "../context/AuthContext";
 const PanicContext = createContext(null);
 
 const DEFAULT_CONFIG = {
-  CHECK_IN_INTERVAL_MS: 30000,   
-  RESPONSE_TIME_MS: 30000,       
+  CHECK_IN_INTERVAL_MS: 300000,   
+  RESPONSE_TIME_MS: 30000,
 };
 
 export function PanicProvider({ children, config = DEFAULT_CONFIG }) {

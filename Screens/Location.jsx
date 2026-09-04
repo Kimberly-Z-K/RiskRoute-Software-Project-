@@ -12,6 +12,7 @@ import {
   Modal,
   FlatList,
   Dimensions,
+  TextInput,
 } from "react-native";
 import MapView, { Marker, Polyline, Callout } from "react-native-maps";
 import * as ExpoLocation from "expo-location";
@@ -128,6 +129,11 @@ export default function LocationScreen({ route }) {
     waitingForReceipt: false,
     isAtFuelStation: false,
     
+    // Amount Input Modal
+    showAmountModal: false,
+    amountInput: '',
+    pendingReceiptUri: null,
+    
     // UI
     notification: null,
     showFuelModal: false,
@@ -179,6 +185,9 @@ export default function LocationScreen({ route }) {
     waitingForReceipt,
     isAtFuelStation,
     searchingStations,
+    showAmountModal,
+    amountInput,
+    pendingReceiptUri,
   } = state;
 
   const calculateRemainingRange = useCallback(() => {
@@ -437,6 +446,9 @@ export default function LocationScreen({ route }) {
                 fuelPurchased: 0,
                 waitingForReceipt: false,
                 isAtFuelStation: false,
+                showAmountModal: false,
+                amountInput: '',
+                pendingReceiptUri: null,
               });
             }, 1500);
           },
@@ -610,313 +622,210 @@ export default function LocationScreen({ route }) {
   }, [updateState, showNotification]);
 
   // ============================================
-// RECEIPT FUNCTIONS WITH SUPABASE
-// ============================================
+  // RECEIPT FUNCTIONS WITH SUPABASE
+  // ============================================
 
-// Upload receipt image to Supabase Storage
-const uploadReceiptToSupabase = useCallback(async (uri, userId) => {
-  try {
-    const response = await fetch(uri);
-    const arrayBuffer = await response.arrayBuffer();
-    
-    const timestamp = Date.now();
-    const fileName = `${userId}/receipt-${timestamp}.jpg`;
-    
-    const { data, error } = await supabase.storage
-      .from('receipts')
-      .upload(fileName, arrayBuffer, {
-        contentType: 'image/jpeg',
-        upsert: false,
-      });
-    
-    if (error) {
-      console.error('Upload error:', error);
-      Alert.alert('Upload Error', error.message);
+  // Upload receipt image to Supabase Storage
+  const uploadReceiptToSupabase = useCallback(async (uri, userId) => {
+    try {
+      const response = await fetch(uri);
+      const arrayBuffer = await response.arrayBuffer();
+      
+      const timestamp = Date.now();
+      const fileName = `${userId}/receipt-${timestamp}.jpg`;
+      
+      const { data, error } = await supabase.storage
+        .from('receipts')
+        .upload(fileName, arrayBuffer, {
+          contentType: 'image/jpeg',
+          upsert: false,
+        });
+      
+      if (error) {
+        console.error('Upload error:', error);
+        Alert.alert('Upload Error', error.message);
+        return null;
+      }
+      
+      console.log('Receipt uploaded:', data.path);
+      return data.path;
+      
+    } catch (error) {
+      console.error('Upload failed:', error);
+      Alert.alert('Error', 'Failed to upload receipt.');
       return null;
     }
-    
-    console.log('Receipt uploaded:', data.path);
-    return data.path;
-    
-  } catch (error) {
-    console.error('Upload failed:', error);
-    Alert.alert('Error', 'Failed to upload receipt.');
-    return null;
-  }
-}, []);
+  }, []);
 
-// Request camera permission
-const requestCameraPermission = useCallback(async () => {
-  const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('Permission needed', 'Camera permission is required to scan receipts.');
-    return false;
-  }
-  return true;
-}, []);
-
-// Scan receipt with camera
-const scanReceipt = useCallback(async () => {
-  const hasPermission = await requestCameraPermission();
-  if (!hasPermission) return;
-
-  try {
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.8,
-      // Removed base64: true
-    });
-
-    if (!result.canceled && result.assets && result.assets[0]) {
-      const localUri = result.assets[0].uri;
-      
-      updateState({
-        receiptImage: localUri,
-      });
-      
-      Alert.prompt(
-        'Enter Fuel Amount',
-        'Please enter the total amount spent on fuel (in ZAR):',
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => {
-              updateState({ receiptImage: null });
-            }
-          },
-          {
-            text: 'Submit',
-            onPress: async (amount) => {
-              if (amount && !isNaN(parseFloat(amount))) {
-                const parsedAmount = parseFloat(amount);
-                
-                // Get current user
-                let userId = 'temp-user';
-                try {
-                  const { data: { user } } = await supabase.auth.getUser();
-                  if (user) userId = user.id;
-                } catch (e) {
-                  console.log('Using temp user ID (no auth)');
-                }
-                
-                // 1. Upload image to Supabase Storage
-                const receiptPath = await uploadReceiptToSupabase(localUri, userId);
-                if (!receiptPath) {
-                  Alert.alert('Upload Error', 'Failed to upload receipt image. Please try again.');
-                  return;
-                }
-                
-                // 2. Calculate fuel
-                const litresPurchased = parsedAmount / 22;
-                const fuelAdded = (litresPurchased / CONFIG.TANK_CAPACITY) * 100;
-                const newFuelPercent = Math.min(fuelPercent + fuelAdded, 100);
-                
-                // 3. Save receipt to database
-                try {
-                  const { data: receiptData, error: dbError } = await supabase
-                    .from('receipts')
-                    .insert({
-                      user_id: userId,
-                      receipt_amount: parsedAmount,
-                      fuel_purchased: litresPurchased,
-                      receipt_image_path: receiptPath,
-                      fuel_percent_before: fuelPercent,
-                      fuel_percent_after: newFuelPercent,
-                    })
-                    .select();
-                  
-                  if (dbError) {
-                    console.error('Database error:', dbError);
-                    Alert.alert('Database Error', 'Receipt image uploaded but failed to save record.');
-                    return;
-                  }
-                  
-                  console.log('Receipt saved to database:', receiptData);
-                } catch (dbError) {
-                  console.error('Database error:', dbError);
-                  Alert.alert('Database Error', 'Failed to save receipt record.');
-                  return;
-                }
-                
-                // 4. Update local state
-                updateState({
-                  receiptAmount: parsedAmount.toFixed(2),
-                  fuelPurchased: litresPurchased,
-                  receiptImage: localUri,
-                  receiptSubmitted: true,
-                  fuelPercent: newFuelPercent,
-                  waitingForReceipt: false,
-                  isAtFuelStation: false,
-                  fuelWarning: false,
-                  showReceiptModal: false,
-                });
-                
-                showNotification(
-                  'success',
-                  `Receipt uploaded! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
-                  5000
-                );
-
-                if (newFuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD) {
-                  setTimeout(() => {
-                    checkFuelAndRedirect();
-                  }, 1000);
-                }
-              } else {
-                Alert.alert('Invalid Amount', 'Please enter a valid amount.');
-              }
-            },
-          },
-        ],
-        'plain-text'
-      );
+  // Request camera permission
+  const requestCameraPermission = useCallback(async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Camera permission is required to scan receipts.');
+      return false;
     }
-  } catch (error) {
-    console.error('Camera error:', error);
-    Alert.alert('Error', 'Failed to open camera.');
-  }
-}, [requestCameraPermission, fuelPercent, updateState, showNotification, checkFuelAndRedirect]);
+    return true;
+  }, []);
 
-// Pick receipt from gallery
-const pickReceiptImage = useCallback(async () => {
-  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('Permission needed', 'Gallery permission is required to upload receipts.');
-    return;
-  }
-
-  try {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.8,
-      // Removed base64: true
-    });
-
-    if (!result.canceled && result.assets && result.assets[0]) {
-      const localUri = result.assets[0].uri;
-      
-      updateState({
-        receiptImage: localUri,
-      });
-      
-      Alert.prompt(
-        'Enter Fuel Amount',
-        'Please enter the total amount spent on fuel (in ZAR):',
-        [
-          {
-            text: 'Cancel',
-            style: 'cancel',
-            onPress: () => {
-              updateState({ receiptImage: null });
-            }
-          },
-          {
-            text: 'Submit',
-            onPress: async (amount) => {
-              if (amount && !isNaN(parseFloat(amount))) {
-                const parsedAmount = parseFloat(amount);
-                
-                // Get current user
-                let userId = 'temp-user';
-                try {
-                  const { data: { user } } = await supabase.auth.getUser();
-                  if (user) userId = user.id;
-                } catch (e) {
-                  console.log('Using temp user ID (no auth)');
-                }
-                
-                // 1. Upload image to Supabase Storage
-                const receiptPath = await uploadReceiptToSupabase(localUri, userId);
-                if (!receiptPath) {
-                  Alert.alert('Upload Error', 'Failed to upload receipt image. Please try again.');
-                  return;
-                }
-                
-                // 2. Calculate fuel
-                const litresPurchased = parsedAmount / 22;
-                const fuelAdded = (litresPurchased / CONFIG.TANK_CAPACITY) * 100;
-                const newFuelPercent = Math.min(fuelPercent + fuelAdded, 100);
-                
-                // 3. Save receipt to database
-                try {
-                  const { data: receiptData, error: dbError } = await supabase
-                    .from('receipts')
-                    .insert({
-                      user_id: userId,
-                      receipt_amount: parsedAmount,
-                      fuel_purchased: litresPurchased,
-                      receipt_image_path: receiptPath,
-                      fuel_percent_before: fuelPercent,
-                      fuel_percent_after: newFuelPercent,
-                    })
-                    .select();
-                  
-                  if (dbError) {
-                    console.error('Database error:', dbError);
-                    Alert.alert('Database Error', 'Receipt image uploaded but failed to save record.');
-                    return;
-                  }
-                  
-                  console.log('Receipt saved to database:', receiptData);
-                } catch (dbError) {
-                  console.error('Database error:', dbError);
-                  Alert.alert('Database Error', 'Failed to save receipt record.');
-                  return;
-                }
-                
-                // 4. Update local state
-                updateState({
-                  receiptAmount: parsedAmount.toFixed(2),
-                  fuelPurchased: litresPurchased,
-                  receiptImage: localUri,
-                  receiptSubmitted: true,
-                  fuelPercent: newFuelPercent,
-                  waitingForReceipt: false,
-                  isAtFuelStation: false,
-                  fuelWarning: false,
-                  showReceiptModal: false,
-                });
-                
-                showNotification(
-                  'success',
-                  `Receipt uploaded! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
-                  5000
-                );
-                
-                if (newFuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD) {
-                  setTimeout(() => {
-                    checkFuelAndRedirect();
-                  }, 1000);
-                }
-              } else {
-                Alert.alert('Invalid Amount', 'Please enter a valid amount.');
-              }
-            },
-          },
-        ],
-        'plain-text'
-      );
+  // Handle amount submit from custom modal
+  const handleAmountSubmit = useCallback(async () => {
+    const { amountInput, pendingReceiptUri } = stateRef.current;
+    
+    if (!amountInput || isNaN(parseFloat(amountInput))) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+      return;
     }
-  } catch (error) {
-    console.error('Gallery error:', error);
-    Alert.alert('Error', 'Failed to open gallery.');
-  }
-}, [fuelPercent, updateState, showNotification, checkFuelAndRedirect]);
+    
+    const parsedAmount = parseFloat(amountInput);
+    
+    // Get current user
+    let userId = 'temp-user';
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) userId = user.id;
+    } catch (e) {
+      console.log('Using temp user ID (no auth)');
+    }
+    
+    // 1. Upload image to Supabase Storage
+    const receiptPath = await uploadReceiptToSupabase(pendingReceiptUri, userId);
+    if (!receiptPath) {
+      Alert.alert('Upload Error', 'Failed to upload receipt image. Please try again.');
+      return;
+    }
+    
+    // 2. Calculate fuel
+    const litresPurchased = parsedAmount / 22;
+    const fuelAdded = (litresPurchased / CONFIG.TANK_CAPACITY) * 100;
+    const newFuelPercent = Math.min(fuelPercent + fuelAdded, 100);
+    
+    // 3. Save receipt to database
+    try {
+      const { data: receiptData, error: dbError } = await supabase
+        .from('receipts')
+        .insert({
+          user_id: userId,
+          receipt_amount: parsedAmount,
+          fuel_purchased: litresPurchased,
+          receipt_image_path: receiptPath,
+          fuel_percent_before: fuelPercent,
+          fuel_percent_after: newFuelPercent,
+        })
+        .select();
+      
+      if (dbError) {
+        console.error('Database error:', dbError);
+        Alert.alert('Database Error', 'Receipt image uploaded but failed to save record.');
+        return;
+      }
+      
+      console.log('Receipt saved to database:', receiptData);
+    } catch (dbError) {
+      console.error('Database error:', dbError);
+      Alert.alert('Database Error', 'Failed to save receipt record.');
+      return;
+    }
+    
+    // 4. Update local state
+    updateState({
+      receiptAmount: parsedAmount.toFixed(2),
+      fuelPurchased: litresPurchased,
+      receiptImage: pendingReceiptUri,
+      receiptSubmitted: true,
+      fuelPercent: newFuelPercent,
+      waitingForReceipt: false,
+      isAtFuelStation: false,
+      fuelWarning: false,
+      showReceiptModal: false,
+      showAmountModal: false,
+      amountInput: '',
+      pendingReceiptUri: null,
+    });
+    
+    showNotification(
+      'success',
+      `Receipt uploaded! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
+      5000
+    );
 
-// Open receipt modal
-const openReceiptModal = useCallback(() => {
-  updateState({ 
-    showReceiptModal: true,
-    isAtFuelStation: true,
-    waitingForReceipt: true 
-  });
-}, [updateState]);
-// ============================================
-// END RECEIPT FUNCTIONS
-// ============================================
+    if (newFuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD) {
+      setTimeout(() => {
+        checkFuelAndRedirect();
+      }, 1000);
+    }
+  }, [fuelPercent, updateState, showNotification, checkFuelAndRedirect, uploadReceiptToSupabase]);
+
+  // Scan receipt with camera
+  const scanReceipt = useCallback(async () => {
+    const hasPermission = await requestCameraPermission();
+    if (!hasPermission) return;
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const localUri = result.assets[0].uri;
+        
+        updateState({
+          receiptImage: localUri,
+          pendingReceiptUri: localUri,
+          showAmountModal: true,
+          amountInput: '',
+        });
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      Alert.alert('Error', 'Failed to open camera.');
+    }
+  }, [requestCameraPermission, updateState]);
+
+  // Pick receipt from gallery
+  const pickReceiptImage = useCallback(async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Gallery permission is required to upload receipts.');
+      return;
+    }
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const localUri = result.assets[0].uri;
+        
+        updateState({
+          receiptImage: localUri,
+          pendingReceiptUri: localUri,
+          showAmountModal: true,
+          amountInput: '',
+        });
+      }
+    } catch (error) {
+      console.error('Gallery error:', error);
+      Alert.alert('Error', 'Failed to open gallery.');
+    }
+  }, [updateState]);
+
+  // Open receipt modal
+  const openReceiptModal = useCallback(() => {
+    updateState({ 
+      showReceiptModal: true,
+      isAtFuelStation: true,
+      waitingForReceipt: true 
+    });
+  }, [updateState]);
+  // ============================================
+  // END RECEIPT FUNCTIONS
+  // ============================================
+
   useEffect(() => {
     console.log('[location screen]', !!user);
     getLocation();
@@ -1016,7 +925,62 @@ const openReceiptModal = useCallback(() => {
   );
 
   // ============================================
-  // RECEIPT MODAL - ADDED
+  // AMOUNT INPUT MODAL - CROSS PLATFORM
+  // ============================================
+  const renderAmountInputModal = () => (
+    <Modal
+      animationType="slide"
+      transparent={true}
+      visible={showAmountModal}
+      onRequestClose={() => updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null })}
+    >
+      <View style={styles.modalContainer}>
+        <View style={[styles.modalContent, { padding: 20, maxHeight: height * 0.6 }]}>
+          <Text style={styles.modalTitle}>Enter Fuel Amount</Text>
+          <Text style={styles.modalSubtitle}>
+            Please enter the total amount spent on fuel (in ZAR):
+          </Text>
+          
+          {pendingReceiptUri && (
+            <View style={styles.receiptImageContainer}>
+              <Image source={{ uri: pendingReceiptUri }} style={styles.receiptImage} />
+            </View>
+          )}
+          
+          <TextInput
+            style={styles.amountInput}
+            placeholder="Enter amount in ZAR"
+            keyboardType="numeric"
+            value={amountInput}
+            onChangeText={(text) => updateState({ amountInput: text })}
+            autoFocus={true}
+          />
+          
+          <View style={styles.modalButtonContainer}>
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: '#999', flex: 1, marginRight: 8 }]}
+              onPress={() => updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null })}
+            >
+              <Text style={styles.modalButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: '#007bff', flex: 1, marginLeft: 8 }]}
+              onPress={handleAmountSubmit}
+            >
+              <Text style={styles.modalButtonText}>Submit</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+  // ============================================
+  // END AMOUNT INPUT MODAL
+  // ============================================
+
+  // ============================================
+  // RECEIPT MODAL
   // ============================================
   const renderReceiptModal = () => (
     <Modal
@@ -1185,7 +1149,7 @@ const openReceiptModal = useCallback(() => {
                     style={styles.retryButton}
                     onPress={() => {
                       if (routeCoords.length > 0) {
-                        findFuelStationsAlongRoute(routeCoords);
+                        // findFuelStationsAlongRoute(routeCoords);
                       }
                     }}
                   >
@@ -1360,7 +1324,7 @@ const openReceiptModal = useCallback(() => {
             onPress={() => {
               updateState({ showFuelModal: true });
               if (fuelStations.length === 0 && routeCoords.length > 0) {
-                findFuelStationsAlongRoute(routeCoords);
+                // findFuelStationsAlongRoute(routeCoords);
               }
             }}
           >
@@ -1557,7 +1521,7 @@ const openReceiptModal = useCallback(() => {
           updateState({ fullMap: true });
           updateState({ showFuelModal: true });
           if (fuelStations.length === 0 && routeCoords.length > 0) {
-            findFuelStationsAlongRoute(routeCoords);
+            // findFuelStationsAlongRoute(routeCoords);
           }
         }}
       >
@@ -1612,6 +1576,7 @@ const openReceiptModal = useCallback(() => {
       {!fullMap && renderInfoPanel()}
       {renderReceiptModal()}
       {renderFuelModal()}
+      {renderAmountInputModal()}
     </SafeAreaView>
   );
 }
@@ -2050,7 +2015,8 @@ const styles = StyleSheet.create({
   },
   modalButtonContainer: {
     width: '100%',
-    flexDirection: 'column',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     gap: 10,
   },
   modalButton: {
@@ -2069,6 +2035,7 @@ const styles = StyleSheet.create({
   },
   continueButton: {
     backgroundColor: '#FF6B00',
+    width: '100%',
   },
   modalButtonText: {
     color: '#fff',
@@ -2083,6 +2050,18 @@ const styles = StyleSheet.create({
   skipButtonText: {
     color: '#999',
     fontSize: 14,
+  },
+
+  // Amount Input Styles
+  amountInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 16,
+    width: '100%',
+    marginVertical: 15,
+    backgroundColor: '#f9f9f9',
   },
 
   endTripButton: {
