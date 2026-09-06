@@ -1,0 +1,14 @@
+[
+  {
+    "id": "109a8975-c42f-4443-b347-ea6f152450ad",
+    "created_at": "2026-09-03T16:07:45.315Z",
+    "routeName": "Route #19 - Johannesburg to Durban",
+    "origin": "Unknown Origin",
+    "destination": "Unknown Destination",
+    "route": null,
+    "simulation": null,
+    "weather": null,
+    "traffic": null,
+    "result": null
+  }
+]

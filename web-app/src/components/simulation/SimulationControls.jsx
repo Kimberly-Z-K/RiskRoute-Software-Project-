@@ -38,7 +38,7 @@ import {
   Send,
   Bot
 } from "lucide-react";
-import aiService from '../backend/aiService';
+
 
 /* ============================================================
    DEFAULT ROUTES (Fallback if API fails)
@@ -1639,396 +1639,333 @@ const SimulationControls = ({
   ========================================================== */
 
   // Automatically learn from database when component mounts
-  useEffect(() => {
-    const autoLearn = async () => {
-      try {
-        console.log('🧠 AI: Auto-learning from database...');
-        const response = await fetch('http://localhost:5000/api/simulations');
-        if (response.ok) {
-          const simulations = await response.json();
-          if (simulations && simulations.length > 0) {
-            if (typeof aiService !== 'undefined' && aiService.learnFromHistory) {
-              await aiService.learnFromHistory(simulations);
-              console.log(`🧠 AI: Learned from ${simulations.length} simulations`);
-              setStatusMessage(`🧠 AI learned from ${simulations.length} historical simulations`);
-              setAiInitialized(true);
-            }
-          } else {
-            console.log('🧠 AI: No simulations found to learn from');
-            setAiInitialized(true);
-          }
-        }
-      } catch (error) {
-        console.error('AI auto-learn error:', error);
-        setAiInitialized(true);
-      }
-    };
+  // useEffect(() => {
+  //   const autoLearn = async () => {
+  //     try {
+  //       console.log('🧠 AI: Auto-learning from database...');
+  //       const response = await fetch('http://localhost:5000/api/simulations');
+  //       if (response.ok) {
+  //         const simulations = await response.json();
+  //         if (simulations && simulations.length > 0) {
+  //           if (typeof aiService !== 'undefined' && aiService.learnFromHistory) {
+  //             await aiService.learnFromHistory(simulations);
+  //             console.log(`🧠 AI: Learned from ${simulations.length} simulations`);
+  //             setStatusMessage(`🧠 AI learned from ${simulations.length} historical simulations`);
+  //             setAiInitialized(true);
+  //           }
+  //         } else {
+  //           console.log('🧠 AI: No simulations found to learn from');
+  //           setAiInitialized(true);
+  //         }
+  //       }
+  //     } catch (error) {
+  //       console.error('AI auto-learn error:', error);
+  //       setAiInitialized(true);
+  //     }
+  //   };
 
-    autoLearn();
-  }, []);
+  //   autoLearn();
+  // }, []);
 
-  // Auto-learn after saving a new simulation
-  useEffect(() => {
-    const learnAfterSave = async () => {
-      if (localSavedSimulations.length > 0 && aiInitialized) {
-        try {
-          console.log('🧠 AI: Auto-learning from updated database...');
-          const response = await fetch('http://localhost:5000/api/simulations');
-          if (response.ok) {
-            const simulations = await response.json();
-            if (typeof aiService !== 'undefined' && aiService.learnFromHistory) {
-              await aiService.learnFromHistory(simulations);
-              console.log(`🧠 AI: Re-learned from ${simulations.length} simulations`);
-            }
-          }
-        } catch (error) {
-          console.error('AI re-learn error:', error);
-        }
-      }
-    };
+  // // Auto-learn after saving a new simulation
+  // useEffect(() => {
+  //   const learnAfterSave = async () => {
+  //     if (localSavedSimulations.length > 0 && aiInitialized) {
+  //       try {
+  //         console.log('🧠 AI: Auto-learning from updated database...');
+  //         const response = await fetch('http://localhost:5000/api/simulations');
+  //         if (response.ok) {
+  //           const simulations = await response.json();
+  //           if (typeof aiService !== 'undefined' && aiService.learnFromHistory) {
+  //             await aiService.learnFromHistory(simulations);
+  //             console.log(`🧠 AI: Re-learned from ${simulations.length} simulations`);
+  //           }
+  //         }
+  //       } catch (error) {
+  //         console.error('AI re-learn error:', error);
+  //       }
+  //     }
+  //   };
 
-    if (localSavedSimulations.length > 0) {
-      learnAfterSave();
-    }
-  }, [localSavedSimulations, aiInitialized]);
+  //   if (localSavedSimulations.length > 0) {
+  //     learnAfterSave();
+  //   }
+  // }, [localSavedSimulations, aiInitialized]);
 
   /* ==========================================================
      GENERATE AI ANALYSIS
   ========================================================== */
 
   const generateAIAnalysis = useCallback(async () => {
-    if (!resultsRef.current || aiAnalysisLoading) return;
+  if (!resultsRef.current || aiAnalysisLoading) {
+    return;
+  }
 
-    setAIAnalysisLoading(true);
-    setStatusMessage("🧠 AI is analyzing your route...");
+  setAIAnalysisLoading(true);
+  setStatusMessage("🧠 AI is analyzing your route...");
 
-    try {
-      // Simulate AI analysis
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      const results = resultsRef.current;
-      const timeDiff = (results.current?.duration || 0) - (results.optimal?.duration || 0);
-      const riskDiff = (results.current?.riskScore || 0) - (results.optimal?.riskScore || 0);
-      
-      // Get historical context
-      let historicalNote = '';
-      let historicalCount = 0;
-      try {
-        const response = await fetch('http://localhost:5000/api/simulations');
-        if (response.ok) {
-          const sims = await response.json();
-          historicalCount = sims.length;
-          if (historicalCount > 0) {
-            historicalNote = `Based on ${historicalCount} historical simulations`;
-          }
+  try {
+    const results = resultsRef.current;
+
+    const selectedRouteData = selectedRoute
+      ? {
+          id: getRouteId(selectedRoute),
+          name: getRouteName(selectedRoute),
+          origin: selectedRoute.origin_name,
+          destination: selectedRoute.destination_name,
+          distance_km: getDistance(selectedRoute),
+          duration_min: getDuration(selectedRoute),
+          estimated_cost: getCost(selectedRoute),
         }
-      } catch (e) {
-        console.log('Could not fetch historical data for analysis');
+      : null;
+
+    const simulationData = {
+      riskScore: results.current?.riskScore ?? 0,
+      riskLevel:
+        results.current?.riskScore >= 85
+          ? "CRITICAL"
+          : results.current?.riskScore >= 70
+          ? "HIGH"
+          : results.current?.riskScore >= 40
+          ? "MEDIUM"
+          : "LOW",
+
+      duration: results.current?.duration ?? 0,
+      cost: results.current?.cost ?? "R0",
+      delayMinutes: results.current?.delay ?? 0,
+
+      weather: results.params?.weather ?? weather,
+      weatherLabel: results.params?.weather ?? weather,
+
+      accident: results.params?.accident ?? false,
+      roadClosure: results.params?.roadClosure ?? false,
+
+      recommendation:
+        results.recommendation || "",
+
+      optimal: results.optimal || null,
+      alternatives:
+        results.alternatives || [],
+    };
+
+    const response = await fetch(
+      "http://localhost:5050/api/ai/analyze",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          route: selectedRouteData,
+          simulation: simulationData,
+          weather: currentWeather,
+          traffic: results.params?.realTraffic || null,
+        }),
       }
+    );
 
-      // Get route-specific historical data
-      let routeSpecificNote = '';
-      try {
-        const allSims = await fetch('http://localhost:5000/api/simulations').then(r => r.json());
-        const routeSims = allSims.filter(s => s.routeName === results.routeName);
-        if (routeSims.length > 0) {
-          const avgDuration = routeSims.reduce((sum, s) => sum + (s.current?.duration || 0), 0) / routeSims.length;
-          const avgRisk = routeSims.reduce((sum, s) => sum + (s.current?.riskScore || 0), 0) / routeSims.length;
-          routeSpecificNote = ` This route has been analyzed ${routeSims.length} times. Average duration: ${Math.round(avgDuration)}min, Average risk: ${Math.round(avgRisk)}%.`;
-        }
-      } catch (e) {
-        console.log('Could not fetch route-specific data');
-      }
+    const data = await response.json();
 
-      // Generate insights based on historical patterns
-      const insights = [
-        { icon: "⏱️", label: "Time Impact", value: `${Math.abs(timeDiff)} min ${timeDiff > 0 ? 'saved' : 'difference'}` },
-        { icon: "🎯", label: "Risk Impact", value: `${Math.abs(riskDiff)}% ${riskDiff > 0 ? 'reduction' : 'difference'}` },
-        { icon: "📊", label: "Route Status", value: timeDiff > 0 ? "Optimization available" : "Already optimal" },
-        { icon: "🏷️", label: "Cost Efficiency", value: results.current?.cost || 'R0' }
-      ];
-
-      // Add historical insight if available
-      if (historicalCount > 0) {
-        insights.push({
-          icon: "📚",
-          label: "Historical Data",
-          value: `${historicalCount} simulations analyzed`
-        });
-      }
-
-      // Generate recommendations with historical context
-      const recommendations = [
-        timeDiff > 0 ? `✅ Consider the optimal route to save ${timeDiff} minutes` : "✅ Current route is time-optimal",
-        riskDiff > 0 ? "🛡️ Optimal route has lower risk - recommended for safety" : "✅ Risk levels are balanced",
-        weather.includes('rain') ? "🌧️ Check weather conditions before departure" : "☀️ Weather conditions look favorable"
-      ];
-
-      // Add historical recommendation
-      if (historicalCount > 0) {
-        recommendations.push(`📚 Based on ${historicalCount} previous simulations, this route typically performs ${riskDiff > 0 ? 'better' : 'similarly'}`);
-      }
-
-      // Generate risk factors with historical context
-      const riskFactors = [
-        ...(results.params?.hasAccident ? [{ label: "🚗 Accident reported on route", level: "high" }] : []),
-        ...(results.params?.hasRoadClosure ? [{ label: "🚧 Road closure detected", level: "high" }] : []),
-        ...(results.params?.weather?.includes('rain') ? [{ label: `🌧️ ${results.params.weather.replace('_', ' ')} conditions`, level: "medium" }] : []),
-        ...(results.current?.riskScore > 70 ? [{ label: "⚠️ High risk score", level: "high" }] : []),
-        ...(results.current?.riskScore > 40 && results.current?.riskScore <= 70 ? [{ label: "⚠️ Moderate risk level", level: "medium" }] : []),
-        ...(results.current?.riskScore <= 40 ? [{ label: "✅ Low risk - safe for travel", level: "low" }] : [])
-      ];
-
-      // Add historical risk insight
-      if (historicalCount > 5) {
-        const highRiskCount = await fetch('http://localhost:5000/api/simulations')
-          .then(r => r.json())
-          .then(sims => sims.filter(s => s.current?.riskScore > 70).length);
-        
-        if (highRiskCount > 0) {
-          riskFactors.push({
-            label: `📊 ${highRiskCount} previous simulations had high risk`,
-            level: "medium"
-          });
-        }
-      }
-
-      // Calculate confidence based on historical data
-      let confidence = 75 + Math.floor(Math.random() * 20);
-      if (historicalCount > 10) confidence = Math.min(confidence + 10, 95);
-      if (historicalCount > 20) confidence = Math.min(confidence + 5, 98);
-
-      const analysis = {
-        summary: `AI analysis of ${results.routeName || 'your route'} is complete. ${timeDiff > 0 ? `The optimal route saves ${timeDiff} minutes.` : 'Current route is time-optimal.'} ${riskDiff > 0 ? `Risk is reduced by ${riskDiff}%.` : ''} ${historicalNote}${routeSpecificNote}`,
-        confidence: confidence,
-        insights: insights,
-        recommendations: recommendations,
-        riskFactors: riskFactors,
-        historicalData: historicalCount > 0 ? `${historicalCount} simulations analyzed` : null
-      };
-
-      setAIAnalysis(analysis);
-      setStatusMessage("✅ AI analysis complete!");
-      
-    } catch (error) {
-      console.error('AI Analysis Error:', error);
-      setStatusMessage("❌ Failed to generate AI analysis");
-    } finally {
-      setAIAnalysisLoading(false);
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        data.message ||
+        "AI analysis failed."
+      );
     }
-  }, [aiAnalysisLoading, weather]);
+
+    if (!data.success || !data.analysis) {
+      throw new Error(
+        "The AI server returned an invalid response."
+      );
+    }
+
+    console.log(
+      "🤖 REAL AI ANALYSIS:",
+      data.analysis
+    );
+
+    setAIAnalysis({
+      ...data.analysis,
+
+      historicalData:
+        data.analysis.historicalEvidence ||
+        `${data.historical?.count || 0} historical simulations analyzed`,
+    });
+
+    setAiInitialized(true);
+
+    setStatusMessage(
+      "✅ AI analysis complete!"
+    );
+
+  } catch (error) {
+    console.error(
+      "❌ AI Analysis Error:",
+      error
+    );
+
+    setStatusMessage(
+      `❌ AI analysis failed: ${error.message}`
+    );
+
+    setAIAnalysis(null);
+
+  } finally {
+    setAIAnalysisLoading(false);
+  }
+}, [
+  aiAnalysisLoading,
+  selectedRoute,
+  weather,
+  currentWeather,
+]);
 
   /* ==========================================================
      HANDLE CHAT MESSAGE
   ========================================================== */
 
   const handleChatMessage = useCallback(async (message) => {
-    // Add user message to chat
-    setChatMessages(prev => [...prev, { role: "user", content: message }]);
-    setChatLoading(true);
+  if (!message?.trim() || chatLoading) {
+    return;
+  }
 
-    try {
-      // Check if the question is route-related
-      const routeKeywords = [
-        'route', 'path', 'direction', 'way', 'road', 'highway',
-        'weather', 'rain', 'sunny', 'cloud', 'storm', 'wind', 'fog',
-        'traffic', 'delay', 'congestion', 'jam', 'accident', 'closure',
-        'risk', 'safe', 'safety', 'danger', 'hazard',
-        'time', 'duration', 'minute', 'hour', 'speed',
-        'cost', 'price', 'money', 'fuel', 'toll',
-        'alternative', 'option', 'choice', 'recommend',
-        'optimal', 'best', 'fastest', 'shortest',
-        'simulation', 'result', 'analysis', 'predict',
-        'origin', 'destination', 'start', 'end', 'travel'
-      ];
+  setChatMessages(prev => [
+    ...prev,
+    {
+      role: "user",
+      content: message,
+    },
+  ]);
 
-      const lowerMessage = message.toLowerCase();
-      const isRouteRelated = routeKeywords.some(keyword => lowerMessage.includes(keyword));
+  setChatLoading(true);
 
-      // If not route-related, reject the question
-      if (!isRouteRelated) {
-        setChatMessages(prev => [...prev, {
-          role: "assistant",
-          content: "🚫 I'm a route optimization assistant. I can only help with:\n\n• Route planning and optimization\n• Weather conditions along your route\n• Traffic patterns and delays\n• Risk assessment and safety\n• Time and cost estimates\n• Alternative route suggestions\n\nPlease ask a route-related question!",
-          isError: true
-        }]);
-        setChatLoading(false);
-        return;
+  try {
+    const results = resultsRef.current;
+
+    const selectedRouteData = selectedRoute
+      ? {
+          id: getRouteId(selectedRoute),
+          name: getRouteName(selectedRoute),
+          origin: selectedRoute.origin_name,
+          destination: selectedRoute.destination_name,
+          distance_km: getDistance(selectedRoute),
+          duration_min: getDuration(selectedRoute),
+          estimated_cost: getCost(selectedRoute),
+        }
+      : null;
+
+    const simulationData = results
+      ? {
+          riskScore:
+            results.current?.riskScore ?? 0,
+
+          duration:
+            results.current?.duration ?? 0,
+
+          cost:
+            results.current?.cost ?? "R0",
+
+          delayMinutes:
+            results.current?.delay ?? 0,
+
+          weather:
+            results.params?.weather ?? weather,
+
+          accident:
+            results.params?.accident ?? false,
+
+          roadClosure:
+            results.params?.roadClosure ?? false,
+
+          recommendation:
+            results.recommendation || "",
+
+          optimal:
+            results.optimal || null,
+
+          alternatives:
+            results.alternatives || [],
+        }
+      : null;
+
+    const response = await fetch(
+      "http://localhost:5050/api/ai/ask",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+        },
+
+        body: JSON.stringify({
+          question: message.trim(),
+
+          route: selectedRouteData,
+
+          simulation: simulationData,
+
+          weather: currentWeather,
+
+          traffic:
+            results?.params?.realTraffic ||
+            null,
+        }),
       }
+    );
 
-      // If route-related, generate a response
-      await new Promise(resolve => setTimeout(resolve, 800));
+    const data = await response.json();
 
-      // Get context for the response
-      const routeName = selectedRoute ? getRouteName(selectedRoute) : "No route selected";
-      const hasResults = !!resultsRef.current;
-      const results = resultsRef.current;
-      const delayMinutes = delay || 0;
-      const weatherCondition = weather || "unknown";
-      const hasAccidentFlag = hasAccident;
-      const hasClosureFlag = hasRoadClosure;
-
-      // Build response based on keywords
-      let response = "";
-
-      if (lowerMessage.includes("weather") || lowerMessage.includes("rain") || lowerMessage.includes("sunny")) {
-        const weatherDisplay = weatherCondition.replace("_", " ");
-        response = `🌤️ Current weather condition: ${weatherDisplay}.\n\n`;
-        if (weatherCondition.includes("rain")) {
-          response += "⚠️ Rain detected! I recommend:\n• Reducing speed by 10-15%\n• Maintaining safe following distance\n• Allowing extra travel time\n";
-        } else if (weatherCondition === "sunny") {
-          response += "☀️ Clear skies! Great conditions for travel.\n• Visibility is excellent\n• Road conditions are optimal\n";
-        } else {
-          response += `Weather conditions are ${weatherDisplay}. Drive accordingly.\n`;
-        }
-        if (currentWeather?.summary?.recommendation) {
-          response += `\n📌 ${currentWeather.summary.recommendation}`;
-        }
-      }
-
-      else if (lowerMessage.includes("traffic") || lowerMessage.includes("delay") || lowerMessage.includes("congestion")) {
-        response = `🚦 Traffic analysis for ${routeName}:\n\n`;
-        if (delayMinutes > 30) {
-          response += `⚠️ Significant delays expected: ${delayMinutes} minutes\n`;
-          response += "• Consider leaving earlier\n• Alternative route recommended\n• Check real-time traffic updates\n";
-        } else if (delayMinutes > 10) {
-          response += `⏱️ Moderate delays: ${delayMinutes} minutes\n`;
-          response += "• Allow extra time\n• Monitor traffic conditions\n";
-        } else {
-          response += "✅ Clear traffic conditions\n• No major delays expected\n• Smooth travel ahead\n";
-        }
-        if (hasAccidentFlag) {
-          response += "\n🚗 ACCIDENT REPORTED: Avoid affected area if possible.\n";
-        }
-        if (hasClosureFlag) {
-          response += "\n🚧 ROAD CLOSURE: Take alternative route immediately!\n";
-        }
-      }
-
-      else if (lowerMessage.includes("risk") || lowerMessage.includes("safe") || lowerMessage.includes("danger")) {
-        const riskScore = results?.current?.riskScore || 0;
-        response = `📊 Risk assessment for ${routeName}:\n\n`;
-        response += `Current risk score: ${riskScore}%\n`;
-        if (riskScore > 70) {
-          response += "🔴 HIGH RISK - I strongly recommend:\n• Taking the optimal route\n• Checking weather conditions\n• Allowing extra travel time\n";
-        } else if (riskScore > 40) {
-          response += "🟡 MODERATE RISK - Recommendations:\n• Take standard precautions\n• Stay updated on conditions\n• Consider the optimal route\n";
-        } else {
-          response += "🟢 LOW RISK - Safe for travel\n• Continue with current route\n• Standard safety measures apply\n";
-        }
-        if (riskScore > 40) {
-          response += `\n💡 The optimal route reduces risk by ${Math.max(riskScore - (results?.optimal?.riskScore || 0), 0)}%`;
-        }
-      }
-
-      else if (lowerMessage.includes("route") || lowerMessage.includes("path") || lowerMessage.includes("way") || lowerMessage.includes("optimal") || lowerMessage.includes("best")) {
-        response = `📍 Route analysis for ${routeName}:\n\n`;
-        if (hasResults) {
-          const currentDur = results?.current?.duration || 0;
-          const optimalDur = results?.optimal?.duration || 0;
-          const timeSave = Math.max(currentDur - optimalDur, 0);
-          const currentRisk = results?.current?.riskScore || 0;
-          const optimalRisk = results?.optimal?.riskScore || 0;
-          const riskReduce = Math.max(currentRisk - optimalRisk, 0);
-
-          response += `Current route: ${currentDur} minutes\n`;
-          response += `Optimal route: ${optimalDur} minutes\n`;
-          if (timeSave > 0) {
-            response += `✅ You could save ${timeSave} minutes by taking the optimal route\n`;
-          }
-          if (riskReduce > 0) {
-            response += `🛡️ Risk reduced by ${riskReduce}% with optimal route\n`;
-          }
-          response += `\n💡 Recommendation: ${results?.recommendation || "All clear!"}\n`;
-
-          if (results?.alternatives?.length > 0) {
-            response += `\n🔄 ${results.alternatives.length} alternative routes available\n`;
-            response += `• ${results.alternatives[0]?.displayName || "Alternative 1"}: ${results.alternatives[0]?.duration || 0} min\n`;
-            if (results.alternatives[1]) {
-              response += `• ${results.alternatives[1]?.displayName || "Alternative 2"}: ${results.alternatives[1]?.duration || 0} min\n`;
-            }
-          }
-        } else {
-          response += `No simulation results yet for ${routeName}.\n`;
-          response += "💡 Run a simulation to get AI-powered route optimization!\n";
-        }
-      }
-
-      else if (lowerMessage.includes("time") || lowerMessage.includes("duration") || lowerMessage.includes("how long")) {
-        if (hasResults) {
-          const currentDur = results?.current?.duration || 0;
-          const optimalDur = results?.optimal?.duration || 0;
-          response = `⏱️ Travel time for ${routeName}:\n\n`;
-          response += `Current route: ${currentDur} minutes\n`;
-          response += `Optimal route: ${optimalDur} minutes\n`;
-          if (currentDur > optimalDur) {
-            response += `✅ You could save ${currentDur - optimalDur} minutes with optimal route\n`;
-          }
-          if (delayMinutes > 0) {
-            response += `⚠️ ${delayMinutes} minutes of additional delay expected\n`;
-          }
-        } else {
-          const baseDur = selectedRoute ? getDuration(selectedRoute) : 60;
-          response = `⏱️ Estimated travel time for ${routeName}:\n\n`;
-          response += `Base duration: ${baseDur} minutes\n`;
-          if (delayMinutes > 0) {
-            response += `⚠️ With ${delayMinutes} minutes of delay: ${baseDur + delayMinutes} minutes total\n`;
-          }
-          response += "\n💡 Run a simulation for more accurate time estimates with real conditions!";
-        }
-      }
-
-      else if (lowerMessage.includes("learn") || lowerMessage.includes("history") || lowerMessage.includes("past") || lowerMessage.includes("previous")) {
-        const simCount = localSavedSimulations.length;
-        response = `📚 AI Learning Summary:\n\n`;
-        response += `• ${simCount} simulations learned from database\n`;
-        if (simCount > 0) {
-          response += `• ${simCount > 1 ? 'Multiple' : 'One'} route patterns analyzed\n`;
-          response += `• Weather patterns: ${Object.keys(aiService?.learnedPatterns?.weatherPatterns || {}).length || 'Analyzing...'}\n`;
-          response += `\n💡 The more simulations you run, the smarter I become!\n`;
-          response += `🔹 ${simCount < 5 ? 'Run more simulations for better insights' : '✓ Good amount of data collected'}\n`;
-        } else {
-          response += `• No simulations yet! Run a simulation to start building history.\n`;
-        }
-        if (aiService?.simulationHistory?.length > 0) {
-          response += `\n🧠 Currently learning from ${aiService.simulationHistory.length} previous simulations.`;
-        }
-      }
-
-      else {
-        // Generic helpful response
-        response = `🤖 I can help you with route-related questions!\n\n`;
-        response += `I can tell you about:\n`;
-        response += `• 🌤️ Weather conditions (ask about weather/rain/sunny)\n`;
-        response += `• 🚦 Traffic and delays (ask about traffic/delay/congestion)\n`;
-        response += `• 📊 Risk assessment (ask about risk/safe/danger)\n`;
-        response += `• 🗺️ Route optimization (ask about route/path/best/optimal)\n`;
-        response += `• ⏱️ Time estimates (ask about time/duration/how long)\n`;
-        response += `• 📚 Learning history (ask about learn/history/past)\n\n`;
-        response += `What would you like to know about ${routeName}?`;
-      }
-
-      // Add response with context about simulations
-      if (localSavedSimulations.length > 0 && !response.includes("simulations learned")) {
-        response += `\n\n📊 Based on ${localSavedSimulations.length} previous simulations.`;
-      }
-
-      setChatMessages(prev => [...prev, {
-        role: "assistant",
-        content: response
-      }]);
-
-    } catch (error) {
-      console.error("Chat error:", error);
-      setChatMessages(prev => [...prev, {
-        role: "assistant",
-        content: "❌ Sorry, I encountered an error. Please try again.",
-        isError: true
-      }]);
-    } finally {
-      setChatLoading(false);
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        data.message ||
+        "Ask AI failed."
+      );
     }
-  }, [selectedRoute, weather, delay, hasAccident, hasRoadClosure, currentWeather, localSavedSimulations, resultsRef.current]);
+
+    if (!data.success) {
+      throw new Error(
+        data.error ||
+        "AI did not return a successful response."
+      );
+    }
+
+    setChatMessages(prev => [
+      ...prev,
+      {
+        role: "assistant",
+        content:
+          data.answer ||
+          "I could not generate an answer.",
+      },
+    ]);
+
+  } catch (error) {
+    console.error(
+      "❌ Ask AI error:",
+      error
+    );
+
+    setChatMessages(prev => [
+      ...prev,
+      {
+        role: "assistant",
+        content:
+          `❌ AI error: ${error.message}`,
+        isError: true,
+      },
+    ]);
+
+  } finally {
+    setChatLoading(false);
+  }
+}, [
+  selectedRoute,
+  weather,
+  currentWeather,
+  chatLoading,
+]);
 
   /* ==========================================================
      RUN SIMULATION
