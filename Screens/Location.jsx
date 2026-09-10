@@ -629,16 +629,12 @@ export default function LocationScreen({ route }) {
       const supabaseAnonKey = 'sb_publishable_iFcMrb7-9eJ86p0KU2PWyg_UZ77LRFF';
 
       console.log('📸 Starting OCR request...');
-      console.log('🖼️ Image URI:', imageUri);
 
-      console.log('📖 Reading image as base64...');
       const base64 = await FileSystem.readAsStringAsync(imageUri, {
         encoding: 'base64',
       });
 
       const filename = imageUri.split('/').pop() || 'receipt.jpg';
-
-      console.log('📤 Sending to Edge Function:', `${supabaseUrl}/functions/v1/easyocr-proxy`);
 
       const response = await fetch(`${supabaseUrl}/functions/v1/easyocr-proxy`, {
         method: 'POST',
@@ -652,16 +648,12 @@ export default function LocationScreen({ route }) {
         }),
       });
 
-      console.log('📥 Edge Function response status:', response.status);
-
       const responseText = await response.text();
-      console.log('📄 Response text (first 300 chars):', responseText.substring(0, 300));
 
       let data;
       try {
         data = JSON.parse(responseText);
       } catch (e) {
-        console.error('❌ Failed to parse JSON:', e);
         throw new Error('Invalid response from server');
       }
 
@@ -670,7 +662,6 @@ export default function LocationScreen({ route }) {
       }
 
       const rawText = data.text || '';
-      console.log('📝 OCR Raw Text (first 300 chars):', rawText.substring(0, 300));
 
       const patterns = [
         /(?:total|amount|grand\s*total|amount\s*due|balance\s*due|total\s*amount|total\s*due|subtotal|total\s*including\s*vat)[:\s]*R?\s*([\d,]+[.,]\d{2})/i,
@@ -691,14 +682,11 @@ export default function LocationScreen({ route }) {
       const taxMatch = rawText.match(/(?:vat|tax)[:\s]*R?\s*([\d,]+[.,]\d{2})/i);
       let tax = null;
       if (taxMatch && taxMatch[1]) {
-        const cleanTax = taxMatch[1].replace(/,/g, '').replace(/,/g, '.');
-        tax = parseFloat(cleanTax);
+        tax = parseFloat(taxMatch[1].replace(/,/g, '').replace(/,/g, '.'));
       }
 
       const dateMatch = rawText.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
       const date = dateMatch ? dateMatch[1] : null;
-
-      console.log('💰 Extracted total:', total);
 
       updateState({ isProcessingOCR: false });
 
@@ -736,15 +724,12 @@ export default function LocationScreen({ route }) {
         });
 
       if (error) {
-        console.error('Upload error:', error);
         Alert.alert('Upload Error', error.message);
         return null;
       }
 
-      console.log('Receipt uploaded:', data.path);
       return data.path;
     } catch (error) {
-      console.error('Upload failed:', error);
       Alert.alert('Error', 'Failed to upload receipt.');
       return null;
     }
@@ -773,7 +758,6 @@ export default function LocationScreen({ route }) {
       showOCRConfirmation: false,
       amountInput: '',
     });
-    console.log('🔄 Receipt state reset - ready for new scan');
   }, [updateState]);
 
   const handleSubmitReceipt = useCallback(async (localUri, parsedAmount) => {
@@ -781,9 +765,7 @@ export default function LocationScreen({ route }) {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) userId = user.id;
-    } catch (e) {
-      console.log('Using temp user ID (no auth)');
-    }
+    } catch (e) {}
 
     const receiptPath = await uploadReceiptToSupabase(localUri, userId);
     if (!receiptPath) {
@@ -796,7 +778,7 @@ export default function LocationScreen({ route }) {
     const newFuelPercent = Math.min(fuelPercent + fuelAdded, 100);
 
     try {
-      const { data: receiptData, error: dbError } = await supabase
+      const { error: dbError } = await supabase
         .from('receipts')
         .insert({
           user_id: userId,
@@ -809,14 +791,10 @@ export default function LocationScreen({ route }) {
         .select();
 
       if (dbError) {
-        console.error('Database error:', dbError);
         Alert.alert('Database Error', 'Receipt image uploaded but failed to save record.');
         return;
       }
-
-      console.log('✅ Receipt saved to database:', receiptData);
     } catch (dbError) {
-      console.error('Database error:', dbError);
       Alert.alert('Database Error', 'Failed to save receipt record.');
       return;
     }
@@ -899,35 +877,19 @@ export default function LocationScreen({ route }) {
             '💰 Amount Detected',
             `EasyOCR found R${ocrResult.total.toFixed(2)} on your receipt.`,
             [
-              {
-                text: '✅ Use This',
-                onPress: () => { showFuelAmountInput(localUri, ocrResult.total); },
-              },
-              {
-                text: '✏️ Enter Manually',
-                onPress: () => { showFuelAmountInput(localUri, null); },
-                style: 'cancel',
-              },
+              { text: '✅ Use This', onPress: () => showFuelAmountInput(localUri, ocrResult.total) },
+              { text: '✏️ Enter Manually', onPress: () => showFuelAmountInput(localUri, null), style: 'cancel' },
             ]
           );
         } else {
-          if (ocrResult.error) {
-            console.log('OCR Error:', ocrResult.error);
-          }
           Alert.alert(
             '✏️ Manual Entry Required',
             'Could not automatically detect the amount. Please enter it manually.',
-            [
-              {
-                text: 'OK',
-                onPress: () => { showFuelAmountInput(localUri, null); },
-              },
-            ]
+            [{ text: 'OK', onPress: () => showFuelAmountInput(localUri, null) }]
           );
         }
       }
     } catch (error) {
-      console.error('Camera error:', error);
       Alert.alert('Error', 'Failed to open camera.');
     }
   }, [requestCameraPermission, extractReceiptWithEasyOCR, showFuelAmountInput, updateState]);
@@ -961,35 +923,19 @@ export default function LocationScreen({ route }) {
             '💰 Amount Detected',
             `EasyOCR found R${ocrResult.total.toFixed(2)} on your receipt.`,
             [
-              {
-                text: '✅ Use This',
-                onPress: () => { showFuelAmountInput(localUri, ocrResult.total); },
-              },
-              {
-                text: '✏️ Enter Manually',
-                onPress: () => { showFuelAmountInput(localUri, null); },
-                style: 'cancel',
-              },
+              { text: '✅ Use This', onPress: () => showFuelAmountInput(localUri, ocrResult.total) },
+              { text: '✏️ Enter Manually', onPress: () => showFuelAmountInput(localUri, null), style: 'cancel' },
             ]
           );
         } else {
-          if (ocrResult.error) {
-            console.log('OCR Error:', ocrResult.error);
-          }
           Alert.alert(
             '✏️ Manual Entry Required',
             'Could not automatically detect the amount. Please enter it manually.',
-            [
-              {
-                text: 'OK',
-                onPress: () => { showFuelAmountInput(localUri, null); },
-              },
-            ]
+            [{ text: 'OK', onPress: () => showFuelAmountInput(localUri, null) }]
           );
         }
       }
     } catch (error) {
-      console.error('Gallery error:', error);
       Alert.alert('Error', 'Failed to open gallery.');
     }
   }, [extractReceiptWithEasyOCR, showFuelAmountInput, updateState]);
@@ -1091,7 +1037,6 @@ export default function LocationScreen({ route }) {
   ).current;
 
   useEffect(() => {
-    console.log('[location screen]', !!user);
     getLocation();
     return () => {
       if (notificationTimeoutRef.current) {
@@ -1102,7 +1047,6 @@ export default function LocationScreen({ route }) {
 
   useEffect(() => {
     if (screenReady && location && !tripLoaded && !tripLoading) {
-      console.log("Screen ready, loading trip data...");
       loadTrip();
     }
   }, [screenReady, location, tripLoaded, tripLoading, loadTrip]);
@@ -1188,7 +1132,7 @@ export default function LocationScreen({ route }) {
   );
 
   // ============================================
-  // AMOUNT INPUT MODAL
+  // AMOUNT INPUT MODAL (restyled)
   // ============================================
   const renderAmountInputModal = () => (
     <Modal
@@ -1200,71 +1144,109 @@ export default function LocationScreen({ route }) {
         updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null });
       }}
     >
-      <View style={styles.modalContainer}>
-        <View style={[styles.modalContent, { padding: 20, maxHeight: height * 0.6 }]}>
-          <Text style={styles.modalTitle}>Enter Fuel Amount</Text>
+      <View style={styles.receiptModalOverlay}>
+        <View style={styles.receiptModalSheet}>
+          <View style={styles.receiptModalHandleWrap}>
+            <View style={styles.receiptModalHandle} />
+          </View>
 
-          <Text style={styles.modalSubtitle}>
-            {isProcessingOCR ? (
-              '⏳ Processing receipt with OCR...'
-            ) : autoDetectedAmount ? (
-              `🤖 EasyOCR detected R${autoDetectedAmount.toFixed(2)}. Please confirm or adjust:`
-            ) : (
-              '📝 Please enter the total amount spent on fuel (in ZAR):'
-            )}
-          </Text>
-
-          {pendingReceiptUri && (
-            <View style={styles.receiptImageContainer}>
-              <Image source={{ uri: pendingReceiptUri }} style={styles.receiptImage} />
+          <View style={styles.receiptModalHeader}>
+            <View style={styles.receiptModalHeaderIcon}>
+              <Ionicons name="cash-outline" size={22} color="#fff" />
             </View>
-          )}
-
-          {isProcessingOCR && (
-            <View style={styles.ocrLoadingContainer}>
-              <ActivityIndicator size="large" color="#007bff" />
-              <Text style={styles.ocrLoadingText}>Analyzing receipt...</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.receiptModalTitle}>Enter Fuel Amount</Text>
+              <Text style={styles.receiptModalSubtitleSmall}>
+                {isProcessingOCR
+                  ? "Processing receipt..."
+                  : autoDetectedAmount
+                  ? "Confirm or adjust detected amount"
+                  : "Enter the amount spent on fuel"}
+              </Text>
             </View>
-          )}
+          </View>
 
-          {!isProcessingOCR && (
-            <>
-              <TextInput
-                style={styles.amountInput}
-                placeholder="Enter amount in ZAR"
-                keyboardType="numeric"
-                value={amountInput}
-                onChangeText={(text) => updateState({ amountInput: text })}
-                autoFocus={true}
-              />
+          <ScrollView
+            style={styles.receiptModalBody}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.receiptModalSectionTitle}>
+              {isProcessingOCR
+                ? "⏳ Analyzing receipt..."
+                : autoDetectedAmount
+                ? `🤖 EasyOCR detected R${autoDetectedAmount.toFixed(2)}`
+                : "📝 Enter total amount (ZAR)"}
+            </Text>
 
-              <View style={[styles.modalButtonContainer, { flexDirection: 'row' }]}>
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: '#999', flex: 1, marginRight: 8 }]}
-                  onPress={() => {
-                    resetReceiptState();
-                    updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null });
-                  }}
-                >
-                  <Text style={styles.modalButtonText}>Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: '#007bff', flex: 1, marginLeft: 8 }]}
-                  onPress={handleFuelModalSubmit}
-                >
-                  <Text style={styles.modalButtonText}>Submit</Text>
-                </TouchableOpacity>
+            {pendingReceiptUri && (
+              <View style={styles.receiptPreviewCard}>
+                <Image
+                  source={{ uri: pendingReceiptUri }}
+                  style={styles.receiptPreviewImage}
+                />
               </View>
-            </>
-          )}
+            )}
+
+            {isProcessingOCR && (
+              <View style={styles.receiptLoadingCard}>
+                <ActivityIndicator size="large" color="#0A1F44" />
+                <Text style={styles.receiptLoadingText}>Reading your receipt...</Text>
+              </View>
+            )}
+
+            {!isProcessingOCR && (
+              <>
+                <View style={styles.receiptInputCard}>
+                  <Text style={styles.receiptInputLabel}>Amount (ZAR)</Text>
+                  <View style={styles.receiptInputWrapper}>
+                    <Text style={styles.receiptInputPrefix}>R</Text>
+                    <TextInput
+                      style={styles.receiptInput}
+                      placeholder="0.00"
+                      placeholderTextColor="#9CA3AF"
+                      keyboardType="numeric"
+                      value={amountInput}
+                      onChangeText={(text) => updateState({ amountInput: text })}
+                      autoFocus={true}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.receiptModalActions}>
+                  <TouchableOpacity
+                    style={[styles.receiptModalBtn, styles.receiptModalBtnCancel]}
+                    onPress={() => {
+                      resetReceiptState();
+                      updateState({
+                        showAmountModal: false,
+                        amountInput: '',
+                        pendingReceiptUri: null,
+                      });
+                    }}
+                  >
+                    <Ionicons name="close-outline" size={18} color="#0A1F44" />
+                    <Text style={styles.receiptModalBtnTextCancel}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.receiptModalBtn, styles.receiptModalBtnPrimary]}
+                    onPress={handleFuelModalSubmit}
+                  >
+                    <Ionicons name="checkmark-outline" size={18} color="#fff" />
+                    <Text style={styles.receiptModalBtnTextPrimary}>Submit</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </ScrollView>
         </View>
       </View>
     </Modal>
   );
 
   // ============================================
-  // RECEIPT MODAL
+  // RECEIPT MODAL (restyled)
   // ============================================
   const renderReceiptModal = () => (
     <Modal
@@ -1274,9 +1256,9 @@ export default function LocationScreen({ route }) {
       onRequestClose={() => {
         if (!receiptSubmitted && waitingForReceipt) {
           Alert.alert(
-            'Scan Receipt',
-            'Please scan your receipt to continue.',
-            [{ text: 'OK', style: 'default' }]
+            "Scan Receipt",
+            "Please scan your receipt to continue.",
+            [{ text: "OK", style: "default" }]
           );
         } else {
           resetReceiptState();
@@ -1284,70 +1266,144 @@ export default function LocationScreen({ route }) {
         }
       }}
     >
-      <View style={styles.modalContainer}>
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Scan Fuel Receipt</Text>
+      <View style={styles.receiptModalOverlay}>
+        <View style={styles.receiptModalSheet}>
+          <View style={styles.receiptModalHandleWrap}>
+            <View style={styles.receiptModalHandle} />
+          </View>
 
-          <Text style={styles.modalSubtitle}>
-            {receiptSubmitted ? '✅ Receipt submitted successfully!' : '📸 Please scan or upload your fuel receipt'}
-          </Text>
+          <View style={styles.receiptModalHeader}>
+            <View style={styles.receiptModalHeaderIcon}>
+              <Ionicons
+                name={receiptSubmitted ? "checkmark-circle" : "receipt-outline"}
+                size={22}
+                color="#fff"
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.receiptModalTitle}>
+                {receiptSubmitted ? "Receipt Submitted" : "Scan Fuel Receipt"}
+              </Text>
+              <Text style={styles.receiptModalSubtitleSmall}>
+                {receiptSubmitted
+                  ? "Your fuel level has been updated"
+                  : "Snap or upload your fuel receipt"}
+              </Text>
+            </View>
+          </View>
 
-          {receiptImage ? (
-            <View style={styles.receiptImageContainer}>
-              <Image source={{ uri: receiptImage }} style={styles.receiptImage} />
-              {receiptSubmitted && (
-                <View style={styles.receiptSubmittedBadge}>
-                  <Text style={styles.receiptSubmittedText}>✅ Submitted</Text>
+          <ScrollView
+            style={styles.receiptModalBody}
+            contentContainerStyle={{ paddingBottom: 24 }}
+            showsVerticalScrollIndicator={false}
+          >
+            {receiptImage ? (
+              <View style={styles.receiptPreviewCard}>
+                <Image
+                  source={{ uri: receiptImage }}
+                  style={styles.receiptPreviewImage}
+                />
+                {receiptSubmitted && (
+                  <View style={styles.receiptSubmittedBadge}>
+                    <Ionicons name="checkmark-circle" size={14} color="#fff" />
+                    <Text style={styles.receiptSubmittedBadgeText}>Submitted</Text>
+                  </View>
+                )}
+              </View>
+            ) : (
+              <View style={styles.receiptEmptyCard}>
+                <Ionicons name="document-text-outline" size={54} color="#9CA3AF" />
+                <Text style={styles.receiptEmptyTitle}>No receipt yet</Text>
+                <Text style={styles.receiptEmptySubtitle}>
+                  Take a photo or upload one from your gallery
+                </Text>
+              </View>
+            )}
+
+            {isProcessingOCR && (
+              <View style={styles.receiptLoadingCard}>
+                <ActivityIndicator size="large" color="#0A1F44" />
+                <Text style={styles.receiptLoadingText}>
+                  Analyzing receipt with AI...
+                </Text>
+              </View>
+            )}
+
+            {receiptAmount && receiptSubmitted && (
+              <View style={styles.receiptSuccessCard}>
+                <Text style={styles.receiptSuccessTitle}>✓ Receipt Recorded</Text>
+                <View style={styles.receiptSuccessRow}>
+                  <Text style={styles.receiptSuccessLabel}>Amount</Text>
+                  <Text style={styles.receiptSuccessValue}>R{receiptAmount}</Text>
                 </View>
-              )}
-            </View>
-          ) : (
-            <View style={styles.receiptPlaceholder}>
-              <Ionicons name="document-text-outline" size={60} color="#999" />
-              <Text style={styles.receiptPlaceholderText}>No receipt scanned yet</Text>
-            </View>
-          )}
+                <View style={styles.receiptSuccessRow}>
+                  <Text style={styles.receiptSuccessLabel}>Fuel Purchased</Text>
+                  <Text style={styles.receiptSuccessValue}>
+                    {fuelPurchased.toFixed(1)} L
+                  </Text>
+                </View>
+                <View style={styles.receiptSuccessRow}>
+                  <Text style={styles.receiptSuccessLabel}>New Fuel Level</Text>
+                  <Text style={styles.receiptSuccessValue}>
+                    {fuelPercent.toFixed(1)}%
+                  </Text>
+                </View>
+              </View>
+            )}
 
-          {isProcessingOCR && (
-            <View style={styles.ocrLoadingContainer}>
-              <ActivityIndicator size="large" color="#007bff" />
-              <Text style={styles.ocrLoadingText}>Analyzing receipt with AI...</Text>
-            </View>
-          )}
-
-          {receiptAmount && receiptSubmitted && (
-            <View style={styles.receiptDetails}>
-              <Text style={styles.receiptDetailText}>Amount: R{receiptAmount}</Text>
-              <Text style={styles.receiptDetailText}>Fuel Purchased: {fuelPurchased.toFixed(1)}L</Text>
-              <Text style={styles.receiptDetailText}>New Fuel Level: {fuelPercent.toFixed(1)}%</Text>
-            </View>
-          )}
-
-          <View style={[styles.modalButtonContainer, { flexDirection: 'row' }]}>
             {!receiptSubmitted ? (
               <>
                 <TouchableOpacity
-                  style={[styles.modalButton, styles.scanButton, { flex: 1 }]}
+                  style={[styles.receiptModalBtn, styles.receiptModalBtnPrimary, { marginBottom: 10 }]}
                   onPress={scanReceipt}
                   disabled={isProcessingOCR}
                 >
                   <Ionicons name="camera-outline" size={20} color="#fff" />
-                  <Text style={styles.modalButtonText}>Scan Receipt</Text>
+                  <Text style={styles.receiptModalBtnTextPrimary}>Scan Receipt</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.modalButton, styles.uploadButton, { flex: 1 }]}
+                  style={[styles.receiptModalBtn, styles.receiptModalBtnSecondary, { marginBottom: 10 }]}
                   onPress={pickReceiptImage}
                   disabled={isProcessingOCR}
                 >
-                  <Ionicons name="images-outline" size={20} color="#fff" />
-                  <Text style={styles.modalButtonText}>Upload Photo</Text>
+                  <Ionicons name="images-outline" size={20} color="#0A1F44" />
+                  <Text style={styles.receiptModalBtnTextCancel}>
+                    Upload from Gallery
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.receiptSkipBtn}
+                  onPress={() => {
+                    Alert.alert(
+                      "Skip Receipt",
+                      "Are you sure you want to skip scanning the receipt?",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Skip",
+                          onPress: () => {
+                            resetReceiptState();
+                            updateState({
+                              showReceiptModal: false,
+                              waitingForReceipt: false,
+                              isAtFuelStation: false,
+                            });
+                          },
+                        },
+                      ]
+                    );
+                  }}
+                  disabled={isProcessingOCR}
+                >
+                  <Text style={styles.receiptSkipBtnText}>Skip for now</Text>
                 </TouchableOpacity>
               </>
             ) : (
               <>
                 <TouchableOpacity
-                  style={[styles.modalButton, styles.continueButton, { flex: 1 }]}
+                  style={[styles.receiptModalBtn, styles.receiptModalBtnPrimary, { marginBottom: 10 }]}
                   onPress={() => {
                     resetReceiptState();
                     updateState({
@@ -1355,55 +1411,28 @@ export default function LocationScreen({ route }) {
                       waitingForReceipt: false,
                       isAtFuelStation: false,
                     });
-                    showNotification('info', 'Ready for next receipt', 1500);
+                    showNotification("info", "Ready for next receipt", 1500);
                   }}
                 >
                   <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
-                  <Text style={styles.modalButtonText}>Continue</Text>
+                  <Text style={styles.receiptModalBtnTextPrimary}>Continue</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.modalButton, styles.scanNewButton, { flex: 1 }]}
+                  style={[styles.receiptModalBtn, styles.receiptModalBtnSecondary]}
                   onPress={() => {
                     resetReceiptState();
-                    showNotification('info', '📸 Ready to scan a new receipt', 1500);
+                    showNotification("info", "📸 Ready to scan a new receipt", 1500);
                   }}
                 >
-                  <Ionicons name="camera-outline" size={20} color="#fff" />
-                  <Text style={styles.modalButtonText}>Scan New</Text>
+                  <Ionicons name="camera-outline" size={20} color="#0A1F44" />
+                  <Text style={styles.receiptModalBtnTextCancel}>
+                    Scan New Receipt
+                  </Text>
                 </TouchableOpacity>
               </>
             )}
-          </View>
-
-          {!receiptSubmitted && (
-            <TouchableOpacity
-              style={styles.skipButton}
-              onPress={() => {
-                Alert.alert(
-                  'Skip Receipt',
-                  'Are you sure you want to skip scanning the receipt?',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: 'Skip',
-                      onPress: () => {
-                        resetReceiptState();
-                        updateState({
-                          showReceiptModal: false,
-                          waitingForReceipt: false,
-                          isAtFuelStation: false,
-                        });
-                      },
-                    },
-                  ]
-                );
-              }}
-              disabled={isProcessingOCR}
-            >
-              <Text style={styles.skipButtonText}>Skip for now</Text>
-            </TouchableOpacity>
-          )}
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -1471,113 +1500,133 @@ export default function LocationScreen({ route }) {
     </Modal>
   );
 
-const renderMap = () => (
-  <View
-    style={[
-      styles.mapContainer,
-      fullMap && styles.mapContainerFull,
-    ]}
-  >
-    <MapView
-      ref={mapRef}
-      style={styles.map}
-      initialRegion={{
-        latitude: Number(start?.latitude ?? location?.latitude ?? -26.2041),
-        longitude: Number(start?.longitude ?? location?.longitude ?? 28.0473),
-        latitudeDelta: 0.05,
-        longitudeDelta: 0.05,
-      }}
-      showsUserLocation={false}
-      showsCompass
-    >
-      {start && (
-        <Marker
-          coordinate={{
-            latitude: Number(start.latitude),
-            longitude: Number(start.longitude),
-          }}
-          title="Start"
-          description={startAddress}
-          pinColor="green"
-        />
+  const renderMap = () => (
+    <View style={fullMap ? styles.mapContainerFull : styles.mapContainer}>
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        initialRegion={{
+          latitude: Number(start?.latitude ?? location?.latitude ?? -26.2041),
+          longitude: Number(start?.longitude ?? location?.longitude ?? 28.0473),
+          latitudeDelta: 0.05,
+          longitudeDelta: 0.05,
+        }}
+        showsUserLocation={false}
+        showsCompass
+      >
+        {start && (
+          <Marker
+            coordinate={{
+              latitude: Number(start.latitude),
+              longitude: Number(start.longitude),
+            }}
+            title="Start"
+            description={startAddress}
+            pinColor="green"
+          />
+        )}
+
+        {stops.map((point, index) => (
+          <Marker
+            key={`stop-${index}`}
+            coordinate={{
+              latitude: Number(point.latitude),
+              longitude: Number(point.longitude),
+            }}
+            title={`Stop ${index + 1}`}
+            description={stopAddresses[index] || ""}
+            pinColor="orange"
+          />
+        ))}
+
+        {routeCoords.length > 0 && (
+          <Polyline
+            coordinates={routeCoords.map(point => ({
+              latitude: Number(point.latitude),
+              longitude: Number(point.longitude),
+            }))}
+            strokeWidth={5}
+            strokeColor="#ff2d2d"
+          />
+        )}
+      </MapView>
+
+      {routeLoading && (
+        <View style={styles.mapOverlay}>
+          <ActivityIndicator size="small" color="#007bff" />
+          <Text style={styles.overlayText}>Building route...</Text>
+        </View>
       )}
 
-      {stops.map((point, index) => (
-        <Marker
-          key={`stop-${index}`}
-          coordinate={{
-            latitude: Number(point.latitude),
-            longitude: Number(point.longitude),
-          }}
-          title={`Stop ${index + 1}`}
-          description={stopAddresses[index] || ""}
-          pinColor="orange"
-        />
-      ))}
-
-      {routeCoords.length > 0 && (
-        <Polyline
-          coordinates={routeCoords.map(point => ({
-            latitude: Number(point.latitude),
-            longitude: Number(point.longitude),
-          }))}
-          strokeWidth={5}
-          strokeColor="#ff2d2d"
-        />
+      {searchingStations && (
+        <View style={styles.mapOverlay}>
+          <ActivityIndicator size="small" color="#007bff" />
+          <Text style={styles.overlayText}>
+            Finding fuel stations along route...
+          </Text>
+        </View>
       )}
-    </MapView>
 
-    {routeLoading && (
-      <View style={styles.mapOverlay}>
-        <ActivityIndicator size="small" color="#007bff" />
-        <Text style={styles.overlayText}>Building route...</Text>
-      </View>
-    )}
+      {fuelWarning && (
+        <View style={styles.fuelWarningOverlay}>
+          <Ionicons name="warning-outline" size={24} color="#fff" />
+          <Text style={styles.fuelWarningText}>Low Fuel!</Text>
+        </View>
+      )}
 
-    {searchingStations && (
-      <View style={styles.mapOverlay}>
-        <ActivityIndicator size="small" color="#007bff" />
-        <Text style={styles.overlayText}>
-          Finding fuel stations along route...
-        </Text>
-      </View>
-    )}
+      {fullMap && (
+        <>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => updateState({ fullMap: false })}
+          >
+            <Ionicons name="arrow-back-outline" size={24} color="#fff" />
+          </TouchableOpacity>
 
-    {fuelWarning && (
-      <View style={styles.fuelWarningOverlay}>
-        <Ionicons name="warning-outline" size={24} color="#fff" />
-        <Text style={styles.fuelWarningText}>Low Fuel!</Text>
-      </View>
-    )}
+          <TouchableOpacity
+            style={styles.centerButton}
+            onPress={() => {
+              if (location && mapRef.current) {
+                mapRef.current.animateToRegion({
+                  latitude: Number(location.latitude),
+                  longitude: Number(location.longitude),
+                  latitudeDelta: 0.01,
+                  longitudeDelta: 0.01,
+                });
+              }
+            }}
+          >
+            <Ionicons name="locate-outline" size={24} color="#007bff" />
+          </TouchableOpacity>
 
-    {fullMap && (
-      <>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => updateState({ fullMap: false })}
-        >
-          <Ionicons name="arrow-back-outline" size={24} color="#fff" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.centerButton}
-          onPress={() => {
-            if (location && mapRef.current) {
-              mapRef.current.animateToRegion({
-                latitude: Number(location.latitude),
-                longitude: Number(location.longitude),
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
-              });
-            }
-          }}
-        >
-          <Ionicons name="locate-outline" size={24} color="#007bff" />
-        </TouchableOpacity>
-      </>
-    )}
-  </View>
-);
+          {routeInfo && (
+            <View style={styles.distanceInfo}>
+              <View style={styles.distanceRow}>
+                <Ionicons name="navigate-outline" size={20} color="#007bff" />
+                <Text style={styles.distanceText}>
+                  Total Distance: {formatDistance(routeInfo.distance)}
+                </Text>
+              </View>
+              <View style={styles.distanceRow}>
+                <Ionicons name="time-outline" size={20} color="#007bff" />
+                <Text style={styles.distanceText}>
+                  Estimated Time: {Math.round(routeInfo.duration)} min
+                </Text>
+              </View>
+              {fuelStations.length > 0 && (
+                <View style={styles.distanceRow}>
+                  <Ionicons name="flame-outline" size={20} color="#f44336" />
+                  <Text style={styles.distanceText}>
+                    {fuelStations.length} stations along route
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+        </>
+      )}
+    </View>
+  );
 
   const renderButtonSheet = () => (
     <Animated.View
@@ -1941,8 +1990,6 @@ const renderMap = () => (
     return renderLoading();
   }
 
-  console.log('screenReady:', screenReady);
-
   return (
     <SafeAreaView style={styles.container}>
       {renderMap()}
@@ -1971,18 +2018,22 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   loadingText: { marginTop: 10, color: "#666" },
+
+  // Map containers
   mapContainer: {
     width: "100%",
     height: 300,
     overflow: "hidden",
   },
-
   mapContainerFull: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     zIndex: 100,
     elevation: 10,
   },
-
   map: {
     width: "100%",
     height: "100%",
@@ -2155,6 +2206,9 @@ const styles = StyleSheet.create({
   calloutView: { padding: 8, maxWidth: 200 },
   calloutTitle: { fontWeight: "bold", fontSize: 14, marginBottom: 4 },
 
+  // ============================================
+  // FUEL MODAL (unchanged, still uses modalContainer etc.)
+  // ============================================
   modalContainer: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -2227,101 +2281,293 @@ const styles = StyleSheet.create({
   },
   retryButtonText: { color: "#fff", fontWeight: "bold" },
 
-  receiptImageContainer: {
-    width: '100%',
-    height: 200,
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginBottom: 15,
-    position: 'relative',
+  // ============================================
+  // RECEIPT MODAL - CONSISTENT WITH APP STYLING
+  // ============================================
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(10, 31, 68, 0.55)",
+    justifyContent: "flex-end",
   },
-  receiptImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'contain',
+  receiptModalSheet: {
+    backgroundColor: "#ebf2ff",
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    maxHeight: height * 0.82,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
+    overflow: "hidden",
+  },
+  receiptModalHandleWrap: {
+    paddingTop: 10,
+    paddingBottom: 4,
+    alignItems: "center",
+    backgroundColor: "#ebf2ff",
+  },
+  receiptModalHandle: {
+    width: 45,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#c9c9c9",
+  },
+  receiptModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0A1F44",
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    marginTop: 8,
+  },
+  receiptModalHeaderIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  receiptModalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  receiptModalSubtitleSmall: {
+    fontSize: 12,
+    color: "#aebbd3",
+    marginTop: 3,
+  },
+  receiptModalBody: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  receiptModalSectionTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#171717",
+    marginTop: 4,
+    marginBottom: 12,
+  },
+
+  receiptPreviewCard: {
+    width: "100%",
+    height: 220,
+    borderRadius: 16,
+    overflow: "hidden",
+    marginBottom: 16,
+    position: "relative",
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  receiptPreviewImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "contain",
   },
   receiptSubmittedBadge: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: '#4CAF50',
+    position: "absolute",
+    top: 12,
+    right: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#2e7d32",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
   },
-  receiptSubmittedText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
-  receiptPlaceholder: {
-    width: '100%',
-    height: 200,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 15,
+  receiptSubmittedBadgeText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 12,
+    marginLeft: 4,
   },
-  receiptPlaceholderText: { color: '#999', marginTop: 10 },
-  receiptDetails: {
-    backgroundColor: '#f5f5f5',
-    padding: 12,
-    borderRadius: 10,
-    width: '100%',
-    marginBottom: 15,
+
+  receiptEmptyCard: {
+    width: "100%",
+    minHeight: 180,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 30,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 2,
   },
-  receiptDetailText: { fontSize: 14, color: '#333', marginVertical: 2 },
-  modalSubtitle: {
+  receiptEmptyTitle: {
+    marginTop: 12,
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0A1F44",
+  },
+  receiptEmptySubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#7a8699",
+    textAlign: "center",
+    paddingHorizontal: 24,
+  },
+
+  receiptLoadingCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 24,
+    alignItems: "center",
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  receiptLoadingText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: "#0A1F44",
+    fontWeight: "600",
+  },
+
+  receiptSuccessCard: {
+    backgroundColor: "#e8f5e9",
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#c8e6c9",
+  },
+  receiptSuccessTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#2e7d32",
+    marginBottom: 12,
+  },
+  receiptSuccessRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+  },
+  receiptSuccessLabel: {
+    fontSize: 13,
+    color: "#4b5563",
+    fontWeight: "600",
+  },
+  receiptSuccessValue: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 20,
-    textAlign: 'center',
-    paddingHorizontal: 10,
+    color: "#1b5e20",
+    fontWeight: "800",
   },
-  modalButtonContainer: {
-    width: '100%',
-    flexDirection: 'column',
+
+  receiptInputCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  receiptInputLabel: {
+    fontSize: 12,
+    color: "#777",
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  receiptInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f3f6fc",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#e0e7f3",
+  },
+  receiptInputPrefix: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#0A1F44",
+    marginRight: 6,
+  },
+  receiptInput: {
+    flex: 1,
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#0A1F44",
+    padding: 0,
+  },
+
+  receiptModalActions: {
+    flexDirection: "row",
     gap: 10,
   },
-  modalButton: {
-    flexDirection: 'row',
-    padding: 14,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginVertical: 5,
+  receiptModalBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 52,
+    borderRadius: 15,
+    paddingHorizontal: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  scanButton: { backgroundColor: '#007bff' },
-  uploadButton: { backgroundColor: '#4CAF50' },
-  continueButton: { backgroundColor: '#FF6B00' },
-  scanNewButton: { backgroundColor: '#2196F3' },
-  modalButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    marginLeft: 10,
+  receiptModalBtnPrimary: {
+    backgroundColor: "#0A1F44",
   },
-  skipButton: { marginTop: 15, padding: 10, alignItems: 'center' },
-  skipButtonText: { color: '#999', fontSize: 14 },
-
-  amountInput: {
+  receiptModalBtnSecondary: {
+    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 16,
-    width: '100%',
-    marginVertical: 15,
-    backgroundColor: '#f9f9f9',
+    borderColor: "#0A1F44",
   },
-  ocrLoadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
+  receiptModalBtnCancel: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#c9c9c9",
   },
-  ocrLoadingText: {
-    marginLeft: 10,
-    color: '#666',
-    fontSize: 14,
+  receiptModalBtnTextPrimary: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 15,
+    marginLeft: 8,
+  },
+  receiptModalBtnTextCancel: {
+    color: "#0A1F44",
+    fontWeight: "800",
+    fontSize: 15,
+    marginLeft: 8,
+  },
+  receiptSkipBtn: {
+    alignItems: "center",
+    paddingVertical: 14,
+    marginTop: 4,
+  },
+  receiptSkipBtnText: {
+    color: "#7a8699",
+    fontSize: 13,
+    fontWeight: "600",
   },
 
+  // ============================================
+  // ROUTE INFO PANEL / BUTTON SHEET
+  // ============================================
   infoAreaContainer: {
     flex: 1,
     position: "relative",
