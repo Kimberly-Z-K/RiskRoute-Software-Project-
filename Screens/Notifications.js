@@ -7,6 +7,8 @@ import {
   TouchableOpacity,
   StatusBar,
   Platform,
+  Dimensions,
+  Modal,
 } from "react-native";
 import * as Speech from "expo-speech";
 import {
@@ -16,6 +18,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../context/AuthContext";
 
+const { width } = Dimensions.get("window");
 const OSRM_BASE_URL = "https://router.project-osrm.org";
 
 const geocodeCache = new Map();
@@ -141,19 +144,24 @@ function analyzeRouteForIssues(route, index) {
 
   let condition = "Normal";
   let severity = "";
+  let emoji = "✅";
   
   if (avgSpeed < 10 && avgSpeed > 0) {
     condition = "Heavy Traffic Jam";
     severity = "Severe - Speed under 10 km/h";
+    emoji = "🔴";
   } else if (avgSpeed < 25) {
     condition = "Moderate Congestion";
     severity = "Moderate - Speed under 25 km/h";
+    emoji = "🟡";
   } else if (avgSpeed < 40) {
     condition = "Slow Traffic";
     severity = "Mild - Speed under 40 km/h";
+    emoji = "🟢";
   } else if (avgSpeed === 0) {
     condition = "Road Closed / Standstill";
     severity = "Critical - No movement detected";
+    emoji = "⛔";
   }
 
   return {
@@ -162,13 +170,13 @@ function analyzeRouteForIssues(route, index) {
     avgSpeed: avgSpeed.toFixed(1),
     duration: Math.round(duration / 60),
     distance: (distance / 1000).toFixed(1),
+    emoji,
   };
 }
 
 async function buildTrafficNotification(routeData, index, coordinates, startLocation, endLocation) {
   const analysis = analyzeRouteForIssues(routeData, index);
   
-  // Use provided location names or fallback to coordinates
   const from = startLocation || `${coordinates[0][1].toFixed(4)}, ${coordinates[0][0].toFixed(4)}`;
   const to = endLocation || `${coordinates[1][1].toFixed(4)}, ${coordinates[1][0].toFixed(4)}`;
   
@@ -279,6 +287,9 @@ export default function Notifications() {
       unread: false,
     },
   ]);
+
+  const [selectedNotification, setSelectedNotification] = useState(null);
+  const [modalVisible, setModalVisible] = useState(false);
 
   const unreadCount = notifications.filter((n) => n.unread).length;
 
@@ -538,6 +549,19 @@ export default function Notifications() {
     );
   };
 
+  const openNotification = (item) => {
+    setSelectedNotification(item);
+    setModalVisible(true);
+    if (item.unread) {
+      markAsRead(item.id);
+    }
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    setTimeout(() => setSelectedNotification(null), 300);
+  };
+
   const getCategoryColor = (category) => {
     switch (category) {
       case "FUEL ALERTS":
@@ -570,55 +594,54 @@ export default function Notifications() {
         {items.map((item, index) => (
           <TouchableOpacity
             key={item.id.toString()}
-            style={[
-              styles.card,
-              item.unread && styles.unreadCard,
-              index === 0 && styles.firstCard,
-              index === items.length - 1 && styles.lastCard,
-            ]}
-            onPress={() => markAsRead(item.id)}
+            style={[styles.card, item.unread && styles.unreadCard]}
+            onPress={() => openNotification(item)}
             activeOpacity={0.7}
           >
-            <View style={[styles.iconBox, { backgroundColor: item.bg }]}>
-              <MaterialCommunityIcons
-                name={item.icon}
-                size={24}
-                color={item.iconColor}
-              />
+            <View style={styles.cardTop}>
+              <View style={styles.timeTag}>
+                <Text style={styles.timeTagText}>{item.time}</Text>
+              </View>
+              {item.unread && (
+                <View style={styles.newTag}>
+                  <Text style={styles.newTagText}>NEW</Text>
+                </View>
+              )}
             </View>
 
-            <View style={styles.cardContent}>
-              <View style={styles.titleRow}>
-                <Text style={styles.title} numberOfLines={3}>
+            <View style={styles.cardMiddle}>
+              <View style={styles.cardTextCol}>
+                <Text style={styles.title} numberOfLines={2}>
                   {item.title}
                 </Text>
-                {item.unread && <View style={styles.unreadDot} />}
+                <Text style={styles.message} numberOfLines={3}>
+                  {item.message}
+                </Text>
+
+                {item.from && item.to && (
+                  <View style={styles.locationContainer}>
+                    <Feather name="map-pin" size={12} color="#9CA3AF" />
+                    <Text style={styles.locationText}>
+                      {item.from} → {item.to}
+                    </Text>
+                  </View>
+                )}
+
+                {item.duration && (
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailText}>
+                      ⏱ {item.duration} min • {item.distance} km • {item.speed} km/h
+                    </Text>
+                  </View>
+                )}
               </View>
 
-              <Text style={styles.message} numberOfLines={3}>
-                {item.message}
-              </Text>
-
-              {item.from && item.to && (
-                <View style={styles.locationContainer}>
-                  <Feather name="map-pin" size={12} color="#9CA3AF" />
-                  <Text style={styles.locationText}>
-                    {item.from} → {item.to}
-                  </Text>
-                </View>
-              )}
-
-              {item.duration && (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailText}>
-                    ⏱ {item.duration} min • {item.distance} km • {item.speed} km/h
-                  </Text>
-                </View>
-              )}
-
-              <View style={styles.timeContainer}>
-                <Feather name="clock" size={12} color="#9CA3AF" />
-                <Text style={styles.time}>{item.time}</Text>
+              <View style={[styles.bigIcon, { backgroundColor: item.bg }]}>
+                <MaterialCommunityIcons
+                  name={item.icon}
+                  size={28}
+                  color={item.iconColor}
+                />
               </View>
             </View>
           </TouchableOpacity>
@@ -693,6 +716,137 @@ export default function Notifications() {
 
         <View style={styles.bottomPadding} />
       </ScrollView>
+
+      <Modal
+        visible={modalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={closeModal}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={closeModal}
+          />
+
+          <View style={styles.modalContent}>
+            <View style={styles.modalHandle} />
+
+            {selectedNotification && (
+              <>
+                <View style={styles.modalHeader}>
+                  <View
+                    style={[
+                      styles.modalIconBox,
+                      { backgroundColor: selectedNotification.bg },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={selectedNotification.icon}
+                      size={32}
+                      color={selectedNotification.iconColor}
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.modalCloseBtn}
+                    onPress={closeModal}
+                  >
+                    <Feather name="x" size={20} color="#6B7280" />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.modalCategoryTag}>
+                  <View
+                    style={[
+                      styles.modalCategoryDot,
+                      {
+                        backgroundColor: getCategoryColor(
+                          selectedNotification.category
+                        ),
+                      },
+                    ]}
+                  />
+                  <Text style={styles.modalCategoryText}>
+                    {selectedNotification.category}
+                  </Text>
+                </View>
+
+                <Text style={styles.modalTitle}>
+                  {selectedNotification.title}
+                </Text>
+
+                <Text style={styles.modalMessage}>
+                  {selectedNotification.message}
+                </Text>
+
+                {selectedNotification.from && selectedNotification.to && (
+                  <View style={styles.modalRouteBox}>
+                    <View style={styles.modalRouteRow}>
+                      <View style={styles.modalRouteDot} />
+                      <View style={styles.modalRouteLine} />
+                      <View style={styles.modalRouteDotEnd} />
+                    </View>
+                    <View style={styles.modalRouteTexts}>
+                      <View style={styles.modalRouteItem}>
+                        <Text style={styles.modalRouteLabel}>From</Text>
+                        <Text style={styles.modalRouteValue}>
+                          {selectedNotification.from}
+                        </Text>
+                      </View>
+                      <View style={styles.modalRouteItem}>
+                        <Text style={styles.modalRouteLabel}>To</Text>
+                        <Text style={styles.modalRouteValue}>
+                          {selectedNotification.to}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {selectedNotification.duration && (
+                  <View style={styles.modalStatsRow}>
+                    <View style={styles.modalStatBox}>
+                      <Text style={styles.modalStatValue}>
+                        {selectedNotification.duration}
+                      </Text>
+                      <Text style={styles.modalStatLabel}>Minutes</Text>
+                    </View>
+                    <View style={styles.modalStatBox}>
+                      <Text style={styles.modalStatValue}>
+                        {selectedNotification.distance}
+                      </Text>
+                      <Text style={styles.modalStatLabel}>KM</Text>
+                    </View>
+                    <View style={styles.modalStatBox}>
+                      <Text style={styles.modalStatValue}>
+                        {selectedNotification.speed}
+                      </Text>
+                      <Text style={styles.modalStatLabel}>KM/H</Text>
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.modalFooter}>
+                  <Feather name="clock" size={13} color="#9CA3AF" />
+                  <Text style={styles.modalTime}>
+                    {selectedNotification.time}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.modalActionBtn}
+                  onPress={closeModal}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.modalActionText}>Got it</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -783,59 +937,59 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: "#FFFFFF",
-    padding: 16,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  firstCard: {
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
-  },
-  lastCard: {
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
-    borderBottomWidth: 0,
+    padding: 14,
+    borderRadius: 14,
+    marginBottom: 10,
   },
   unreadCard: {
     backgroundColor: "#F8FAFF",
-    borderLeftWidth: 4,
-    borderLeftColor: "#3B82F6",
   },
-  iconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-  cardContent: {
-    flex: 1,
-  },
-  titleRow: {
+  cardTop: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  timeTag: {
+    backgroundColor: "#F3F4F6",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  timeTagText: {
+    fontSize: 11,
+    color: "#6B7280",
+    fontWeight: "600",
+  },
+  newTag: {
+    backgroundColor: "#3B82F6",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  newTagText: {
+    fontSize: 10,
+    color: "#FFFFFF",
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  cardMiddle: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  cardTextCol: {
+    flex: 1,
+    marginRight: 12,
   },
   title: {
-    fontWeight: "600",
-    fontSize: 14,
+    fontWeight: "700",
+    fontSize: 15,
     color: "#111827",
-    flex: 1,
-  },
-  unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#3B82F6",
-    marginLeft: 8,
-    flexShrink: 0,
+    lineHeight: 20,
   },
   message: {
     color: "#6B7280",
-    marginTop: 3,
+    marginTop: 4,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -858,15 +1012,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "400",
   },
-  timeContainer: {
-    flexDirection: "row",
+  bigIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    justifyContent: "center",
     alignItems: "center",
-    marginTop: 6,
-    gap: 4,
-  },
-  time: {
-    color: "#9CA3AF",
-    fontSize: 12,
   },
   emptyState: {
     flex: 1,
@@ -891,5 +1042,174 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: 20,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+  },
+  modalContent: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingTop: 12,
+    minHeight: 300,
+    maxHeight: "85%",
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  modalIconBox: {
+    width: 60,
+    height: 60,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalCategoryTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  modalCategoryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  modalCategoryText: {
+    fontSize: 12,
+    color: "#6B7280",
+    fontWeight: "700",
+    letterSpacing: 1.2,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#111827",
+    lineHeight: 26,
+    marginBottom: 10,
+  },
+  modalMessage: {
+    fontSize: 15,
+    color: "#4B5563",
+    lineHeight: 22,
+    marginBottom: 16,
+  },
+  modalRouteBox: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+  },
+  modalRouteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  modalRouteDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#10B981",
+  },
+  modalRouteLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: "#E5E7EB",
+    marginHorizontal: 6,
+  },
+  modalRouteDotEnd: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#EF4444",
+  },
+  modalRouteTexts: {
+    gap: 10,
+  },
+  modalRouteItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  modalRouteLabel: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    fontWeight: "600",
+  },
+  modalRouteValue: {
+    fontSize: 13,
+    color: "#111827",
+    fontWeight: "600",
+  },
+  modalStatsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 16,
+  },
+  modalStatBox: {
+    flex: 1,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 12,
+    padding: 12,
+    alignItems: "center",
+  },
+  modalStatValue: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#111827",
+  },
+  modalStatLabel: {
+    fontSize: 10,
+    color: "#9CA3AF",
+    fontWeight: "600",
+    marginTop: 2,
+    letterSpacing: 0.5,
+  },
+  modalFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 20,
+  },
+  modalTime: {
+    fontSize: 12,
+    color: "#9CA3AF",
+  },
+  modalActionBtn: {
+    backgroundColor: "#0A1F44",
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: "center",
+  },
+  modalActionText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
   },
 });
