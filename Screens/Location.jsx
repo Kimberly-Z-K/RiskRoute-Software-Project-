@@ -14,16 +14,17 @@ import {
   Dimensions,
   Animated,
   PanResponder,
+  TextInput,
 } from "react-native";
 import MapView, { Marker, Polyline, Callout } from "react-native-maps";
 import * as ExpoLocation from "expo-location";
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from '../context/AuthContext';
 import { supabase } from "../lib/supabase";
 
 const { width, height } = Dimensions.get("window");
-// Fallback estimate used only until the real container is measured.
 const INFO_AREA_HEIGHT_PX = height * 0.65;
 
 const CONFIG = {
@@ -50,10 +51,7 @@ const MOCK_FUEL_STATIONS = [
 
 const toCoord = (p) => {
   if (!p || p.lat == null || p.lng == null) return null;
-  return {
-    latitude: Number(p.lat),
-    longitude: Number(p.lng),
-  };
+  return { latitude: Number(p.lat), longitude: Number(p.lng) };
 };
 
 const formatAddress = (addr) => {
@@ -65,10 +63,7 @@ const formatAddress = (addr) => {
 const geojsonToCoords = (line) => {
   if (!line || !Array.isArray(line.coordinates)) return [];
   return line.coordinates
-    .map(([lng, lat]) => ({
-      latitude: Number(lat),
-      longitude: Number(lng),
-    }))
+    .map(([lng, lat]) => ({ latitude: Number(lat), longitude: Number(lng) }))
     .filter((p) => !Number.isNaN(p.latitude) && !Number.isNaN(p.longitude));
 };
 
@@ -87,9 +82,7 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 const formatDistance = (dist) => {
-  if (dist < 1) {
-    return `${Math.round(dist * 1000)} m`;
-  }
+  if (dist < 1) return `${Math.round(dist * 1000)} m`;
   return `${dist.toFixed(1)} km`;
 };
 
@@ -132,6 +125,14 @@ export default function LocationScreen({ route }) {
     waitingForReceipt: false,
     isAtFuelStation: false,
 
+    // Amount Input Modal (OCR confirm / manual entry)
+    showAmountModal: false,
+    amountInput: '',
+    pendingReceiptUri: null,
+    isProcessingOCR: false,
+    autoDetectedAmount: null,
+    showOCRConfirmation: false,
+
     // UI
     notification: null,
     showFuelModal: false,
@@ -140,7 +141,6 @@ export default function LocationScreen({ route }) {
     error: "",
   });
 
-  // Measured height of the info area container (below the map).
   const [infoAreaHeight, setInfoAreaHeight] = useState(0);
 
   const mapRef = useRef(null);
@@ -186,6 +186,12 @@ export default function LocationScreen({ route }) {
     waitingForReceipt,
     isAtFuelStation,
     searchingStations,
+    showAmountModal,
+    amountInput,
+    pendingReceiptUri,
+    isProcessingOCR,
+    autoDetectedAmount,
+    showOCRConfirmation,
   } = state;
 
   const calculateRemainingRange = useCallback(() => {
@@ -378,7 +384,6 @@ export default function LocationScreen({ route }) {
     });
   }, []);
 
-  // Finds fuel stations near sampled points along the current route.
   const findFuelStationsAlongRoute = useCallback(async (routePoints) => {
     if (!routePoints || routePoints.length < 2) {
       console.log("Not enough route points to find stations");
@@ -509,6 +514,12 @@ export default function LocationScreen({ route }) {
                 fuelPurchased: 0,
                 waitingForReceipt: false,
                 isAtFuelStation: false,
+                showAmountModal: false,
+                amountInput: '',
+                pendingReceiptUri: null,
+                isProcessingOCR: false,
+                autoDetectedAmount: null,
+                showOCRConfirmation: false,
               });
             }, 1500);
           },
@@ -599,9 +610,7 @@ export default function LocationScreen({ route }) {
     ) {
       console.log("Low fuel warning:", current.fuelPercent.toFixed(1), "%");
 
-      updateState({
-        fuelWarning: true,
-      });
+      updateState({ fuelWarning: true });
 
       showNotification('warning', `Fuel at ${current.fuelPercent.toFixed(0)}% - Please find a fuel station!`, 5000);
 
@@ -610,8 +619,137 @@ export default function LocationScreen({ route }) {
   }, [updateState, showNotification]);
 
   // ============================================
+  // OCR INTEGRATION (base64 → Supabase Edge Function)
+  // ============================================
+  const extractReceiptWithEasyOCR = useCallback(async (imageUri) => {
+    try {
+      updateState({ isProcessingOCR: true });
+
+      const supabaseUrl = 'https://pyqftjxfbjecjdhdzyor.supabase.co';
+      const supabaseAnonKey = 'sb_publishable_iFcMrb7-9eJ86p0KU2PWyg_UZ77LRFF';
+
+      console.log('📸 Starting OCR request...');
+      console.log('🖼️ Image URI:', imageUri);
+
+      console.log('📖 Reading image as base64...');
+      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+        encoding: 'base64',
+      });
+
+      const filename = imageUri.split('/').pop() || 'receipt.jpg';
+
+      console.log('📤 Sending to Edge Function:', `${supabaseUrl}/functions/v1/easyocr-proxy`);
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/easyocr-proxy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+        },
+        body: JSON.stringify({
+          image: `data:image/jpeg;base64,${base64}`,
+          filename: filename,
+        }),
+      });
+
+      console.log('📥 Edge Function response status:', response.status);
+
+      const responseText = await response.text();
+      console.log('📄 Response text (first 300 chars):', responseText.substring(0, 300));
+
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        console.error('❌ Failed to parse JSON:', e);
+        throw new Error('Invalid response from server');
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || data.details || `HTTP ${response.status}`);
+      }
+
+      const rawText = data.text || '';
+      console.log('📝 OCR Raw Text (first 300 chars):', rawText.substring(0, 300));
+
+      const patterns = [
+        /(?:total|amount|grand\s*total|amount\s*due|balance\s*due|total\s*amount|total\s*due|subtotal|total\s*including\s*vat)[:\s]*R?\s*([\d,]+[.,]\d{2})/i,
+        /R\s*([\d,]+[.,]\d{2})/i,
+        /([\d,]+[.,]\d{2})\s*(?:total|amount|due|balance)/i,
+      ];
+
+      let total = null;
+      for (const pattern of patterns) {
+        const match = rawText.match(pattern);
+        if (match && match[1]) {
+          const cleanAmount = match[1].replace(/,/g, '').replace(/,/g, '.');
+          total = parseFloat(cleanAmount);
+          if (total) break;
+        }
+      }
+
+      const taxMatch = rawText.match(/(?:vat|tax)[:\s]*R?\s*([\d,]+[.,]\d{2})/i);
+      let tax = null;
+      if (taxMatch && taxMatch[1]) {
+        const cleanTax = taxMatch[1].replace(/,/g, '').replace(/,/g, '.');
+        tax = parseFloat(cleanTax);
+      }
+
+      const dateMatch = rawText.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+      const date = dateMatch ? dateMatch[1] : null;
+
+      console.log('💰 Extracted total:', total);
+
+      updateState({ isProcessingOCR: false });
+
+      return { total, tax, date, rawText, success: total !== null && total > 0 };
+    } catch (error) {
+      console.error('❌ EasyOCR error:', error);
+      updateState({ isProcessingOCR: false });
+      return {
+        total: null,
+        tax: null,
+        date: null,
+        rawText: '',
+        success: false,
+        error: error.message || 'OCR processing failed',
+      };
+    }
+  }, [updateState]);
+
+  // ============================================
   // RECEIPT FUNCTIONS
   // ============================================
+  const uploadReceiptToSupabase = useCallback(async (uri, userId) => {
+    try {
+      const response = await fetch(uri);
+      const arrayBuffer = await response.arrayBuffer();
+
+      const timestamp = Date.now();
+      const fileName = `${userId}/receipt-${timestamp}.jpg`;
+
+      const { data, error } = await supabase.storage
+        .from('receipts')
+        .upload(fileName, arrayBuffer, {
+          contentType: 'image/jpeg',
+          upsert: false,
+        });
+
+      if (error) {
+        console.error('Upload error:', error);
+        Alert.alert('Upload Error', error.message);
+        return null;
+      }
+
+      console.log('Receipt uploaded:', data.path);
+      return data.path;
+    } catch (error) {
+      console.error('Upload failed:', error);
+      Alert.alert('Error', 'Failed to upload receipt.');
+      return null;
+    }
+  }, []);
+
   const requestCameraPermission = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
@@ -621,15 +759,119 @@ export default function LocationScreen({ route }) {
     return true;
   }, []);
 
-  // Resets the receipt-related state so the user can scan a fresh receipt.
   const resetReceiptState = useCallback(() => {
     updateState({
       receiptImage: null,
       receiptAmount: '',
       fuelPurchased: 0,
       receiptSubmitted: false,
+      waitingForReceipt: true,
+      isAtFuelStation: true,
+      pendingReceiptUri: null,
+      isProcessingOCR: false,
+      autoDetectedAmount: null,
+      showOCRConfirmation: false,
+      amountInput: '',
+    });
+    console.log('🔄 Receipt state reset - ready for new scan');
+  }, [updateState]);
+
+  const handleSubmitReceipt = useCallback(async (localUri, parsedAmount) => {
+    let userId = 'temp-user';
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) userId = user.id;
+    } catch (e) {
+      console.log('Using temp user ID (no auth)');
+    }
+
+    const receiptPath = await uploadReceiptToSupabase(localUri, userId);
+    if (!receiptPath) {
+      Alert.alert('Upload Error', 'Failed to upload receipt image. Please try again.');
+      return;
+    }
+
+    const litresPurchased = parsedAmount / 22;
+    const fuelAdded = (litresPurchased / CONFIG.TANK_CAPACITY) * 100;
+    const newFuelPercent = Math.min(fuelPercent + fuelAdded, 100);
+
+    try {
+      const { data: receiptData, error: dbError } = await supabase
+        .from('receipts')
+        .insert({
+          user_id: userId,
+          receipt_amount: parsedAmount,
+          fuel_purchased: litresPurchased,
+          receipt_image_path: receiptPath,
+          fuel_percent_before: fuelPercent,
+          fuel_percent_after: newFuelPercent,
+        })
+        .select();
+
+      if (dbError) {
+        console.error('Database error:', dbError);
+        Alert.alert('Database Error', 'Receipt image uploaded but failed to save record.');
+        return;
+      }
+
+      console.log('✅ Receipt saved to database:', receiptData);
+    } catch (dbError) {
+      console.error('Database error:', dbError);
+      Alert.alert('Database Error', 'Failed to save receipt record.');
+      return;
+    }
+
+    updateState({
+      receiptAmount: parsedAmount.toFixed(2),
+      fuelPurchased: litresPurchased,
+      receiptImage: localUri,
+      receiptSubmitted: true,
+      fuelPercent: newFuelPercent,
+      waitingForReceipt: false,
+      isAtFuelStation: false,
+      fuelWarning: false,
+      showReceiptModal: true,
+      showAmountModal: false,
+      amountInput: '',
+      pendingReceiptUri: null,
+      showOCRConfirmation: false,
+      autoDetectedAmount: null,
+      isProcessingOCR: false,
+    });
+
+    showNotification(
+      'success',
+      `✅ Receipt uploaded! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
+      5000
+    );
+
+    if (newFuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD) {
+      setTimeout(() => { checkFuelAndRedirect(); }, 1000);
+    }
+  }, [fuelPercent, updateState, showNotification, checkFuelAndRedirect, uploadReceiptToSupabase]);
+
+  const showFuelAmountInput = useCallback((localUri, prefillAmount = null) => {
+    updateState({
+      pendingReceiptUri: localUri,
+      receiptImage: localUri,
+      showAmountModal: true,
+      amountInput: prefillAmount ? prefillAmount.toString() : '',
+      autoDetectedAmount: prefillAmount,
+      isProcessingOCR: false,
     });
   }, [updateState]);
+
+  const handleFuelModalSubmit = useCallback(async () => {
+    const { amountInput, pendingReceiptUri } = stateRef.current;
+
+    if (!amountInput || isNaN(parseFloat(amountInput))) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+      return;
+    }
+
+    const parsedAmount = parseFloat(amountInput);
+    await handleSubmitReceipt(pendingReceiptUri, parsedAmount);
+  }, [handleSubmitReceipt]);
 
   const scanReceipt = useCallback(async () => {
     const hasPermission = await requestCameraPermission();
@@ -640,70 +882,55 @@ export default function LocationScreen({ route }) {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         quality: 0.8,
-        base64: true,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
+        const localUri = result.assets[0].uri;
+
         updateState({
-          receiptImage: result.assets[0].uri,
+          receiptImage: localUri,
+          pendingReceiptUri: localUri,
         });
 
-        Alert.prompt(
-          'Enter Fuel Amount',
-          'Please enter the total amount spent on fuel (in ZAR):',
-          [
-            {
-              text: 'Cancel',
-              style: 'cancel',
-              onPress: () => {
-                updateState({ receiptImage: null });
-              }
-            },
-            {
-              text: 'Submit',
-              onPress: (amount) => {
-                if (amount && !isNaN(parseFloat(amount))) {
-                  const parsedAmount = parseFloat(amount);
-                  const litresPurchased = parsedAmount / 22;
-                  const fuelAdded = (litresPurchased / CONFIG.TANK_CAPACITY) * 100;
-                  const newFuelPercent = Math.min(fuelPercent + fuelAdded, 100);
+        const ocrResult = await extractReceiptWithEasyOCR(localUri);
 
-                  updateState({
-                    receiptAmount: parsedAmount.toFixed(2),
-                    fuelPurchased: litresPurchased,
-                    receiptSubmitted: true,
-                    fuelPercent: newFuelPercent,
-                    waitingForReceipt: false,
-                    isAtFuelStation: false,
-                    fuelWarning: false,
-                    showReceiptModal: false,
-                  });
-
-                  showNotification(
-                    'success',
-                    `Receipt submitted! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
-                    5000
-                  );
-
-                  if (newFuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD) {
-                    setTimeout(() => {
-                      checkFuelAndRedirect();
-                    }, 1000);
-                  }
-                } else {
-                  Alert.alert('Invalid Amount', 'Please enter a valid amount.');
-                }
+        if (ocrResult.success && ocrResult.total > 0) {
+          Alert.alert(
+            '💰 Amount Detected',
+            `EasyOCR found R${ocrResult.total.toFixed(2)} on your receipt.`,
+            [
+              {
+                text: '✅ Use This',
+                onPress: () => { showFuelAmountInput(localUri, ocrResult.total); },
               },
-            },
-          ],
-          'plain-text'
-        );
+              {
+                text: '✏️ Enter Manually',
+                onPress: () => { showFuelAmountInput(localUri, null); },
+                style: 'cancel',
+              },
+            ]
+          );
+        } else {
+          if (ocrResult.error) {
+            console.log('OCR Error:', ocrResult.error);
+          }
+          Alert.alert(
+            '✏️ Manual Entry Required',
+            'Could not automatically detect the amount. Please enter it manually.',
+            [
+              {
+                text: 'OK',
+                onPress: () => { showFuelAmountInput(localUri, null); },
+              },
+            ]
+          );
+        }
       }
     } catch (error) {
       console.error('Camera error:', error);
       Alert.alert('Error', 'Failed to open camera.');
     }
-  }, [requestCameraPermission, fuelPercent, updateState, showNotification, checkFuelAndRedirect]);
+  }, [requestCameraPermission, extractReceiptWithEasyOCR, showFuelAmountInput, updateState]);
 
   const pickReceiptImage = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -717,70 +944,55 @@ export default function LocationScreen({ route }) {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         quality: 0.8,
-        base64: true,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
+        const localUri = result.assets[0].uri;
+
         updateState({
-          receiptImage: result.assets[0].uri,
+          receiptImage: localUri,
+          pendingReceiptUri: localUri,
         });
 
-        Alert.prompt(
-          'Enter Fuel Amount',
-          'Please enter the total amount spent on fuel (in ZAR):',
-          [
-            {
-              text: 'Cancel',
-              style: 'cancel',
-              onPress: () => {
-                updateState({ receiptImage: null });
-              }
-            },
-            {
-              text: 'Submit',
-              onPress: (amount) => {
-                if (amount && !isNaN(parseFloat(amount))) {
-                  const parsedAmount = parseFloat(amount);
-                  const litresPurchased = parsedAmount / 22;
-                  const fuelAdded = (litresPurchased / CONFIG.TANK_CAPACITY) * 100;
-                  const newFuelPercent = Math.min(fuelPercent + fuelAdded, 100);
+        const ocrResult = await extractReceiptWithEasyOCR(localUri);
 
-                  updateState({
-                    receiptAmount: parsedAmount.toFixed(2),
-                    fuelPurchased: litresPurchased,
-                    receiptSubmitted: true,
-                    fuelPercent: newFuelPercent,
-                    waitingForReceipt: false,
-                    isAtFuelStation: false,
-                    fuelWarning: false,
-                    showReceiptModal: false,
-                  });
-
-                  showNotification(
-                    'success',
-                    `Receipt submitted! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
-                    5000
-                  );
-
-                  if (newFuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD) {
-                    setTimeout(() => {
-                      checkFuelAndRedirect();
-                    }, 1000);
-                  }
-                } else {
-                  Alert.alert('Invalid Amount', 'Please enter a valid amount.');
-                }
+        if (ocrResult.success && ocrResult.total > 0) {
+          Alert.alert(
+            '💰 Amount Detected',
+            `EasyOCR found R${ocrResult.total.toFixed(2)} on your receipt.`,
+            [
+              {
+                text: '✅ Use This',
+                onPress: () => { showFuelAmountInput(localUri, ocrResult.total); },
               },
-            },
-          ],
-          'plain-text'
-        );
+              {
+                text: '✏️ Enter Manually',
+                onPress: () => { showFuelAmountInput(localUri, null); },
+                style: 'cancel',
+              },
+            ]
+          );
+        } else {
+          if (ocrResult.error) {
+            console.log('OCR Error:', ocrResult.error);
+          }
+          Alert.alert(
+            '✏️ Manual Entry Required',
+            'Could not automatically detect the amount. Please enter it manually.',
+            [
+              {
+                text: 'OK',
+                onPress: () => { showFuelAmountInput(localUri, null); },
+              },
+            ]
+          );
+        }
       }
     } catch (error) {
       console.error('Gallery error:', error);
       Alert.alert('Error', 'Failed to open gallery.');
     }
-  }, [fuelPercent, updateState, showNotification, checkFuelAndRedirect]);
+  }, [extractReceiptWithEasyOCR, showFuelAmountInput, updateState]);
 
   const openReceiptModal = useCallback(() => {
     updateState({
@@ -789,30 +1001,28 @@ export default function LocationScreen({ route }) {
       waitingForReceipt: true
     });
   }, [updateState]);
- 
-  // BUTTON SHEET 
-  const BUTTON_SHEET_HANDLE_HEIGHT = 96;
 
+  // ============================================
+  // BUTTON SHEET
+  // ============================================
+  const BUTTON_SHEET_HANDLE_HEIGHT = 96;
 
   const measuredInfoAreaHeight =
     infoAreaHeight > 0 ? infoAreaHeight : INFO_AREA_HEIGHT_PX;
 
-  
   const BUTTON_SHEET_MAX_DRAG = Math.max(
     0,
     measuredInfoAreaHeight - BUTTON_SHEET_HANDLE_HEIGHT
   );
 
-  
   const buttonSheetY = useRef(new Animated.Value(0)).current;
   const buttonSheetStartY = useRef(0);
   const buttonSheetOpenRef = useRef(false);
 
-  
   const maxDragRef = useRef(BUTTON_SHEET_MAX_DRAG);
   useEffect(() => {
     maxDragRef.current = BUTTON_SHEET_MAX_DRAG;
-   
+
     if (buttonSheetOpenRef.current) {
       Animated.spring(buttonSheetY, {
         toValue: BUTTON_SHEET_MAX_DRAG,
@@ -842,65 +1052,47 @@ export default function LocationScreen({ route }) {
     [buttonSheetY]
   );
 
-  //for the button toggle sheet
   const buttonSheetPanResponder = useRef(
     PanResponder.create({
-      
       onStartShouldSetPanResponder: () => false,
-      
       onMoveShouldSetPanResponder: (_, gestureState) => {
         return (
           Math.abs(gestureState.dy) > 8 &&
           Math.abs(gestureState.dy) > Math.abs(gestureState.dx)
         );
       },
-
       onPanResponderGrant: () => {
         buttonSheetY.stopAnimation((value) => {
           buttonSheetStartY.current = value;
         });
       },
-
       onPanResponderMove: (_, gestureState) => {
         const maxDrag = maxDragRef.current;
         let newY = buttonSheetStartY.current + gestureState.dy;
-
-        
         newY = Math.max(0, Math.min(maxDrag, newY));
-
         buttonSheetY.setValue(newY);
       },
-
       onPanResponderRelease: (_, gestureState) => {
         const maxDrag = maxDragRef.current;
         const currentY = buttonSheetStartY.current + gestureState.dy;
         const midpoint = maxDrag / 2;
 
-        // Fast swipe DOWN -> reveal the info paper underneath
         if (gestureState.dy > 50 || gestureState.vy > 0.5) {
           snapButtonSheet(true);
           return;
         }
-
-        // Fast swipe UP -> re-cover the info paper with the buttons
         if (gestureState.dy < -50 || gestureState.vy < -0.5) {
           snapButtonSheet(false);
           return;
         }
-
-        // Otherwise snap to whichever position is closest.
         snapButtonSheet(currentY > midpoint);
       },
     })
   ).current;
-  // ============================================
-  // END BUTTON SHEET
-  // ============================================
 
   useEffect(() => {
     console.log('[location screen]', !!user);
     getLocation();
-
     return () => {
       if (notificationTimeoutRef.current) {
         clearTimeout(notificationTimeoutRef.current);
@@ -996,6 +1188,82 @@ export default function LocationScreen({ route }) {
   );
 
   // ============================================
+  // AMOUNT INPUT MODAL
+  // ============================================
+  const renderAmountInputModal = () => (
+    <Modal
+      animationType="slide"
+      transparent={true}
+      visible={showAmountModal}
+      onRequestClose={() => {
+        resetReceiptState();
+        updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null });
+      }}
+    >
+      <View style={styles.modalContainer}>
+        <View style={[styles.modalContent, { padding: 20, maxHeight: height * 0.6 }]}>
+          <Text style={styles.modalTitle}>Enter Fuel Amount</Text>
+
+          <Text style={styles.modalSubtitle}>
+            {isProcessingOCR ? (
+              '⏳ Processing receipt with OCR...'
+            ) : autoDetectedAmount ? (
+              `🤖 EasyOCR detected R${autoDetectedAmount.toFixed(2)}. Please confirm or adjust:`
+            ) : (
+              '📝 Please enter the total amount spent on fuel (in ZAR):'
+            )}
+          </Text>
+
+          {pendingReceiptUri && (
+            <View style={styles.receiptImageContainer}>
+              <Image source={{ uri: pendingReceiptUri }} style={styles.receiptImage} />
+            </View>
+          )}
+
+          {isProcessingOCR && (
+            <View style={styles.ocrLoadingContainer}>
+              <ActivityIndicator size="large" color="#007bff" />
+              <Text style={styles.ocrLoadingText}>Analyzing receipt...</Text>
+            </View>
+          )}
+
+          {!isProcessingOCR && (
+            <>
+              <TextInput
+                style={styles.amountInput}
+                placeholder="Enter amount in ZAR"
+                keyboardType="numeric"
+                value={amountInput}
+                onChangeText={(text) => updateState({ amountInput: text })}
+                autoFocus={true}
+              />
+
+              <View style={[styles.modalButtonContainer, { flexDirection: 'row' }]}>
+                <TouchableOpacity
+                  style={[styles.modalButton, { backgroundColor: '#999', flex: 1, marginRight: 8 }]}
+                  onPress={() => {
+                    resetReceiptState();
+                    updateState({ showAmountModal: false, amountInput: '', pendingReceiptUri: null });
+                  }}
+                >
+                  <Text style={styles.modalButtonText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalButton, { backgroundColor: '#007bff', flex: 1, marginLeft: 8 }]}
+                  onPress={handleFuelModalSubmit}
+                >
+                  <Text style={styles.modalButtonText}>Submit</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+
+  // ============================================
   // RECEIPT MODAL
   // ============================================
   const renderReceiptModal = () => (
@@ -1011,6 +1279,7 @@ export default function LocationScreen({ route }) {
             [{ text: 'OK', style: 'default' }]
           );
         } else {
+          resetReceiptState();
           updateState({ showReceiptModal: false });
         }
       }}
@@ -1020,7 +1289,7 @@ export default function LocationScreen({ route }) {
           <Text style={styles.modalTitle}>Scan Fuel Receipt</Text>
 
           <Text style={styles.modalSubtitle}>
-            {receiptSubmitted ? 'Receipt submitted successfully!' : 'Please scan or upload your fuel receipt'}
+            {receiptSubmitted ? '✅ Receipt submitted successfully!' : '📸 Please scan or upload your fuel receipt'}
           </Text>
 
           {receiptImage ? (
@@ -1028,7 +1297,7 @@ export default function LocationScreen({ route }) {
               <Image source={{ uri: receiptImage }} style={styles.receiptImage} />
               {receiptSubmitted && (
                 <View style={styles.receiptSubmittedBadge}>
-                  <Text style={styles.receiptSubmittedText}>Submitted</Text>
+                  <Text style={styles.receiptSubmittedText}>✅ Submitted</Text>
                 </View>
               )}
             </View>
@@ -1039,48 +1308,71 @@ export default function LocationScreen({ route }) {
             </View>
           )}
 
-          {receiptAmount && receiptSubmitted && (
-            <View style={styles.receiptDetails}>
-              <Text style={styles.receiptDetailText}>
-                Amount: R{receiptAmount}
-              </Text>
-              <Text style={styles.receiptDetailText}>
-                Fuel Purchased: {fuelPurchased.toFixed(1)}L
-              </Text>
-              <Text style={styles.receiptDetailText}>
-                New Fuel Level: {fuelPercent.toFixed(1)}%
-              </Text>
+          {isProcessingOCR && (
+            <View style={styles.ocrLoadingContainer}>
+              <ActivityIndicator size="large" color="#007bff" />
+              <Text style={styles.ocrLoadingText}>Analyzing receipt with AI...</Text>
             </View>
           )}
 
-          <View style={styles.modalButtonContainer}>
+          {receiptAmount && receiptSubmitted && (
+            <View style={styles.receiptDetails}>
+              <Text style={styles.receiptDetailText}>Amount: R{receiptAmount}</Text>
+              <Text style={styles.receiptDetailText}>Fuel Purchased: {fuelPurchased.toFixed(1)}L</Text>
+              <Text style={styles.receiptDetailText}>New Fuel Level: {fuelPercent.toFixed(1)}%</Text>
+            </View>
+          )}
+
+          <View style={[styles.modalButtonContainer, { flexDirection: 'row' }]}>
             {!receiptSubmitted ? (
               <>
                 <TouchableOpacity
-                  style={[styles.modalButton, styles.scanButton]}
+                  style={[styles.modalButton, styles.scanButton, { flex: 1 }]}
                   onPress={scanReceipt}
+                  disabled={isProcessingOCR}
                 >
                   <Ionicons name="camera-outline" size={20} color="#fff" />
                   <Text style={styles.modalButtonText}>Scan Receipt</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.modalButton, styles.uploadButton]}
+                  style={[styles.modalButton, styles.uploadButton, { flex: 1 }]}
                   onPress={pickReceiptImage}
+                  disabled={isProcessingOCR}
                 >
                   <Ionicons name="images-outline" size={20} color="#fff" />
                   <Text style={styles.modalButtonText}>Upload Photo</Text>
                 </TouchableOpacity>
               </>
             ) : (
-              <TouchableOpacity
-                style={[styles.modalButton, styles.continueButton]}
-                onPress={() => {
-                  updateState({ showReceiptModal: false });
-                }}
-              >
-                <Text style={styles.modalButtonText}>Continue</Text>
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.continueButton, { flex: 1 }]}
+                  onPress={() => {
+                    resetReceiptState();
+                    updateState({
+                      showReceiptModal: false,
+                      waitingForReceipt: false,
+                      isAtFuelStation: false,
+                    });
+                    showNotification('info', 'Ready for next receipt', 1500);
+                  }}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+                  <Text style={styles.modalButtonText}>Continue</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.scanNewButton, { flex: 1 }]}
+                  onPress={() => {
+                    resetReceiptState();
+                    showNotification('info', '📸 Ready to scan a new receipt', 1500);
+                  }}
+                >
+                  <Ionicons name="camera-outline" size={20} color="#fff" />
+                  <Text style={styles.modalButtonText}>Scan New</Text>
+                </TouchableOpacity>
+              </>
             )}
           </View>
 
@@ -1096,6 +1388,7 @@ export default function LocationScreen({ route }) {
                     {
                       text: 'Skip',
                       onPress: () => {
+                        resetReceiptState();
                         updateState({
                           showReceiptModal: false,
                           waitingForReceipt: false,
@@ -1106,6 +1399,7 @@ export default function LocationScreen({ route }) {
                   ]
                 );
               }}
+              disabled={isProcessingOCR}
             >
               <Text style={styles.skipButtonText}>Skip for now</Text>
             </TouchableOpacity>
@@ -1114,9 +1408,6 @@ export default function LocationScreen({ route }) {
       </View>
     </Modal>
   );
-  // ============================================
-  // END RECEIPT MODAL
-  // ============================================
 
   const renderFuelModal = () => (
     <Modal
@@ -1180,220 +1471,122 @@ export default function LocationScreen({ route }) {
     </Modal>
   );
 
-  const renderMap = () => (
-    <TouchableOpacity
-      activeOpacity={1}
-      onPress={() => updateState({ fullMap: true })}
-      style={fullMap ? styles.fullMap : styles.halfMap}
+const renderMap = () => (
+  <View
+    style={[
+      styles.mapContainer,
+      fullMap && styles.mapContainerFull,
+    ]}
+  >
+    <MapView
+      ref={mapRef}
+      style={styles.map}
+      initialRegion={{
+        latitude: Number(start?.latitude ?? location?.latitude ?? -26.2041),
+        longitude: Number(start?.longitude ?? location?.longitude ?? 28.0473),
+        latitudeDelta: 0.05,
+        longitudeDelta: 0.05,
+      }}
+      showsUserLocation={false}
+      showsCompass
     >
-      <MapView
-        ref={mapRef}
-        style={StyleSheet.absoluteFillObject}
-        initialRegion={{
-          latitude: start?.latitude || location?.latitude || -26.2041,
-          longitude: start?.longitude || location?.longitude || 28.0473,
-          latitudeDelta: CONFIG.MAP_DELTA,
-          longitudeDelta: CONFIG.MAP_DELTA,
-        }}
-        showsUserLocation
-        showsCompass
-      >
-        {/* Start Point */}
-        {start && (
-          <Marker
-            coordinate={start}
-            title="Start"
-            description={startAddress}
-            pinColor="green"
-          />
-        )}
-
-        {/* Stops */}
-        {stops.map((point, index) => (
-          <Marker
-            key={`${point.latitude}-${point.longitude}-${index}`}
-            coordinate={point}
-            title={`Stop ${index + 1}`}
-            description={stopAddresses[index] || ""}
-            pinColor="orange"
-          >
-            <Callout>
-              <View style={styles.calloutView}>
-                <Text style={styles.calloutTitle}>Stop {index + 1}</Text>
-                <Text>{stopAddresses[index] || "Stop location"}</Text>
-              </View>
-            </Callout>
-          </Marker>
-        ))}
-
-        {/* Current Location */}
-        {location && !start && (
-          <Marker coordinate={location} title="You">
-            <View style={styles.currentLocationMarker}>
-              <View style={styles.currentLocationDot} />
-            </View>
-          </Marker>
-        )}
-
-        {/* Route */}
-        {routeCoords.length > 0 && (
-          <Polyline
-            coordinates={routeCoords}
-            strokeWidth={5}
-            strokeColor="#ff2d2d"
-          />
-        )}
-
-        {/* Fuel Stations Along Route */}
-        {fuelStations.slice(0, 10).map((station) => (
-          <Marker
-            key={station.id}
-            coordinate={{
-              latitude: station.latitude,
-              longitude: station.longitude
-            }}
-            title={station.name}
-            description={station.address || 'Fuel Station'}
-          >
-            <View style={[
-              styles.fuelMarker,
-              recommendedStation?.id === station.id && styles.recommendedFuelMarker
-            ]}>
-              <Ionicons
-                name="flame-outline"
-                size={16}
-                color={recommendedStation?.id === station.id ? "#FF6B00" : "#f44336"}
-              />
-            </View>
-            <Callout>
-              <View style={styles.calloutView}>
-                <Text style={styles.calloutTitle}>{station.name}</Text>
-                <Text>{station.address || 'Address not available'}</Text>
-                {station.brand && <Text>Brand: {station.brand}</Text>}
-                {station.openingHours && (
-                  <Text>Hours: {station.openingHours}</Text>
-                )}
-                {station.distanceToRoute !== undefined && (
-                  <Text>Distance from route: {formatDistance(station.distanceToRoute)}</Text>
-                )}
-                {recommendedStation?.id === station.id && (
-                  <Text style={{ color: '#FF6B00', fontWeight: 'bold' }}>⭐ Recommended</Text>
-                )}
-              </View>
-            </Callout>
-          </Marker>
-        ))}
-      </MapView>
-
-      {/* Map Overlay for Loading */}
-      {routeLoading && (
-        <View style={styles.mapOverlay}>
-          <ActivityIndicator size="small" color="#007bff" />
-          <Text style={styles.overlayText}>Building route...</Text>
-        </View>
+      {start && (
+        <Marker
+          coordinate={{
+            latitude: Number(start.latitude),
+            longitude: Number(start.longitude),
+          }}
+          title="Start"
+          description={startAddress}
+          pinColor="green"
+        />
       )}
 
-      {/* Searching Stations Overlay */}
-      {searchingStations && (
-        <View style={styles.mapOverlay}>
-          <ActivityIndicator size="small" color="#007bff" />
-          <Text style={styles.overlayText}>Finding fuel stations along route...</Text>
-        </View>
+      {stops.map((point, index) => (
+        <Marker
+          key={`stop-${index}`}
+          coordinate={{
+            latitude: Number(point.latitude),
+            longitude: Number(point.longitude),
+          }}
+          title={`Stop ${index + 1}`}
+          description={stopAddresses[index] || ""}
+          pinColor="orange"
+        />
+      ))}
+
+      {routeCoords.length > 0 && (
+        <Polyline
+          coordinates={routeCoords.map(point => ({
+            latitude: Number(point.latitude),
+            longitude: Number(point.longitude),
+          }))}
+          strokeWidth={5}
+          strokeColor="#ff2d2d"
+        />
       )}
+    </MapView>
 
-      {/* Fuel Warning Overlay */}
-      {fuelWarning && (
-        <View style={styles.fuelWarningOverlay}>
-          <Ionicons name="warning-outline" size={24} color="#fff" />
-          <Text style={styles.fuelWarningText}>Low Fuel!</Text>
-        </View>
-      )}
+    {routeLoading && (
+      <View style={styles.mapOverlay}>
+        <ActivityIndicator size="small" color="#007bff" />
+        <Text style={styles.overlayText}>Building route...</Text>
+      </View>
+    )}
 
-      {/* Full Map Controls */}
-      {fullMap && (
-        <>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => updateState({ fullMap: false })}
-          >
-            <Ionicons name="arrow-back-outline" size={24} color="#fff" />
-          </TouchableOpacity>
+    {searchingStations && (
+      <View style={styles.mapOverlay}>
+        <ActivityIndicator size="small" color="#007bff" />
+        <Text style={styles.overlayText}>
+          Finding fuel stations along route...
+        </Text>
+      </View>
+    )}
 
-          <TouchableOpacity
-            style={styles.centerButton}
-            onPress={() => {
-              if (location && mapRef.current) {
-                mapRef.current.animateToRegion({
-                  latitude: location.latitude,
-                  longitude: location.longitude,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
-                });
-              }
-            }}
-          >
-            <Ionicons name="locate-outline" size={24} color="#007bff" />
-          </TouchableOpacity>
+    {fuelWarning && (
+      <View style={styles.fuelWarningOverlay}>
+        <Ionicons name="warning-outline" size={24} color="#fff" />
+        <Text style={styles.fuelWarningText}>Low Fuel!</Text>
+      </View>
+    )}
 
-          <TouchableOpacity
-            style={styles.fuelSearchButton}
-            onPress={() => {
-              updateState({ showFuelModal: true });
-              if (fuelStations.length === 0 && routeCoords.length > 0) {
-                findFuelStationsAlongRoute(routeCoords);
-              }
-            }}
-          >
-            <Ionicons name="flame-outline" size={24} color="#fff" />
-          </TouchableOpacity>
+    {fullMap && (
+      <>
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => updateState({ fullMap: false })}
+        >
+          <Ionicons name="arrow-back-outline" size={24} color="#fff" />
+        </TouchableOpacity>
 
-          {/* Route Info */}
-          {routeInfo && (
-            <View style={styles.distanceInfo}>
-              <View style={styles.distanceRow}>
-                <Ionicons name="navigate-outline" size={20} color="#007bff" />
-                <Text style={styles.distanceText}>
-                  Total Distance: {formatDistance(routeInfo.distance)}
-                </Text>
-              </View>
-              <View style={styles.distanceRow}>
-                <Ionicons name="time-outline" size={20} color="#007bff" />
-                <Text style={styles.distanceText}>
-                  Estimated Time: {Math.round(routeInfo.duration)} min
-                </Text>
-              </View>
-              {fuelStations.length > 0 && (
-                <View style={styles.distanceRow}>
-                  <Ionicons name="flame-outline" size={20} color="#f44336" />
-                  <Text style={styles.distanceText}>
-                    {fuelStations.length} stations along route
-                  </Text>
-                </View>
-              )}
-            </View>
-          )}
-        </>
-      )}
-    </TouchableOpacity>
-  );
+        <TouchableOpacity
+          style={styles.centerButton}
+          onPress={() => {
+            if (location && mapRef.current) {
+              mapRef.current.animateToRegion({
+                latitude: Number(location.latitude),
+                longitude: Number(location.longitude),
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              });
+            }
+          }}
+        >
+          <Ionicons name="locate-outline" size={24} color="#007bff" />
+        </TouchableOpacity>
+      </>
+    )}
+  </View>
+);
 
-  // ============================================
-  // BUTTON SHEET (covers the info paper; drag down to reveal it)
-  // ============================================
   const renderButtonSheet = () => (
     <Animated.View
       style={[
         styles.buttonSheet,
-        {
-          transform: [{ translateY: buttonSheetY }],
-        },
+        { transform: [{ translateY: buttonSheetY }] },
       ]}
     >
-      {/* DRAG HANDLE */}
-      <View
-        {...buttonSheetPanResponder.panHandlers}
-        style={styles.routeSheetHandleArea}
-      >
+      <View {...buttonSheetPanResponder.panHandlers} style={styles.routeSheetHandleArea}>
         <View style={styles.routeSheetHandle} />
 
         <View style={styles.routeSheetHeader}>
@@ -1426,7 +1619,6 @@ export default function LocationScreen({ route }) {
         {renderNotification()}
       </View>
 
-      {/* QUICK ACTIONS */}
       <ScrollView
         style={styles.routeSheetQuickActions}
         contentContainerStyle={{ paddingBottom: 24 }}
@@ -1525,241 +1717,231 @@ export default function LocationScreen({ route }) {
       </ScrollView>
     </Animated.View>
   );
-  // ============================================
-  // END BUTTON SHEET RENDER
-  // ============================================
 
-  
   const renderRouteInfoPanel = () => (
     <ScrollView
       style={styles.routeInfoScroll}
       contentContainerStyle={styles.routeSheetContent}
       showsVerticalScrollIndicator={false}
     >
-        {/* ACTIVE ROUTE */}
-        <Text style={styles.routeSheetSectionTitle}>Active Route</Text>
+      <Text style={styles.routeSheetSectionTitle}>Active Route</Text>
 
-        {error ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={loadTrip}>
-              <Text style={styles.buttonText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
+      {error ? (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.primaryButton} onPress={loadTrip}>
+            <Text style={styles.buttonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
+      <View style={styles.routeInfoWhiteCard}>
+        <View style={styles.infoCardIcon}>
+          <Ionicons name="navigate-outline" size={20} color="#007bff" />
+        </View>
+        <View style={styles.infoCardTextContainer}>
+          <Text style={styles.infoCardLabel}>Start</Text>
+          <Text style={styles.infoCardValue}>
+            {tripLoading ? "Loading address..." : startAddress || "Unknown address"}
+          </Text>
+        </View>
+      </View>
+
+      {routeLoading ? (
         <View style={styles.routeInfoWhiteCard}>
+          <ActivityIndicator size="small" color="#007bff" />
+          <Text style={[styles.infoCardValue, { marginLeft: 12 }]}>Building route...</Text>
+        </View>
+      ) : null}
+
+      {stopAddresses.map((addr, i) => (
+        <View key={i} style={styles.routeInfoWhiteCard}>
           <View style={styles.infoCardIcon}>
-            <Ionicons name="navigate-outline" size={20} color="#007bff" />
+            <Ionicons name="location-outline" size={20} color="#007bff" />
           </View>
           <View style={styles.infoCardTextContainer}>
-            <Text style={styles.infoCardLabel}>Start</Text>
-            <Text style={styles.infoCardValue}>
-              {tripLoading ? "Loading address..." : startAddress || "Unknown address"}
-            </Text>
+            <Text style={styles.infoCardLabel}>Stop {i + 1}</Text>
+            <Text style={styles.infoCardValue}>{addr}</Text>
+          </View>
+        </View>
+      ))}
+
+      <Text style={styles.routeSheetSectionTitle}>Fuel Status</Text>
+
+      <View style={[styles.fuelStatusCard, fuelWarning ? styles.fuelStatusWarning : null]}>
+        <View style={styles.fuelStatusHeader}>
+          <View style={styles.fuelStatusIcon}>
+            <Ionicons name="flame" size={22} color="#fff" />
+          </View>
+          <View>
+            <Text style={styles.fuelStatusTitle}>Fuel Level</Text>
+            <Text style={styles.fuelPercentage}>{fuelPercent.toFixed(1)}%</Text>
           </View>
         </View>
 
-        {routeLoading ? (
-          <View style={styles.routeInfoWhiteCard}>
-            <ActivityIndicator size="small" color="#007bff" />
-            <Text style={[styles.infoCardValue, { marginLeft: 12 }]}>Building route...</Text>
-          </View>
-        ) : null}
-
-        {stopAddresses.map((addr, i) => (
-          <View key={i} style={styles.routeInfoWhiteCard}>
-            <View style={styles.infoCardIcon}>
-              <Ionicons name="location-outline" size={20} color="#007bff" />
-            </View>
-            <View style={styles.infoCardTextContainer}>
-              <Text style={styles.infoCardLabel}>Stop {i + 1}</Text>
-              <Text style={styles.infoCardValue}>{addr}</Text>
-            </View>
-          </View>
-        ))}
-
-        {/* FUEL STATUS */}
-        <Text style={styles.routeSheetSectionTitle}>Fuel Status</Text>
-
-        <View style={[styles.fuelStatusCard, fuelWarning ? styles.fuelStatusWarning : null]}>
-          <View style={styles.fuelStatusHeader}>
-            <View style={styles.fuelStatusIcon}>
-              <Ionicons name="flame" size={22} color="#fff" />
-            </View>
-            <View>
-              <Text style={styles.fuelStatusTitle}>Fuel Level</Text>
-              <Text style={styles.fuelPercentage}>{fuelPercent.toFixed(1)}%</Text>
-            </View>
-          </View>
-
-          <View style={styles.fuelProgressBackground}>
-            <View
-              style={[
-                styles.fuelProgress,
-                { width: `${Math.max(0, Math.min(100, fuelPercent))}%` },
-              ]}
-            />
-          </View>
-
-          <View style={styles.fuelRangeRow}>
-            <View>
-              <Text style={styles.fuelRangeLabel}>Estimated Range</Text>
-              <Text style={styles.fuelRangeValue}>{calculateRemainingRange().toFixed(1)} km</Text>
-            </View>
-            <Ionicons name="speedometer-outline" size={24} color="#007bff" />
-          </View>
-
-          {fuelWarning && (
-            <View style={styles.lowFuelWarning}>
-              <Ionicons name="warning-outline" size={18} color="#fff" />
-              <Text style={styles.lowFuelWarningText}>Low Fuel - Please refuel soon!</Text>
-            </View>
-          )}
-
-          {recommendedStation && (
-            <View style={styles.nearestStation}>
-              <Ionicons name="location" size={18} color="#007bff" />
-              <Text style={styles.nearestStationText}>
-                Nearest: {recommendedStation.name} ({formatDistance(
-                  recommendedStation.distanceToRoute || haversineKm(
-                    location?.latitude || 0,
-                    location?.longitude || 0,
-                    recommendedStation.latitude,
-                    recommendedStation.longitude
-                  )
-                )} from route)
-              </Text>
-            </View>
-          )}
-
-          {fuelStations.length > 0 && (
-            <Text style={styles.stationCountText}>
-              {fuelStations.length} stations found along route
-            </Text>
-          )}
+        <View style={styles.fuelProgressBackground}>
+          <View
+            style={[
+              styles.fuelProgress,
+              { width: `${Math.max(0, Math.min(100, fuelPercent))}%` },
+            ]}
+          />
         </View>
 
-        {/* DISTANCE COMPARISON */}
-        {destinationDistanceToStation && (
-          <View style={styles.distanceComparisonCard}>
-            <Text style={styles.distanceComparisonTitle}>Distance Comparison</Text>
-            <View style={styles.comparisonRow}>
-              <Text style={styles.comparisonLabel}>To station</Text>
-              <Text style={styles.comparisonValue}>
-                {destinationDistanceToStation.station.toFixed(1)} km
-              </Text>
-            </View>
-            <View style={styles.comparisonRow}>
-              <Text style={styles.comparisonLabel}>To destination</Text>
-              <Text style={styles.comparisonValue}>
-                {destinationDistanceToStation.destination.toFixed(1)} km
-              </Text>
-            </View>
-            <Text style={styles.comparisonResult}>
-              {destinationDistanceToStation.stationCloser
-                ? "Station is closer than destination"
-                : "Destination is closer than station"}
+        <View style={styles.fuelRangeRow}>
+          <View>
+            <Text style={styles.fuelRangeLabel}>Estimated Range</Text>
+            <Text style={styles.fuelRangeValue}>{calculateRemainingRange().toFixed(1)} km</Text>
+          </View>
+          <Ionicons name="speedometer-outline" size={24} color="#007bff" />
+        </View>
+
+        {fuelWarning && (
+          <View style={styles.lowFuelWarning}>
+            <Ionicons name="warning-outline" size={18} color="#fff" />
+            <Text style={styles.lowFuelWarningText}>Low Fuel - Please refuel soon!</Text>
+          </View>
+        )}
+
+        {recommendedStation && (
+          <View style={styles.nearestStation}>
+            <Ionicons name="location" size={18} color="#007bff" />
+            <Text style={styles.nearestStationText}>
+              Nearest: {recommendedStation.name} ({formatDistance(
+                recommendedStation.distanceToRoute || haversineKm(
+                  location?.latitude || 0,
+                  location?.longitude || 0,
+                  recommendedStation.latitude,
+                  recommendedStation.longitude
+                )
+              )} from route)
             </Text>
           </View>
         )}
 
-        {/* RECEIPT STATUS */}
-        {receiptSubmitted && (
-          <View style={styles.receiptStatusCard}>
-            <Text style={styles.receiptStatusTitle}>✓ Receipt Submitted</Text>
-            <Text style={styles.receiptStatusText}>Amount: R{receiptAmount}</Text>
-            <Text style={styles.receiptStatusText}>Fuel: {fuelPurchased.toFixed(1)}L</Text>
-            <Text style={styles.receiptStatusText}>New Fuel Level: {fuelPercent.toFixed(1)}%</Text>
-          </View>
+        {fuelStations.length > 0 && (
+          <Text style={styles.stationCountText}>
+            {fuelStations.length} stations found along route
+          </Text>
         )}
+      </View>
 
-        {/* ROUTE INFORMATION */}
-        {routeInfo && (
-          <>
-            <Text style={styles.routeSheetSectionTitle}>Route Information</Text>
+      {destinationDistanceToStation && (
+        <View style={styles.distanceComparisonCard}>
+          <Text style={styles.distanceComparisonTitle}>Distance Comparison</Text>
+          <View style={styles.comparisonRow}>
+            <Text style={styles.comparisonLabel}>To station</Text>
+            <Text style={styles.comparisonValue}>
+              {destinationDistanceToStation.station.toFixed(1)} km
+            </Text>
+          </View>
+          <View style={styles.comparisonRow}>
+            <Text style={styles.comparisonLabel}>To destination</Text>
+            <Text style={styles.comparisonValue}>
+              {destinationDistanceToStation.destination.toFixed(1)} km
+            </Text>
+          </View>
+          <Text style={styles.comparisonResult}>
+            {destinationDistanceToStation.stationCloser
+              ? "Station is closer than destination"
+              : "Destination is closer than station"}
+          </Text>
+        </View>
+      )}
 
-            <View style={styles.routeInformationCard}>
-              <View style={styles.routeInfoHeader}>
-                <Ionicons name="map-outline" size={22} color="#007bff" />
-                <Text style={styles.routeInfoTitle}>Route Information</Text>
-              </View>
+      {receiptSubmitted && (
+        <View style={styles.receiptStatusCard}>
+          <Text style={styles.receiptStatusTitle}>✓ Receipt Submitted</Text>
+          <Text style={styles.receiptStatusText}>Amount: R{receiptAmount}</Text>
+          <Text style={styles.receiptStatusText}>Fuel: {fuelPurchased.toFixed(1)}L</Text>
+          <Text style={styles.receiptStatusText}>New Fuel Level: {fuelPercent.toFixed(1)}%</Text>
+        </View>
+      )}
 
-              <View style={styles.routeInfoRow}>
-                <Ionicons name="navigate-circle-outline" size={20} color="#007bff" />
-                <View>
-                  <Text style={styles.routeInfoSmallLabel}>Total Distance</Text>
-                  <Text style={styles.routeInfoText}>{formatDistance(routeInfo.distance)}</Text>
-                </View>
-              </View>
+      {routeInfo && (
+        <>
+          <Text style={styles.routeSheetSectionTitle}>Route Information</Text>
 
-              <View style={styles.routeInfoRow}>
-                <Ionicons name="time-outline" size={20} color="#007bff" />
-                <View>
-                  <Text style={styles.routeInfoSmallLabel}>Estimated Time</Text>
-                  <Text style={styles.routeInfoText}>{Math.round(routeInfo.duration)} min</Text>
-                </View>
-              </View>
-
-              {fuelStations.length > 0 && (
-                <View style={styles.routeInfoRow}>
-                  <Ionicons name="flame-outline" size={20} color="#f44336" />
-                  <View>
-                    <Text style={styles.routeInfoSmallLabel}>Fuel Stations</Text>
-                    <Text style={styles.routeInfoText}>
-                      {fuelStations.length} fuel stations along route
-                    </Text>
-                  </View>
-                </View>
-              )}
+          <View style={styles.routeInformationCard}>
+            <View style={styles.routeInfoHeader}>
+              <Ionicons name="map-outline" size={22} color="#007bff" />
+              <Text style={styles.routeInfoTitle}>Route Information</Text>
             </View>
-          </>
-        )}
 
-        {/* FUEL STATIONS LIST */}
-        <Text style={styles.routeSheetSectionTitle}>Fuel Stations Along Route</Text>
-
-        {searchingStations ? (
-          <View style={styles.routeInfoWhiteCard}>
-            <ActivityIndicator size="small" color="#007bff" />
-            <Text style={[styles.infoCardValue, { marginLeft: 12 }]}>Searching for stations...</Text>
-          </View>
-        ) : fuelStations.length > 0 ? (
-          fuelStations.slice(0, 5).map((station, i) => (
-            <View key={station.id || i} style={styles.stationCard}>
-              <View style={styles.stationIcon}>
-                <Ionicons name="flame" size={20} color="#f44336" />
-              </View>
-              <View style={styles.stationInfo}>
-                <Text style={styles.stationName}>{station.name}</Text>
-                <Text style={styles.stationDistance}>
-                  {recommendedStation?.id === station.id
-                    ? "⭐ Best"
-                    : formatDistance(
-                        station.distanceToRoute || haversineKm(
-                          location?.latitude || 0,
-                          location?.longitude || 0,
-                          station.latitude,
-                          station.longitude
-                        )
-                      )}
-                </Text>
+            <View style={styles.routeInfoRow}>
+              <Ionicons name="navigate-circle-outline" size={20} color="#007bff" />
+              <View>
+                <Text style={styles.routeInfoSmallLabel}>Total Distance</Text>
+                <Text style={styles.routeInfoText}>{formatDistance(routeInfo.distance)}</Text>
               </View>
             </View>
-          ))
-        ) : (
-          <Text style={styles.noDataText}>No stations found along route</Text>
-        )}
 
-        <View style={{ height: 140 }} />
+            <View style={styles.routeInfoRow}>
+              <Ionicons name="time-outline" size={20} color="#007bff" />
+              <View>
+                <Text style={styles.routeInfoSmallLabel}>Estimated Time</Text>
+                <Text style={styles.routeInfoText}>{Math.round(routeInfo.duration)} min</Text>
+              </View>
+            </View>
+
+            {fuelStations.length > 0 && (
+              <View style={styles.routeInfoRow}>
+                <Ionicons name="flame-outline" size={20} color="#f44336" />
+                <View>
+                  <Text style={styles.routeInfoSmallLabel}>Fuel Stations</Text>
+                  <Text style={styles.routeInfoText}>
+                    {fuelStations.length} fuel stations along route
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+        </>
+      )}
+
+      <Text style={styles.routeSheetSectionTitle}>Fuel Stations Along Route</Text>
+
+      {searchingStations ? (
+        <View style={styles.routeInfoWhiteCard}>
+          <ActivityIndicator size="small" color="#007bff" />
+          <Text style={[styles.infoCardValue, { marginLeft: 12 }]}>Searching for stations...</Text>
+        </View>
+      ) : fuelStations.length > 0 ? (
+        fuelStations.slice(0, 5).map((station, i) => (
+          <View key={station.id || i} style={styles.stationCard}>
+            <View style={styles.stationIcon}>
+              <Ionicons name="flame" size={20} color="#f44336" />
+            </View>
+            <View style={styles.stationInfo}>
+              <Text style={styles.stationName}>{station.name}</Text>
+              <Text style={styles.stationDistance}>
+                {recommendedStation?.id === station.id
+                  ? "⭐ Best"
+                  : formatDistance(
+                      station.distanceToRoute || haversineKm(
+                        location?.latitude || 0,
+                        location?.longitude || 0,
+                        station.latitude,
+                        station.longitude
+                      )
+                    )}
+              </Text>
+            </View>
+          </View>
+        ))
+      ) : (
+        <Text style={styles.noDataText}>No stations found along route</Text>
+      )}
+
+      <View style={{ height: 140 }} />
     </ScrollView>
   );
-  // ============================================
-  // END ROUTE INFO PANEL RENDER
-  
+
   if (!screenReady) {
     return renderLoading();
   }
+
+  console.log('screenReady:', screenReady);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -1780,6 +1962,7 @@ export default function LocationScreen({ route }) {
       )}
       {renderReceiptModal()}
       {renderFuelModal()}
+      {renderAmountInputModal()}
     </SafeAreaView>
   );
 }
@@ -1788,10 +1971,23 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   loadingText: { marginTop: 10, color: "#666" },
-  halfMap: { height: "35%", width: "100%" },
-  fullMap: { ...StyleSheet.absoluteFillObject },
+  mapContainer: {
+    width: "100%",
+    height: 300,
+    overflow: "hidden",
+  },
 
-  // Legacy card styles (still used for the error box / shared button styles)
+  mapContainerFull: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 100,
+    elevation: 10,
+  },
+
+  map: {
+    width: "100%",
+    height: "100%",
+  },
+
   errorBox: {
     backgroundColor: "#fff",
     padding: 12,
@@ -1803,14 +1999,13 @@ const styles = StyleSheet.create({
   errorText: { color: "#f44336" },
   noDataText: { color: "#666", fontStyle: "italic", marginBottom: 10 },
 
-  // Buttons
   primaryButton: {
     flexDirection: "row",
     backgroundColor: "white",
     padding: 12,
     borderRadius: 15,
     justifyContent: "center",
-    height:50,
+    height: 50,
     marginTop: 10,
     alignItems: "center",
     shadowColor: "#000",
@@ -1819,21 +2014,11 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  fuelButton: {
-    backgroundColor: "white",
-  },
-  receiptButton: {
-    backgroundColor: "white",
-    marginTop: 15,
-    padding: 16,
-  },
+  fuelButton: { backgroundColor: "white" },
+  receiptButton: { backgroundColor: "white", marginTop: 15, padding: 16 },
   buttonText: { color: "#0A1F44", marginLeft: 8, fontWeight: "bold", fontSize: 15 },
-  endTripButton: {
-    backgroundColor: 'white',
-    marginTop: 15,
-  },
+  endTripButton: { backgroundColor: 'white', marginTop: 15 },
 
-  // Map Controls
   backButton: {
     position: "absolute",
     top: 50,
@@ -1946,16 +2131,9 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
   },
-  fuelWarningText: {
-    color: "#fff",
-    fontWeight: "bold",
-    marginLeft: 8,
-  },
+  fuelWarningText: { color: "#fff", fontWeight: "bold", marginLeft: 8 },
 
-  currentLocationMarker: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  currentLocationMarker: { alignItems: "center", justifyContent: "center" },
   currentLocationDot: {
     width: 16,
     height: 16,
@@ -1973,19 +2151,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  recommendedFuelMarker: {
-    borderColor: "#FF6B00",
-    borderWidth: 3,
-  },
-  calloutView: {
-    padding: 8,
-    maxWidth: 200,
-  },
-  calloutTitle: {
-    fontWeight: "bold",
-    fontSize: 14,
-    marginBottom: 4,
-  },
+  recommendedFuelMarker: { borderColor: "#FF6B00", borderWidth: 3 },
+  calloutView: { padding: 8, maxWidth: 200 },
+  calloutTitle: { fontWeight: "bold", fontSize: 14, marginBottom: 4 },
+
   modalContainer: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -2005,32 +2174,17 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#1a1a1a",
-  },
-  modalCloseButton: {
-    padding: 4,
-  },
-  modalList: {
-    padding: 16,
-  },
+  modalTitle: { fontSize: 18, fontWeight: "bold", color: "#1a1a1a" },
+  modalCloseButton: { padding: 4 },
+  modalList: { padding: 16 },
   fuelCountText: {
     fontSize: 14,
     color: "#666",
     marginBottom: 12,
     textAlign: "center",
   },
-  loadingModalContent: {
-    padding: 40,
-    alignItems: "center",
-  },
-  loadingModalText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: "#666",
-  },
+  loadingModalContent: { padding: 40, alignItems: "center" },
+  loadingModalText: { marginTop: 12, fontSize: 16, color: "#666" },
   fuelItem: {
     backgroundColor: "#f8f9fa",
     padding: 12,
@@ -2039,10 +2193,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#eee",
   },
-  fuelItemContent: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+  fuelItemContent: { flexDirection: "row", alignItems: "center" },
   fuelIconContainer: {
     width: 40,
     height: 40,
@@ -2053,50 +2204,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#f44336",
   },
-  fuelItemInfo: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  fuelItemName: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#1a1a1a",
-  },
-  fuelItemAddress: {
-    fontSize: 12,
-    color: "#666",
-    marginTop: 2,
-  },
-  fuelItemBrand: {
-    fontSize: 12,
-    color: "#888",
-    marginTop: 2,
-  },
-  fuelItemDistance: {
-    fontSize: 12,
-    color: "#007bff",
-    marginTop: 2,
-  },
+  fuelItemInfo: { flex: 1, marginLeft: 12 },
+  fuelItemName: { fontSize: 14, fontWeight: "bold", color: "#1a1a1a" },
+  fuelItemAddress: { fontSize: 12, color: "#666", marginTop: 2 },
+  fuelItemBrand: { fontSize: 12, color: "#888", marginTop: 2 },
+  fuelItemDistance: { fontSize: 12, color: "#007bff", marginTop: 2 },
   routeBadge: {
     backgroundColor: "#FF6B00",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
   },
-  routeBadgeText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "bold",
-  },
-  emptyState: {
-    alignItems: "center",
-    padding: 40,
-  },
-  emptyStateText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: "#999",
-  },
+  routeBadgeText: { color: "#fff", fontSize: 10, fontWeight: "bold" },
+  emptyState: { alignItems: "center", padding: 40 },
+  emptyStateText: { marginTop: 12, fontSize: 16, color: "#999" },
   retryButton: {
     marginTop: 16,
     paddingHorizontal: 24,
@@ -2104,12 +2225,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#007bff",
     borderRadius: 20,
   },
-  retryButtonText: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
+  retryButtonText: { color: "#fff", fontWeight: "bold" },
 
-  // Receipt Modal Styles
   receiptImageContainer: {
     width: '100%',
     height: 200,
@@ -2132,11 +2249,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
   },
-  receiptSubmittedText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 12,
-  },
+  receiptSubmittedText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
   receiptPlaceholder: {
     width: '100%',
     height: 200,
@@ -2146,10 +2259,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 15,
   },
-  receiptPlaceholderText: {
-    color: '#999',
-    marginTop: 10,
-  },
+  receiptPlaceholderText: { color: '#999', marginTop: 10 },
   receiptDetails: {
     backgroundColor: '#f5f5f5',
     padding: 12,
@@ -2157,11 +2267,7 @@ const styles = StyleSheet.create({
     width: '100%',
     marginBottom: 15,
   },
-  receiptDetailText: {
-    fontSize: 14,
-    color: '#333',
-    marginVertical: 2,
-  },
+  receiptDetailText: { fontSize: 14, color: '#333', marginVertical: 2 },
   modalSubtitle: {
     fontSize: 14,
     color: '#666',
@@ -2182,47 +2288,49 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 5,
   },
-  scanButton: {
-    backgroundColor: '#007bff',
-  },
-  uploadButton: {
-    backgroundColor: '#4CAF50',
-  },
-  continueButton: {
-    backgroundColor: '#FF6B00',
-  },
+  scanButton: { backgroundColor: '#007bff' },
+  uploadButton: { backgroundColor: '#4CAF50' },
+  continueButton: { backgroundColor: '#FF6B00' },
+  scanNewButton: { backgroundColor: '#2196F3' },
   modalButtonText: {
     color: '#fff',
     fontWeight: '600',
     marginLeft: 10,
   },
-  skipButton: {
-    marginTop: 15,
-    padding: 10,
-    alignItems: 'center',
+  skipButton: { marginTop: 15, padding: 10, alignItems: 'center' },
+  skipButtonText: { color: '#999', fontSize: 14 },
+
+  amountInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 16,
+    width: '100%',
+    marginVertical: 15,
+    backgroundColor: '#f9f9f9',
   },
-  skipButtonText: {
-    color: '#999',
+  ocrLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  ocrLoadingText: {
+    marginLeft: 10,
+    color: '#666',
     fontSize: 14,
   },
 
- 
-
-  // Wraps both papers; sits directly below the map.
   infoAreaContainer: {
     flex: 1,
     position: "relative",
     overflow: "hidden",
   },
-
-  //  route/fuel info. Always in place
-  // revealed as the button sheet is dragged down.
   routeInfoScroll: {
     flex: 1,
     backgroundColor: "#ebf2ff",
   },
-
- 
   buttonSheet: {
     position: "absolute",
     left: 0,
@@ -2260,16 +2368,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  routeSheetTitle: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "white",
-  },
-  routeSheetSubtitle: {
-    marginTop: 3,
-    fontSize: 13,
-    color: "#777",
-  },
+  routeSheetTitle: { fontSize: 24, fontWeight: "800", color: "white" },
+  routeSheetSubtitle: { marginTop: 3, fontSize: 13, color: "#777" },
   routeSheetExpandButton: {
     width: 42,
     height: 42,
@@ -2303,7 +2403,6 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 
-  // Active route cards
   routeInfoWhiteCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -2326,22 +2425,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 12,
   },
-  infoCardTextContainer: {
-    flex: 1,
-  },
+  infoCardTextContainer: { flex: 1 },
   infoCardLabel: {
     fontSize: 12,
     fontWeight: "700",
     color: "#777",
     marginBottom: 3,
   },
-  infoCardValue: {
-    fontSize: 14,
-    color: "#333",
-    lineHeight: 20,
-  },
+  infoCardValue: { fontSize: 14, color: "#333", lineHeight: 20 },
 
-  // Fuel status
   fuelStatusCard: {
     backgroundColor: "#fff",
     padding: 17,
@@ -2353,14 +2445,8 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 3,
   },
-  fuelStatusWarning: {
-    borderWidth: 1,
-    borderColor: "#ff6b6b",
-  },
-  fuelStatusHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+  fuelStatusWarning: { borderWidth: 1, borderColor: "#ff6b6b" },
+  fuelStatusHeader: { flexDirection: "row", alignItems: "center" },
   fuelStatusIcon: {
     width: 45,
     height: 45,
@@ -2370,11 +2456,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 12,
   },
-  fuelStatusTitle: {
-    fontSize: 13,
-    color: "#777",
-    fontWeight: "600",
-  },
+  fuelStatusTitle: { fontSize: 13, color: "#777", fontWeight: "600" },
   fuelPercentage: {
     fontSize: 23,
     fontWeight: "800",
@@ -2399,10 +2481,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginTop: 15,
   },
-  fuelRangeLabel: {
-    fontSize: 12,
-    color: "#777",
-  },
+  fuelRangeLabel: { fontSize: 12, color: "#777" },
   fuelRangeValue: {
     fontSize: 17,
     fontWeight: "700",
@@ -2423,24 +2502,15 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     flex: 1,
   },
-  nearestStation: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 13,
-  },
+  nearestStation: { flexDirection: "row", alignItems: "center", marginTop: 13 },
   nearestStationText: {
     flex: 1,
     marginLeft: 7,
     fontSize: 13,
     color: "#444",
   },
-  stationCountText: {
-    marginTop: 10,
-    color: "#777",
-    fontSize: 12,
-  },
+  stationCountText: { marginTop: 10, color: "#777", fontSize: 12 },
 
-  // Route information
   routeInformationCard: {
     backgroundColor: "#fff",
     borderRadius: 17,
@@ -2470,11 +2540,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingVertical: 11,
   },
-  routeInfoSmallLabel: {
-    fontSize: 11,
-    color: "#888",
-    marginBottom: 2,
-  },
+  routeInfoSmallLabel: { fontSize: 11, color: "#888", marginBottom: 2 },
   routeInfoText: {
     fontSize: 14,
     color: "#333",
@@ -2482,7 +2548,6 @@ const styles = StyleSheet.create({
     marginLeft: 10,
   },
 
-  // Distance comparison
   distanceComparisonCard: {
     backgroundColor: "#e9f7ed",
     padding: 16,
@@ -2500,20 +2565,14 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 5,
   },
-  comparisonLabel: {
-    color: "#555",
-  },
-  comparisonValue: {
-    fontWeight: "700",
-    color: "#222",
-  },
+  comparisonLabel: { color: "#555" },
+  comparisonValue: { fontWeight: "700", color: "#222" },
   comparisonResult: {
     fontWeight: "700",
     color: "#1b5e20",
     marginTop: 8,
   },
 
-  // Receipt status
   receiptStatusCard: {
     backgroundColor: "#e8f5e9",
     padding: 16,
@@ -2526,12 +2585,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 8,
   },
-  receiptStatusText: {
-    color: "#333",
-    marginTop: 3,
-  },
+  receiptStatusText: { color: "#333", marginTop: 3 },
 
-  // Fuel stations list
   stationCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -2554,17 +2609,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 12,
   },
-  stationInfo: {
-    flex: 1,
-  },
-  stationName: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#222",
-  },
-  stationDistance: {
-    fontSize: 12,
-    color: "#007bff",
-    marginTop: 3,
-  },
+  stationInfo: { flex: 1 },
+  stationName: { fontSize: 14, fontWeight: "700", color: "#222" },
+  stationDistance: { fontSize: 12, color: "#007bff", marginTop: 3 },
 });
