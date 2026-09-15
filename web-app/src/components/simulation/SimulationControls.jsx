@@ -1534,7 +1534,7 @@ const SimulationControls = ({
         if (Array.isArray(data) && data.length > 0) {
           setRoutes(data);
           setRoutesError(null);
-          setStatusMessage(`✅ Loaded ${data.length} routes `);
+          // setStatusMessage(`✅ Loaded ${data.length} routes `);
           
           if (data.length > 0) {
             console.log('🌤️ Auto-fetching weather for first route:', data[0].display_name);
@@ -2474,7 +2474,7 @@ const SimulationControls = ({
           )}
           {!routesError && routes.length > 0 && (
             <p className="text-xs text-green-600 mt-1">
-              ✅ Using {routes.length} routes from optimized_routes table
+              {/* ✅ Using {routes.length} routes from optimized_routes table */}
             </p>
           )}
         </div>
