@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import './styles/globals.css';
 import { supabase } from '../lib/supabase';
+import Settings from './components/settings/settings';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -38,6 +39,7 @@ const navItems = [
   { id: 'risk-analysis', label: 'Risk Analysis', icon: Activity },
   { id: 'simulation', label: 'What-If Simulation', icon: Activity },
   { id: 'analytics', label: 'Analytics', icon: Activity },
+  { id: 'settings', label: 'Settings', icon: Activity }
 ];
 
 // ============================================
@@ -444,6 +446,14 @@ const DashboardContent = React.memo(({
                 </div>
               </div>
             )}
+
+             {/* Settings */}
+              {activeTab === 'settings' && (
+                <Settings
+                  darkMode={darkMode}
+                  setDarkMode={setDarkMode}
+                />
+              )}
           </div>
         </main>
       </div>
@@ -580,7 +590,8 @@ function App() {
       'route-planning': 'Route Planning',
       'risk-analysis': 'Risk Analysis',
       simulation: 'What-If Simulation',
-      analytics: 'Analytics'
+      analytics: 'Analytics',
+      settings: 'Settings'
     };
 
     return pageNames[tab] || tab || 'Fleet Management';
