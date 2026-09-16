@@ -1,4 +1,4 @@
-// context/PanicContext.js
+// context/PanicButtonContext.js
 import React, {
   createContext,
   useContext,
@@ -16,16 +16,17 @@ import {
   Vibration,
   Platform,
   ActivityIndicator,
+  Alert,
 } from "react-native";
 import * as ExpoLocation from "expo-location";
-import { supabase } from "../lib/supabase"; 
-import { useAuth } from "../context/AuthContext"; 
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../context/AuthContext";
 
 const PanicContext = createContext(null);
 
 const DEFAULT_CONFIG = {
-  CHECK_IN_INTERVAL_MS: 300000,   
-  RESPONSE_TIME_MS: 30000,
+  CHECK_IN_INTERVAL_MS: 300000, // 5 min
+  RESPONSE_TIME_MS: 30000, // 30 s
 };
 
 export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
@@ -42,6 +43,14 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
   const responseTimerRef = useRef(null);
   const countdownIntervalRef = useRef(null);
   const vibrationIntervalRef = useRef(null);
+  const isPanicRef = useRef(false); // guards against double-trigger
+
+  // Keep ref in sync so callbacks always see latest
+  useEffect(() => {
+    isPanicRef.current = isPanic;
+  }, [isPanic]);
+
+  /* ---------------- Location ---------------- */
 
   const captureLocation = useCallback(async () => {
     try {
@@ -59,8 +68,11 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
     }
   }, []);
 
+  /* ---------------- Vibration ---------------- */
+
   const startGentleVibration = useCallback(() => {
-    const pattern = Platform.OS === "android" ? [0, 200, 100, 200] : [200, 100, 200];
+    const pattern =
+      Platform.OS === "android" ? [0, 200, 100, 200] : [200, 100, 200];
     Vibration.vibrate(pattern, false);
   }, []);
 
@@ -85,43 +97,59 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
     }
   }, []);
 
-  const logPanicEvent = useCallback(async (type) => {
-    const timestamp = new Date().toISOString();
-    const location = await captureLocation();
-    const logEntry = { type, timestamp, location };
-    setPanicLog(logEntry);
-    console.log("PANIC LOG:", JSON.stringify(logEntry));
+  /* ---------------- Logging ---------------- */
 
-    if (user?.id) {
-      supabase
-        .from("panic_logs")
-        .insert({
-          user_id: user.id,
-          event: type,
-          timestamp,
-          location: location
-            ? { latitude: location.latitude, longitude: location.longitude }
-            : null,
-        })
-        .then(({ error }) => {
-          if (error) {
-            console.error("Error saving panic log:", error);
-          } else {
-            console.log("Panic log saved");
-          }
-        });
-    }
-  }, [captureLocation, user]);
+  const logPanicEvent = useCallback(
+    async (type) => {
+      const timestamp = new Date().toISOString();
+      const location = await captureLocation();
+      const logEntry = { type, timestamp, location };
+      setPanicLog(logEntry);
+      console.log("PANIC LOG:", JSON.stringify(logEntry));
 
-  const resetTimers = useCallback(() => {
+      if (user?.id) {
+        supabase
+          .from("panic_logs")
+          .insert({
+            user_id: user.id,
+            event: type,
+            timestamp,
+            location: location
+              ? {
+                  latitude: location.latitude,
+                  longitude: location.longitude,
+                }
+              : null,
+          })
+          .then(({ error }) => {
+            if (error) console.error("Error saving panic log:", error);
+            else console.log("Panic log saved");
+          });
+      }
+    },
+    [captureLocation, user]
+  );
+
+  /* ---------------- Timer helpers ---------------- */
+
+  const clearAllTimers = useCallback(() => {
     if (checkInTimerRef.current) clearTimeout(checkInTimerRef.current);
     if (responseTimerRef.current) clearTimeout(responseTimerRef.current);
-    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    if (countdownIntervalRef.current)
+      clearInterval(countdownIntervalRef.current);
+    checkInTimerRef.current = null;
+    responseTimerRef.current = null;
+    countdownIntervalRef.current = null;
+  }, []);
 
+  const resetTimers = useCallback(() => {
+    clearAllTimers();
     setPanicModalVisible(false);
     setIsPanic(false);
     setTimeLeft(RESPONSE_TIME_MS / 1000);
-  }, [RESPONSE_TIME_MS]);
+  }, [RESPONSE_TIME_MS, clearAllTimers]);
+
+  /* ---------------- Check-in cycle ---------------- */
 
   const startNextCheckInCycle = useCallback(() => {
     resetTimers();
@@ -129,15 +157,12 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
     checkInTimerRef.current = setTimeout(() => {
       setPanicModalVisible(true);
       setTimeLeft(RESPONSE_TIME_MS / 1000);
-
       startGentleVibration();
 
       countdownIntervalRef.current = setInterval(() => {
         setTimeLeft((prev) => {
           const next = prev - 1;
-          if (next <= 0) {
-            clearInterval(countdownIntervalRef.current);
-          }
+          if (next <= 0) clearInterval(countdownIntervalRef.current);
           return next;
         });
       }, 1000);
@@ -146,42 +171,63 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
         setPanicModalVisible(false);
         setIsPanic(true);
         startPanicVibration();
+        await logPanicEvent("PANIC_TRIGGERED_NO_RESPONSE");
+        console.log("SEND HELP - no response within allocated time");
       }, RESPONSE_TIME_MS);
     }, CHECK_IN_INTERVAL_MS);
-  }, [CHECK_IN_INTERVAL_MS, RESPONSE_TIME_MS, startGentleVibration, startPanicVibration, resetTimers]);
+  }, [
+    CHECK_IN_INTERVAL_MS,
+    RESPONSE_TIME_MS,
+    startGentleVibration,
+    startPanicVibration,
+    logPanicEvent,
+    resetTimers,
+  ]);
+
+  /* ---------------- User actions ---------------- */
 
   const handleImOkay = useCallback(async () => {
     setPanicModalVisible(false);
     setIsProcessing(true);
-
     await logPanicEvent("USER_CLICKED_IM_OK");
-
     setIsProcessing(false);
     startNextCheckInCycle();
   }, [logPanicEvent, startNextCheckInCycle]);
 
+  // Acknowledge the panic screen (stops vibration, restarts cycle)
   const handlePanicAction = useCallback(async () => {
     stopPanicVibration();
     setIsPanic(false);
     setIsProcessing(true);
-
-    await logPanicEvent("PANIC_TRIGGERED_NO_RESPONSE");
-    console.log("SEND HELP - no response within allocated time");
-
     setIsProcessing(false);
     startNextCheckInCycle();
-  }, [logPanicEvent, startNextCheckInCycle, stopPanicVibration]);
+  }, [startNextCheckInCycle, stopPanicVibration]);
+
+  // Manual panic trigger from the button
+  const triggerPanic = useCallback(async () => {
+    if (isPanicRef.current) return; // already panicking
+
+    clearAllTimers();
+    setPanicModalVisible(false);
+    setIsPanic(true);
+    startPanicVibration();
+
+    await logPanicEvent("PANIC_TRIGGERED_MANUAL");
+    console.log("SEND HELP - manual trigger");
+  }, [clearAllTimers, startPanicVibration, logPanicEvent]);
+
+  /* ---------------- Lifecycle ---------------- */
 
   useEffect(() => {
     startNextCheckInCycle();
-
     return () => {
-      if (checkInTimerRef.current) clearTimeout(checkInTimerRef.current);
-      if (responseTimerRef.current) clearTimeout(responseTimerRef.current);
-      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      clearAllTimers();
       stopPanicVibration();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ---------------- Context value ---------------- */
 
   const value = {
     panicModalVisible,
@@ -191,6 +237,7 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
     panicLog,
     handleImOkay,
     handlePanicAction,
+    triggerPanic,
   };
 
   return (
@@ -198,7 +245,7 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
       {children}
       <PanicModal />
       {isProcessing && (
-        <Modal visible={true} transparent animationType="fade">
+        <Modal visible transparent animationType="fade">
           <View style={styles.processingOverlay}>
             <View style={styles.processingBox}>
               <ActivityIndicator size="large" color="#007bff" />
@@ -217,13 +264,43 @@ export function usePanic() {
   return ctx;
 }
 
-function PanicModal() {
-  const { panicModalVisible, timeLeft, isPanic, handleImOkay, handlePanicAction } =
-    usePanic();
+/* ---------------- Panic Modal ---------------- */
 
-  if (!isPanic && panicModalVisible) {
+function PanicModal() {
+  const {
+    panicModalVisible,
+    timeLeft,
+    isPanic,
+    handleImOkay,
+    handlePanicAction,
+  } = usePanic();
+
+  // Full-screen panic takes priority
+  if (isPanic) {
     return (
-      <Modal visible={panicModalVisible} transparent animationType="fade">
+      <Modal visible transparent animationType="fade">
+        <View style={styles.fullScreenOverlay}>
+          <View style={styles.fullScreenContent}>
+            <Text style={styles.panicTitle}>Panic Activated</Text>
+            <Text style={styles.panicSubtitle}>
+              Help is being sent with your location.
+            </Text>
+            <TouchableOpacity
+              style={styles.ackButton}
+              onPress={handlePanicAction}
+            >
+              <Text style={styles.ackButtonText}>Acknowledge</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
+  // Check-in modal
+  if (panicModalVisible) {
+    return (
+      <Modal visible transparent animationType="fade">
         <View style={styles.overlay}>
           <View style={styles.modal}>
             <Text style={styles.title}>Check-in Required</Text>
@@ -239,27 +316,10 @@ function PanicModal() {
     );
   }
 
-  if (isPanic) {
-    return (
-      <Modal visible={isPanic} transparent animationType="fade">
-        <View style={styles.fullScreenOverlay}>
-          <View style={styles.fullScreenContent}>
-            <Text style={styles.panicTitle}>Panic Activated</Text>
-            <Text style={styles.panicSubtitle}>
-              No response received. Help is being sent.
-            </Text>
-
-            <TouchableOpacity style={styles.ackButton} onPress={handlePanicAction}>
-              <Text style={styles.ackButtonText}>Acknowledge</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-    );
-  }
-
   return null;
 }
+
+/* ---------------- Styles ---------------- */
 
 const styles = StyleSheet.create({
   overlay: {
@@ -294,13 +354,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
   },
-  buttonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
+  buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 
-  // Full-screen panic styles
   fullScreenOverlay: {
     flex: 1,
     backgroundColor: "rgba(200, 0, 0, 0.85)",
@@ -335,12 +390,7 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
   },
-  ackButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-
+  ackButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
 
   processingOverlay: {
     flex: 1,
@@ -355,9 +405,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     minWidth: 140,
   },
-  processingText: {
-    marginTop: 12,
-    fontSize: 15,
-    color: "#333",
-  },
+  processingText: { marginTop: 12, fontSize: 15, color: "#333" },
 });
