@@ -6,9 +6,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-     "test": "vitest",
-  "test:run": "vitest run",
-  "test:coverage": "vitest run --coverage"
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -46,6 +46,7 @@
     "@testing-library/react": "^16.3.3",
     "@vitest/coverage-v8": "^5.0.0",
     "jsdom": "^30.0.1",
+    "typescript": "~6.0.3",
     "vitest": "^5.0.0"
   }
 }

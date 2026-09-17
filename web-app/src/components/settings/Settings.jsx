@@ -35,9 +35,12 @@ const Settings = ({ darkMode, setDarkMode }) => {
     }
   }, []);
 
-  const isAdmin =
-    user?.role?.toLowerCase() === 'admin' ||
-    user?.role?.toLowerCase() === 'administrator';
+  const userRole = user?.role?.toLowerCase() || '';
+
+const isAdmin =
+  userRole === 'admin' ||
+  userRole === 'administrator' ||
+  userRole.startsWith('admin');
 
   const sections = [
     {

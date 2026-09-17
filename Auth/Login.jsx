@@ -15,9 +15,11 @@ import {
   ActivityIndicator,
 } from 'react-native';
 
+
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { auditLog } from "../utils/auditlogger";
 
 export default function Login({ navigation }) {
   const [email, setEmail] = useState('');
@@ -66,52 +68,75 @@ export default function Login({ navigation }) {
     setPasswordError(error);
   };
 
-  const handleLogin = async () => {
-    const emailValidationError = validateEmail(email);
-    const passwordValidationError = validatePassword(password);
+ const handleLogin = async () => {
+  const emailValidationError = validateEmail(email);
+  const passwordValidationError = validatePassword(password);
 
-    setEmailError(emailValidationError);
-    setPasswordError(passwordValidationError);
+  setEmailError(emailValidationError);
+  setPasswordError(passwordValidationError);
 
-    if (emailValidationError || passwordValidationError) {
-      Alert.alert('Validation Error', 'Please fix the errors before proceeding');
-      return;
-    }
+  if (emailValidationError || passwordValidationError) {
+    Alert.alert(
+      'Validation Error',
+      'Please fix the errors before proceeding'
+    );
+    return;
+  }
 
-    try {
-      setIsLoggingIn(true);
+  try {
+    setIsLoggingIn(true);
 
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
 
-      if (error) throw error;
+    if (error) throw error;
 
-      const userId = data.user.id;
-      setCurrentUserId(userId);
+    // User is authenticated at this point,
+    // so NOW we can create the audit log.
+    // await auditLog({
+    //   action: "LOGIN",
+    //   page: "Mobile Login",
+    //   description: "User logged into the RiskRoute mobile application",
+    //   details: {
+    //     login_method: "email_password",
+    //   },
+    // });
 
-      const generatedCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const userId = data.user.id;
 
-      const { error: dbError } = await supabase
-        .from('email_2fa_codes')
-        .insert([{ user_id: userId, code: generatedCode }]);
+    setCurrentUserId(userId);
 
-      if (dbError) throw dbError;
+    const generatedCode = Math.floor(
+      100000 + Math.random() * 900000
+    ).toString();
 
-      console.log(`[SECURITY] 2FA Code generated for user: ${generatedCode}`);
+    const { error: dbError } = await supabase
+      .from('email_2fa_codes')
+      .insert([
+        {
+          user_id: userId,
+          code: generatedCode
+        }
+      ]);
 
-      setShowMfaModal(true);
+    if (dbError) throw dbError;
 
-    } catch (err) {
-      Alert.alert('Login Failed', err.message);
-      setPassword('');
-      setPasswordError('');
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
+    console.log(
+      `[SECURITY] 2FA Code generated for user: ${generatedCode}`
+    );
 
+    setShowMfaModal(true);
+
+  } catch (err) {
+    Alert.alert('Login Failed', err.message);
+    setPassword('');
+    setPasswordError('');
+  } finally {
+    setIsLoggingIn(false);
+  }
+};
   const { setIsVerified } = useAuth();
 
   const handleVerifyCode = async () => {
@@ -148,6 +173,20 @@ export default function Login({ navigation }) {
         setVerificationCode("");
         Alert.alert("Success", "Identity verified.");
 
+         await auditLog({
+    action: "LOGIN",
+    page: "Mobile Login",
+    description: "User logged into the RiskRoute mobile application after successful 2FA verification",
+    details: {
+      login_method: "email_password",
+      two_factor_verified: true,
+    },
+  });
+
+  setShowMfaModal(false); 
+  setVerificationCode(""); 
+  Alert.alert("Success", "Identity verified."); 
+
       } else {
         Alert.alert('Access Denied', 'Incorrect verification code.');
         setVerificationCode('');
@@ -159,17 +198,32 @@ export default function Login({ navigation }) {
     }
   };
 
-  const handleShutOut = async () => {
-    await supabase.auth.signOut();
-    setShowMfaModal(false);
-    setVerificationCode('');
-    setCurrentUserId(null);
-    setEmail('');
-    setPassword('');
-    setEmailError('');
-    setPasswordError('');
-    Alert.alert('Logged Out', 'You have been shut out due to unverified access.');
-  };
+ const handleShutOut = async () => { 
+ 
+  await auditLog({ 
+    action: "LOGOUT", 
+    page: "Mobile Login", 
+    description: "User logged out of the RiskRoute mobile application", 
+    details: { 
+      logout_method: "shut_out", 
+    }, 
+  }); 
+   
+  await supabase.auth.signOut(); 
+
+  setShowMfaModal(false); 
+  setVerificationCode(''); 
+  setCurrentUserId(null); 
+  setEmail(''); 
+  setPassword(''); 
+  setEmailError(''); 
+  setPasswordError(''); 
+
+  Alert.alert(
+    'Logged Out', 
+    'You have been shut out due to unverified access.'
+  ); 
+};
 
   return (
     <KeyboardAvoidingView
@@ -306,7 +360,11 @@ export default function Login({ navigation }) {
             <View style={styles.modalActionRow}>
               <TouchableOpacity
                 style={[styles.modalBtn, styles.cancelBtn]}
-                onPress={handleShutOut}
+                 onPressIn={() => console.log("🟡 BUTTON TOUCHED")}
+  onPress={() => {
+    console.log("🔴 SHUT OUT BUTTON PRESSED");
+    handleShutOut();
+  }}
                 disabled={isVerifying}
               >
                 <Text style={styles.cancelBtnText}>Shut Out / Exit</Text>
