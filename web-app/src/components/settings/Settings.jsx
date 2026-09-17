@@ -11,7 +11,7 @@ import {
   Sun,
   CheckCircle
 } from 'lucide-react';
-import MyActivity from '../settings/myactivity';
+
 import AdminAuditLog from '../settings/adminauditlog';
 
 const Settings = ({ darkMode, setDarkMode }) => {
@@ -96,12 +96,11 @@ const isAdmin =
       case 'security':
         return <SecuritySection user={user} />;
       case 'activity':
-        return (
-          <div className="space-y-8">
-            <MyActivity user={user} />
-            {isAdmin && <AdminAuditLog user={user} />}
-          </div>
-        );
+  return (
+    <div className="space-y-8">
+      {isAdmin && <AdminAuditLog user={user} />}
+    </div>
+  );
       default:
         return null;
     }
