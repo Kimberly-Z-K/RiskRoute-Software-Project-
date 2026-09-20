@@ -796,7 +796,8 @@ function App() {
         user.name ||
         user.full_name ||
         user.fullName ||
-        'Unknown User',
+        user.email ||
+        'null',
       user_role: user.role || 'Unknown Role',
 
       action,

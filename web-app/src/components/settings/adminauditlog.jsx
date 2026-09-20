@@ -601,8 +601,7 @@ const AdminAuditLog = ({ user }) => {
 
                           <p className="font-medium text-gray-900 dark:text-white">
 
-                            {log.user_name ||
-                              'Unknown User'}
+                            {log.user_name || log.user_email || '—'}
 
                           </p>
 
@@ -862,30 +861,6 @@ const AuditDetailsModal = ({
             </div>
 
           </div>
-
-          {/* ADDITIONAL DETAILS */}
-
-          {log.details && (
-
-            <div>
-
-              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">
-                Additional Details
-              </p>
-
-              <pre className="p-4 rounded-lg bg-gray-900 text-gray-100 text-xs overflow-x-auto">
-
-                {JSON.stringify(
-                  log.details,
-                  null,
-                  2
-                )}
-
-              </pre>
-
-            </div>
-
-          )}
 
         </div>
 

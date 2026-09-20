@@ -11,122 +11,165 @@ const Login = ({ onLogin }) => {
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError("");
-    setLoading(true);
+  e.preventDefault();
 
-    // Basic validation
-    if (!email || !password) {
-      setError("Please fill in all fields");
+  setError("");
+  setLoading(true);
+
+  // Basic validation
+  if (!email || !password) {
+    setError("Please fill in all fields");
+    setLoading(false);
+    return;
+  }
+
+  // Email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(email)) {
+    setError("Please enter a valid email address");
+    setLoading(false);
+    return;
+  }
+
+  try {
+    console.log("Attempting Supabase Auth login for:", email);
+
+    // ============================================
+    // 1. AUTHENTICATE USING SUPABASE AUTH
+    // ============================================
+
+    const { data: authData, error: authError } =
+      await supabase.auth.signInWithPassword({
+        email: email,
+        password: password,
+      });
+
+    console.log("Supabase Auth user:", authData?.user);
+    console.log("Supabase Auth error:", authError);
+
+    if (authError) {
+      console.error("Authentication failed:", authError);
+
+      setError("Invalid email or password. Please try again.");
       setLoading(false);
       return;
     }
 
-    // Email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      setError("Please enter a valid email address");
+    if (!authData?.user) {
+      setError("Authentication failed. Please try again.");
       setLoading(false);
       return;
     }
 
-    try {
-      console.log("Attempting login for:", email);
-      console.log("Supabase client:", supabase); // Debug: Check if supabase is loaded
-      
-      // Test connection first
-      try {
-        const { data: testData, error: testError } = await supabase
-          .from('fleet_managers')
-          .select('count')
-          .limit(1);
-        
-        console.log("Connection test:", testData, testError);
-        
-        if (testError) {
-          console.error("Connection test failed:", testError);
-          setError(`Cannot connect to database: ${testError.message}. Please check your Supabase configuration.`);
-          setLoading(false);
-          return;
-        }
-      } catch (connErr) {
-        console.error("Connection error:", connErr);
-        setError("Network error. Please check your internet connection and Supabase URL.");
-        setLoading(false);
-        return;
-      }
+    // ============================================
+    // 2. GET AUTHENTICATED USER
+    // ============================================
 
-      // Query the fleet_managers table
-      const { data, error: queryError } = await supabase
-        .from('fleet_managers')
-        .select('*')
-        .eq('email', email);
+    const authUser = authData.user;
 
-      console.log("Query result:", data);
+    console.log("✅ Authenticated user:", authUser);
+    console.log("🔑 Auth user ID:", authUser.id);
 
-      if (queryError) {
-        console.error('Query error:', queryError);
-        setError(`Database error: ${queryError.message}`);
-        setLoading(false);
-        return;
-      }
+    // ============================================
+    // 3. FIND THE FLEET MANAGER PROFILE
+    // ============================================
 
-      // Check if user exists
-      if (!data || data.length === 0) {
-        setError("No account found with this email.");
-        setLoading(false);
-        return;
-      }
+    const { data: managerData, error: managerError } =
+      await supabase
+        .from("fleet_managers")
+        .select("id, email, role, created_at, auth_user_id")
+        .eq("auth_user_id", authUser.id)
+        .maybeSingle();
 
-      const user = data[0];
-      console.log("User found:", user);
+    console.log("Fleet manager:", managerData);
+    console.log("Fleet manager query error:", managerError);
 
-      // Check password
-      if (user.password !== password) {
-        setError("Invalid password. Please try again.");
-        setLoading(false);
-        return;
-      }
+    if (managerError) {
+      console.error("Fleet manager lookup failed:", managerError);
 
-      // Login successful
-      console.log("✅ Login successful for:", user.email);
-      
-      // ============================================
-      // 🔥 TRACKING CODE
-      // ============================================
-      
-      const userData = {
-        id: user.id,
-        email: user.email,
-        name: user.name || user.full_name || 'Unknown User',
-        role: user.role || 'Unknown Role',
-        created_at: user.created_at
-      };
-      
-      localStorage.setItem('user', JSON.stringify(userData));
-      localStorage.setItem('token', 'authenticated');
-      
-      window.dispatchEvent(new Event('userLoggedIn'));
-      
-      console.log('✅ Login complete - tracking will start');
-      console.log('👤 User data saved:', userData);
-      
-      if (onLogin) {
-        onLogin(user);
-      }
-      
-      navigate('/dashboard');
-      setEmail("");
-      setPassword("");
-      
-    } catch (err) {
-      console.error('Login error:', err);
-      setError(`Login error: ${err.message || 'Please try again.'}`);
-    } finally {
+      setError("Unable to load your fleet manager account.");
+
+      // Sign out because the Auth account exists,
+      // but the application profile could not be loaded.
+      await supabase.auth.signOut();
+
       setLoading(false);
+      return;
     }
-  };
 
+    if (!managerData) {
+      console.error(
+        "No fleet manager profile is linked to this Auth account."
+      );
+
+      setError(
+        "Your account is authenticated, but no fleet manager profile was found."
+      );
+
+      await supabase.auth.signOut();
+
+      setLoading(false);
+      return;
+    }
+
+    // ============================================
+    // 4. CREATE APPLICATION USER DATA
+    // ============================================
+
+    const userData = {
+      id: managerData.id,
+      auth_user_id: authUser.id,
+      email: managerData.email,
+      name: managerData.email || "Unknown User",
+      role: managerData.role || "Unknown Role",
+      created_at: managerData.created_at,
+    };
+
+    console.log("👤 Application user data:", userData);
+
+    // ============================================
+    // 5. SAVE USER INFORMATION
+    // ============================================
+
+    localStorage.setItem("user", JSON.stringify(userData));
+
+    // Keep this temporarily because other parts
+    // of your existing application may use it.
+    localStorage.setItem("token", "authenticated");
+
+    window.dispatchEvent(new Event("userLoggedIn"));
+
+    console.log("✅ Login complete");
+    console.log("👤 User data saved:", userData);
+
+    // ============================================
+    // 6. EXISTING LOGIN CALLBACK
+    // ============================================
+
+    if (onLogin) {
+      onLogin(userData);
+    }
+
+    // ============================================
+    // 7. GO TO DASHBOARD
+    // ============================================
+
+    navigate("/dashboard");
+
+    setEmail("");
+    setPassword("");
+
+  } catch (err) {
+    console.error("Login error:", err);
+
+    setError(
+      `Login error: ${err.message || "Please try again."}`
+    );
+  } finally {
+    setLoading(false);
+  }
+};
   // Rest of your styles and return statement remain the same...
   const styles = {
     wrapper: {

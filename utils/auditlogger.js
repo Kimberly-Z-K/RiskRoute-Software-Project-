@@ -36,7 +36,7 @@ export const auditLog = async ({
         user.user_metadata?.full_name ||
         user.user_metadata?.name ||
         user.email ||
-        "Unknown User",
+        null,
 
       user_role:
         user.user_metadata?.role ||
