@@ -1,6 +1,6 @@
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+
 import {
   Home,
   MapPin,
@@ -10,19 +10,48 @@ import {
   TrendingUp,
   User,
   LogOut,
-  Menu,
   X,
   Truck,
-  Settings
+  Settings,
+  MessageSquare
 } from 'lucide-react';
 
 const navItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: Home },
-  { id: 'monitoring', label: 'Live Monitoring', icon: MapPin },
-  { id: 'route-planning', label: 'Route Planning', icon: Navigation },
-  { id: 'risk-analysis', label: 'Risk Analysis', icon: Shield },
-  { id: 'simulation', label: 'What-If', icon: Zap },
-  { id: 'analytics', label: 'Analytics', icon: TrendingUp },
+  {
+    id: 'dashboard',
+    label: 'Dashboard',
+    icon: Home
+  },
+  {
+    id: 'monitoring',
+    label: 'Live Monitoring',
+    icon: MapPin
+  },
+  {
+    id: 'route-planning',
+    label: 'Route Planning',
+    icon: Navigation
+  },
+  {
+    id: 'risk-analysis',
+    label: 'Risk Analysis',
+    icon: Shield
+  },
+  {
+    id: 'simulation',
+    label: 'What-If',
+    icon: Zap
+  },
+  {
+    id: 'analytics',
+    label: 'Analytics',
+    icon: TrendingUp
+  },
+  {
+    id: 'driver-reports',
+    label: 'Driver Reports',
+    icon: MessageSquare
+  }
 ];
 
 const Sidebar = ({
@@ -118,7 +147,7 @@ const Sidebar = ({
 
             {sidebarOpen && (
               <span className="text-sm">
-                {/* Fleet Manager */}
+                Profile
               </span>
             )}
           </button>
@@ -202,4 +231,3 @@ const Sidebar = ({
 };
 
 export default Sidebar;
-

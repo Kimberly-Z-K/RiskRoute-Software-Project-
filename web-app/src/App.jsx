@@ -48,7 +48,8 @@ import {
 } from 'lucide-react';
 import './styles/globals.css';
 import { supabase } from '../lib/supabase';
-import Settings from './components/settings/settings';
+import Settings from '../../../RiskRoute-Software-Project-/web-app/src/components/settings/Settings';
+import DriverReports from './components/DriverReports/driverreports';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -683,6 +684,12 @@ const DashboardContent = React.memo(
                   setDarkMode={setDarkMode}
                 />
               )}
+
+              {/*Driver Reports*/}
+              {activeTab === 'driver-reports' && (
+              <DriverReports />
+            )}
+
 
             </div>
 
