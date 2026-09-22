@@ -43,10 +43,53 @@ const CONFIG = {
 
 const MOCK_FUEL_STATIONS = [
   { id: 1, name: "Shell Garage", latitude: -26.1076, longitude: 28.0567 },
-  { id: 2, name: "BP Service Station", latitude: -26.1100, longitude: 28.0600 },
-  { id: 3, name: "Engen Fuel Stop", latitude: -26.1050, longitude: 28.0530 },
-  { id: 4, name: "Caltex Refuel", latitude: -26.1120, longitude: 28.0580 },
-  { id: 5, name: "Total Energies", latitude: -26.1080, longitude: 28.0620 },
+  { id: 2, name: "BP Service Station", latitude: -26.11, longitude: 28.06 },
+  { id: 3, name: "Engen Fuel Stop", latitude: -26.105, longitude: 28.053 },
+  { id: 4, name: "Caltex Refuel", latitude: -26.112, longitude: 28.058 },
+  { id: 5, name: "Total Energies", latitude: -26.108, longitude: 28.062 },
+];
+
+const PAUSE_CATEGORIES = [
+  {
+    key: 'resting',
+    label: 'Resting',
+    icon: 'bed-outline',
+    description: 'Taking a short break',
+    color: '#7c3aed',
+    subOptions: null,
+  },
+  {
+    key: 'lunch',
+    label: 'Lunch',
+    icon: 'restaurant-outline',
+    description: 'Meal break',
+    color: '#ea580c',
+    subOptions: null,
+  },
+  {
+    key: 'route',
+    label: 'Route Issues',
+    icon: 'warning-outline',
+    description: 'Traffic, delays, accidents',
+    color: '#d97706',
+    subOptions: [
+      'Traffic Delays',
+      'Stop and Go',
+      'Car Accident (not on route)',
+    ],
+  },
+  {
+    key: 'vehicle',
+    label: 'Vehicle Issues',
+    icon: 'construct-outline',
+    description: 'Mechanical problems',
+    color: '#dc2626',
+    subOptions: [
+      "Car Won't Start",
+      'Tire Burst',
+      'Other Vehicle Issue',
+    ],
+  },
 ];
 
 const toCoord = (p) => {
@@ -86,6 +129,64 @@ const formatDistance = (dist) => {
   return `${dist.toFixed(1)} km`;
 };
 
+const formatDuration = (seconds) => {
+  if (seconds == null) return 'unknown';
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+};
+
+// Map internal event types -> user_reports.category (must match CHECK)
+const EVENT_TO_CATEGORY = {
+  trip_started: 'other',
+  trip_paused: 'other',
+  trip_resumed: 'other',
+  trip_ended: 'other',
+  fuel_added: 'fuel_issue',
+  receipt_issue: 'receipt_issue',
+  route_issue: 'route_issue',
+  vehicle_issue: 'vehicle_issue',
+  app_issue: 'app_issue',
+  safety_issue: 'safety_issue',
+};
+
+const buildReportText = (eventType, metadata = {}) => {
+  switch (eventType) {
+    case 'trip_started':
+      return {
+        title: 'Trip started',
+        description: `Stops: ${metadata?.stops_count ?? 0}. Start: ${metadata?.start_address ?? 'unknown'}.`,
+      };
+    case 'trip_paused':
+      return {
+        title: `Trip paused – ${metadata?.reason ?? 'unknown'}`,
+        description: `Category: ${metadata?.category ?? 'n/a'}. Notes: ${metadata?.notes || 'none'}.`,
+      };
+    case 'trip_resumed': {
+      const dur = metadata?.pause_duration_text ?? 'unknown';
+      return {
+        title: 'Trip resumed',
+        description: `Driver resumed the trip. Pause duration: ${dur}.`,
+      };
+    }
+    case 'trip_ended': {
+      const dur = metadata?.trip_duration_text ?? 'unknown';
+      return {
+        title: 'Trip ended',
+        description: `Driver ended the trip. Trip duration: ${dur}.`,
+      };
+    }
+    default:
+      return {
+        title: eventType,
+        description: JSON.stringify(metadata ?? {}),
+      };
+  }
+};
+
 export default function LocationScreen({ route }) {
   const { user } = useAuth();
   const tripId = route?.params?.tripId;
@@ -106,6 +207,7 @@ export default function LocationScreen({ route }) {
     tripLoading: false,
     routeLoading: false,
     tripLoaded: false,
+    resolvedTripId: null,
 
     fuelPercent: 20,
     fuelWarning: false,
@@ -133,6 +235,20 @@ export default function LocationScreen({ route }) {
     autoDetectedAmount: null,
     showOCRConfirmation: false,
 
+    // Pause Trip
+    showPauseModal: false,
+    pauseCategory: null,
+    pauseSubReason: null,
+    pauseNotes: '',
+    isPaused: false,
+    pauseStartTime: null,
+
+    // Duration tracking + report resolution
+    tripStartedAt: null,
+    pauseStartedAt: null,
+    lastPauseReportId: null,
+    lastTripReportId: null,
+
     // UI
     notification: null,
     showFuelModal: false,
@@ -147,6 +263,7 @@ export default function LocationScreen({ route }) {
   const notificationTimeoutRef = useRef(null);
   const redirectingRef = useRef(false);
   const stateRef = useRef(state);
+  const cachedVehicleIdRef = useRef(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -175,6 +292,7 @@ export default function LocationScreen({ route }) {
     routeLoading,
     screenReady,
     tripLoaded,
+    resolvedTripId,
     isCalculatingStation,
     stationSearchFailed,
     destinationDistanceToStation,
@@ -192,6 +310,16 @@ export default function LocationScreen({ route }) {
     isProcessingOCR,
     autoDetectedAmount,
     showOCRConfirmation,
+    showPauseModal,
+    pauseCategory,
+    pauseSubReason,
+    pauseNotes,
+    isPaused,
+    pauseStartTime,
+    tripStartedAt,
+    pauseStartedAt,
+    lastPauseReportId,
+    lastTripReportId,
   } = state;
 
   const calculateRemainingRange = useCallback(() => {
@@ -213,6 +341,162 @@ export default function LocationScreen({ route }) {
     }, durationMs);
   }, [updateState]);
 
+  // ============================================
+  // EVENT LOGGING -> public.user_reports
+  // ============================================
+  const logTripEvent = useCallback(
+    async (eventType, metadata = {}) => {
+      const effectiveTripId = stateRef.current.resolvedTripId || tripId || null;
+
+      console.log("📝 [logTripEvent] START", {
+        eventType,
+        effectiveTripId,
+        metadata,
+      });
+
+      try {
+        const {
+          data: { user: authUser },
+          error: userError,
+        } = await supabase.auth.getUser();
+
+        if (userError || !authUser) {
+          console.warn("⚠️ [logTripEvent] No user:", userError?.message);
+          return null;
+        }
+
+        // ---- Resolve vehicle (cached once per session) ----
+        let vehicleId = cachedVehicleIdRef.current;
+        if (!vehicleId) {
+          console.log("🚗 [logTripEvent] resolving vehicle for user:", authUser.id);
+
+          // 1. Try drivers.user_id
+          const { data: driverById, error: driverByIdErr } = await supabase
+            .from("drivers")
+            .select("driver_id")
+            .eq("user_id", authUser.id)
+            .maybeSingle();
+
+          console.log("🚗 [logTripEvent] drivers by user_id:", {
+            driverId: driverById?.driver_id,
+            error: driverByIdErr?.message,
+            code: driverByIdErr?.code,
+          });
+
+          let driverId = driverById?.driver_id ?? null;
+
+          // 2. Fallback: drivers.email
+          if (!driverId && authUser.email) {
+            const { data: driverByEmail, error: driverByEmailErr } = await supabase
+              .from("drivers")
+              .select("driver_id")
+              .eq("email", authUser.email)
+              .maybeSingle();
+
+            console.log("🚗 [logTripEvent] drivers by email:", {
+              driverId: driverByEmail?.driver_id,
+              error: driverByEmailErr?.message,
+              code: driverByEmailErr?.code,
+            });
+
+            driverId = driverByEmail?.driver_id ?? null;
+          }
+
+          // 3. From driver, get vehicle
+          if (driverId) {
+            const { data: vehicle, error: vehicleErr } = await supabase
+              .from("vehicles")
+              .select("vehicle_id")
+              .eq("driver_id", driverId)
+              .maybeSingle();
+
+            console.log("🚗 [logTripEvent] vehicle lookup:", {
+              vehicleId: vehicle?.vehicle_id,
+              error: vehicleErr?.message,
+              code: vehicleErr?.code,
+            });
+
+            vehicleId = vehicle?.vehicle_id ?? null;
+            cachedVehicleIdRef.current = vehicleId;
+          }
+        } else {
+          console.log("🚗 [logTripEvent] using cached vehicleId:", vehicleId);
+        }
+
+        const current = stateRef.current;
+        const loc = current.location;
+
+        const category = EVENT_TO_CATEGORY[eventType] || "other";
+        const { title, description } = buildReportText(eventType, metadata);
+
+        const payload = {
+          user_id: authUser.id,
+          trip_id: effectiveTripId,
+          vehicle_id: vehicleId,
+          category,
+          title,
+          description,
+          priority: "normal",
+          status: "open",
+          image_path: null,
+          latitude: loc?.latitude != null ? Number(loc.latitude) : null,
+          longitude: loc?.longitude != null ? Number(loc.longitude) : null,
+          location_accuracy: loc?.accuracy != null ? Number(loc.accuracy) : null,
+          location_timestamp: loc ? new Date().toISOString() : null,
+        };
+
+        console.log("📝 [logTripEvent] payload:", payload);
+
+        const { data, error } = await supabase
+          .from("user_reports")
+          .insert(payload)
+          .select();
+
+        if (error) {
+          console.error("❌ [logTripEvent] INSERT FAILED:", {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          });
+          return null;
+        }
+
+        console.log("✅ [logTripEvent] INSERT OK:", data);
+        return data?.[0] ?? null;
+      } catch (err) {
+        console.error("❌ [logTripEvent] EXCEPTION:", err);
+        return null;
+      }
+    },
+    [tripId]
+  );
+
+  const resolveReport = useCallback(async (reportId, note) => {
+    if (!reportId) return;
+    console.log("🛠️ [resolveReport] resolving:", { reportId, note });
+
+    const { error } = await supabase
+      .from("user_reports")
+      .update({
+        status: "resolved",
+        resolved_at: new Date().toISOString(),
+        admin_notes: note || null,
+      })
+      .eq("id", reportId);
+
+    if (error) {
+      console.error("❌ [resolveReport] FAILED:", {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
+      return;
+    }
+    console.log("✅ [resolveReport] OK:", reportId);
+  }, []);
+
   const getLocation = useCallback(async () => {
     try {
       const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
@@ -227,6 +511,7 @@ export default function LocationScreen({ route }) {
       const newLocation = {
         latitude: current.coords.latitude,
         longitude: current.coords.longitude,
+        accuracy: current.coords.accuracy,
       };
       updateState({
         location: newLocation,
@@ -315,7 +600,7 @@ export default function LocationScreen({ route }) {
   const fetchNearbyStations = useCallback(async (lat, lon) => {
     try {
       const query = `
-        [out:json][timeout:5];
+        [out:json][5];
         (
           node["amenity"="fuel"](around:${CONFIG.FUEL_STATION_RADIUS},${lat},${lon});
         );
@@ -490,7 +775,35 @@ export default function LocationScreen({ route }) {
         {
           text: 'End Trip',
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            const current = stateRef.current;
+            const started = current.tripStartedAt
+              ? new Date(current.tripStartedAt).getTime()
+              : null;
+            const durationSec = started ? Math.round((Date.now() - started) / 1000) : null;
+            const durationText = formatDuration(durationSec);
+
+            console.log("⏱️ [endTrip] trip duration:", durationText);
+
+            await logTripEvent('trip_ended', {
+              trip_duration_seconds: durationSec,
+              trip_duration_text: durationText,
+            });
+
+            if (current.lastTripReportId) {
+              await resolveReport(
+                current.lastTripReportId,
+                `Trip ended. Duration: ${durationText}.`
+              );
+            }
+
+            if (current.lastPauseReportId) {
+              await resolveReport(
+                current.lastPauseReportId,
+                'Trip ended while paused.'
+              );
+            }
+
             showNotification('success', 'Trip ended successfully!', 4000);
 
             setTimeout(() => {
@@ -520,17 +833,128 @@ export default function LocationScreen({ route }) {
                 isProcessingOCR: false,
                 autoDetectedAmount: null,
                 showOCRConfirmation: false,
+                showPauseModal: false,
+                pauseCategory: null,
+                pauseSubReason: null,
+                pauseNotes: '',
+                isPaused: false,
+                pauseStartTime: null,
+                resolvedTripId: null,
+                tripStartedAt: null,
+                pauseStartedAt: null,
+                lastPauseReportId: null,
+                lastTripReportId: null,
               });
             }, 1500);
           },
         },
       ]
     );
-  }, [showNotification, updateState]);
+  }, [showNotification, updateState, logTripEvent, resolveReport]);
 
   const canEndTrip = useCallback(() => {
     return tripLoaded && !tripLoading;
   }, [tripLoaded, tripLoading]);
+
+  const openPauseModal = useCallback(() => {
+    updateState({
+      showPauseModal: true,
+      pauseCategory: null,
+      pauseSubReason: null,
+      pauseNotes: '',
+    });
+  }, [updateState]);
+
+  const closePauseModal = useCallback(() => {
+    updateState({
+      showPauseModal: false,
+      pauseCategory: null,
+      pauseSubReason: null,
+      pauseNotes: '',
+    });
+  }, [updateState]);
+
+  const confirmPause = useCallback(() => {
+    const current = stateRef.current;
+    const cat = PAUSE_CATEGORIES.find((c) => c.key === current.pauseCategory);
+    if (!cat) return;
+
+    if (cat.subOptions && !current.pauseSubReason) {
+      Alert.alert('Select a Reason', 'Please pick a specific reason before confirming.');
+      return;
+    }
+
+    const reason = current.pauseSubReason || cat.label;
+    const now = new Date().toISOString();
+
+    updateState({
+      isPaused: true,
+      pauseStartTime: Date.now(),
+      pauseStartedAt: now,
+      showPauseModal: false,
+      pauseCategory: null,
+      pauseSubReason: null,
+      pauseNotes: '',
+    });
+
+    showNotification('warning', `⏸️ Trip paused: ${reason}`, 4000);
+
+    logTripEvent('trip_paused', {
+      category: cat.key,
+      reason,
+      notes: current.pauseNotes || '',
+    }).then((row) => {
+      if (row?.id) {
+        console.log("🆔 [confirmPause] pause report id:", row.id);
+        updateState({ lastPauseReportId: row.id });
+      }
+    });
+  }, [updateState, showNotification, logTripEvent]);
+
+  const resumeTrip = useCallback(() => {
+    Alert.alert(
+      'Resume Trip',
+      'Are you ready to continue driving?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Resume',
+          onPress: async () => {
+            const current = stateRef.current;
+            const started = current.pauseStartedAt
+              ? new Date(current.pauseStartedAt).getTime()
+              : null;
+            const durationSec = started
+              ? Math.round((Date.now() - started) / 1000)
+              : null;
+            const durationText = formatDuration(durationSec);
+
+            console.log("⏱️ [resumeTrip] pause duration:", durationText);
+
+            updateState({
+              isPaused: false,
+              pauseStartTime: null,
+              pauseStartedAt: null,
+            });
+            showNotification('success', '▶️ Trip resumed', 3000);
+
+            await logTripEvent('trip_resumed', {
+              pause_duration_seconds: durationSec,
+              pause_duration_text: durationText,
+            });
+
+            if (current.lastPauseReportId) {
+              await resolveReport(
+                current.lastPauseReportId,
+                `Auto-resolved on resume. Duration: ${durationText}.`
+              );
+              updateState({ lastPauseReportId: null });
+            }
+          },
+        },
+      ]
+    );
+  }, [updateState, showNotification, logTripEvent, resolveReport]);
 
   const loadTrip = useCallback(async () => {
     try {
@@ -549,6 +973,9 @@ export default function LocationScreen({ route }) {
 
       const loadedTrip = tripId ? data : data?.[0];
       if (!loadedTrip) throw new Error("No trip data found");
+
+      console.log("🧭 [loadTrip] resolvedTripId:", loadedTrip.id);
+      updateState({ resolvedTripId: loadedTrip.id });
 
       const startCoord = toCoord(loadedTrip.start_point);
       const stopCoords = Array.isArray(loadedTrip.stops) ? loadedTrip.stops.map(toCoord).filter(Boolean) : [];
@@ -573,11 +1000,22 @@ export default function LocationScreen({ route }) {
         startAddress: formatAddress(startAddr),
         stopAddresses: stopAddrList,
         tripLoaded: true,
+        tripStartedAt: new Date().toISOString(),
       });
 
       if (stopCoords.length > 0 && startCoord) {
         await fetchRoute(startCoord, stopCoords[0]);
       }
+
+      logTripEvent('trip_started', {
+        start_address: formatAddress(startAddr),
+        stops_count: stopAddrList.length,
+      }).then((row) => {
+        if (row?.id) {
+          console.log("🆔 [loadTrip] trip report id:", row.id);
+          updateState({ lastTripReportId: row.id });
+        }
+      });
 
     } catch (e) {
       updateState({
@@ -589,7 +1027,7 @@ export default function LocationScreen({ route }) {
     } finally {
       updateState({ tripLoading: false });
     }
-  }, [tripId, fetchRoute, updateState]);
+  }, [tripId, fetchRoute, updateState, logTripEvent]);
 
   const reverseGeocodePoint = useCallback(async (coord) => {
     try {
@@ -964,7 +1402,6 @@ export default function LocationScreen({ route }) {
   const buttonSheetY = useRef(new Animated.Value(0)).current;
   const buttonSheetStartY = useRef(0);
   const buttonSheetOpenRef = useRef(false);
-
   const maxDragRef = useRef(BUTTON_SHEET_MAX_DRAG);
   useEffect(() => {
     maxDragRef.current = BUTTON_SHEET_MAX_DRAG;
@@ -1438,6 +1875,156 @@ export default function LocationScreen({ route }) {
     </Modal>
   );
 
+  // ============================================
+  // PAUSE MODAL
+  // ============================================
+  const renderPauseModal = () => {
+    const activeCat = PAUSE_CATEGORIES.find((c) => c.key === pauseCategory);
+    const requiresSub = !!activeCat?.subOptions;
+
+    return (
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showPauseModal}
+        onRequestClose={closePauseModal}
+      >
+        <View style={styles.receiptModalOverlay}>
+          <View style={styles.receiptModalSheet}>
+            <View style={styles.receiptModalHandleWrap}>
+              <View style={styles.receiptModalHandle} />
+            </View>
+
+            <View style={styles.receiptModalHeader}>
+              <View style={styles.receiptModalHeaderIcon}>
+                <Ionicons name="pause-outline" size={22} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.receiptModalTitle}>Pause Trip</Text>
+                <Text style={styles.receiptModalSubtitleSmall}>
+                  {pauseCategory
+                    ? 'Select a specific reason'
+                    : 'Why are you pausing?'}
+                </Text>
+              </View>
+            </View>
+
+            <ScrollView
+              style={styles.receiptModalBody}
+              contentContainerStyle={{ paddingBottom: 24 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {!pauseCategory &&
+                PAUSE_CATEGORIES.map((cat) => (
+                  <TouchableOpacity
+                    key={cat.key}
+                    style={styles.pauseCategoryCard}
+                    onPress={() =>
+                      updateState({
+                        pauseCategory: cat.key,
+                        pauseSubReason: null,
+                      })
+                    }
+                  >
+                    <View
+                      style={[
+                        styles.pauseCategoryIcon,
+                        { backgroundColor: `${cat.color}1A` },
+                      ]}
+                    >
+                      <Ionicons name={cat.icon} size={22} color={cat.color} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pauseCategoryLabel}>{cat.label}</Text>
+                      <Text style={styles.pauseCategoryDesc}>{cat.description}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+                  </TouchableOpacity>
+                ))}
+
+              {pauseCategory && (
+                <>
+                  <TouchableOpacity
+                    style={styles.pauseBackBtn}
+                    onPress={() =>
+                      updateState({ pauseCategory: null, pauseSubReason: null })
+                    }
+                  >
+                    <Ionicons name="arrow-back-outline" size={18} color="#0A1F44" />
+                    <Text style={styles.pauseBackText}>Back</Text>
+                  </TouchableOpacity>
+
+                  {requiresSub &&
+                    activeCat.subOptions.map((opt) => {
+                      const active = pauseSubReason === opt;
+                      return (
+                        <TouchableOpacity
+                          key={opt}
+                          style={[
+                            styles.pauseSubOption,
+                            active && styles.pauseSubOptionActive,
+                          ]}
+                          onPress={() => updateState({ pauseSubReason: opt })}
+                        >
+                          <Text
+                            style={[
+                              styles.pauseSubOptionText,
+                              active && styles.pauseSubOptionTextActive,
+                            ]}
+                          >
+                            {opt}
+                          </Text>
+                          {active && (
+                            <Ionicons
+                              name="checkmark-circle"
+                              size={20}
+                              color="#0A1F44"
+                            />
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+
+                  <View style={styles.receiptInputCard}>
+                    <Text style={styles.receiptInputLabel}>Notes (optional)</Text>
+                    <TextInput
+                      style={styles.pauseNotesInput}
+                      placeholder="Add any details..."
+                      placeholderTextColor="#9CA3AF"
+                      multiline
+                      value={pauseNotes}
+                      onChangeText={(text) => updateState({ pauseNotes: text })}
+                    />
+                  </View>
+
+                  <View style={styles.receiptModalActions}>
+                    <TouchableOpacity
+                      style={[styles.receiptModalBtn, styles.receiptModalBtnCancel]}
+                      onPress={closePauseModal}
+                    >
+                      <Ionicons name="close-outline" size={18} color="#0A1F44" />
+                      <Text style={styles.receiptModalBtnTextCancel}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.receiptModalBtn, styles.receiptModalBtnPrimary]}
+                      onPress={confirmPause}
+                    >
+                      <Ionicons name="pause-outline" size={18} color="#fff" />
+                      <Text style={styles.receiptModalBtnTextPrimary}>
+                        Confirm Pause
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   const renderFuelModal = () => (
     <Modal
       visible={showFuelModal}
@@ -1705,34 +2292,21 @@ export default function LocationScreen({ route }) {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.primaryButton, { backgroundColor: "white", marginTop: 10 }]}
-          onPress={() => {
-            const doReset = () => {
-              resetReceiptState();
-              updateState({
-                showReceiptModal: true,
-                waitingForReceipt: true,
-                isAtFuelStation: true,
-              });
-              showNotification('info', '🔄 Ready to scan a receipt', 2000);
-            };
-
-            if (receiptSubmitted || receiptImage) {
-              Alert.alert(
-                'Reset Receipt Scanner',
-                'Reset the receipt state to scan a new receipt?',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Reset', onPress: doReset },
-                ]
-              );
-            } else {
-              doReset();
-            }
-          }}
+          style={[
+            styles.primaryButton,
+            styles.pauseButton,
+            isPaused && styles.pauseButtonActive,
+          ]}
+          onPress={isPaused ? resumeTrip : openPauseModal}
         >
-          <Ionicons name="refresh-outline" size={18} color="#f3a089" />
-          <Text style={styles.buttonText}>Reset Receipt Scanner</Text>
+          <Ionicons
+            name={isPaused ? 'play-outline' : 'pause-outline'}
+            size={20}
+            color={isPaused ? '#2e7d32' : '#f3a089'}
+          />
+          <Text style={[styles.buttonText, isPaused && { color: '#2e7d32' }]}>
+            {isPaused ? 'Resume Trip' : 'Pause Trip'}
+          </Text>
         </TouchableOpacity>
 
         {fuelWarning && (
@@ -1774,6 +2348,17 @@ export default function LocationScreen({ route }) {
       showsVerticalScrollIndicator={false}
     >
       <Text style={styles.routeSheetSectionTitle}>Active Route</Text>
+
+      {isPaused && (
+        <View style={styles.pausedBanner}>
+          <Ionicons name="pause-circle" size={22} color="#9a3412" />
+          <Text style={styles.pausedBannerText}>
+            Trip paused{pauseStartTime
+              ? ` • started ${Math.max(1, Math.round((Date.now() - pauseStartTime) / 60000))} min ago`
+              : ''}
+          </Text>
+        </View>
+      )}
 
       {error ? (
         <View style={styles.errorBox}>
@@ -2010,6 +2595,7 @@ export default function LocationScreen({ route }) {
       {renderReceiptModal()}
       {renderFuelModal()}
       {renderAmountInputModal()}
+      {renderPauseModal()}
     </SafeAreaView>
   );
 }
@@ -2019,7 +2605,6 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   loadingText: { marginTop: 10, color: "#666" },
 
-  // Map containers
   mapContainer: {
     width: "100%",
     height: 300,
@@ -2069,6 +2654,13 @@ const styles = StyleSheet.create({
   receiptButton: { backgroundColor: "white", marginTop: 15, padding: 16 },
   buttonText: { color: "#0A1F44", marginLeft: 8, fontWeight: "bold", fontSize: 15 },
   endTripButton: { backgroundColor: 'white', marginTop: 15 },
+
+  pauseButton: { backgroundColor: 'white', marginTop: 10 },
+  pauseButtonActive: {
+    borderWidth: 1,
+    borderColor: '#2e7d32',
+    backgroundColor: '#e8f5e9',
+  },
 
   backButton: {
     position: "absolute",
@@ -2206,9 +2798,6 @@ const styles = StyleSheet.create({
   calloutView: { padding: 8, maxWidth: 200 },
   calloutTitle: { fontWeight: "bold", fontSize: 14, marginBottom: 4 },
 
-  // ============================================
-  // FUEL MODAL (unchanged, still uses modalContainer etc.)
-  // ============================================
   modalContainer: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -2281,9 +2870,6 @@ const styles = StyleSheet.create({
   },
   retryButtonText: { color: "#fff", fontWeight: "bold" },
 
-  // ============================================
-  // RECEIPT MODAL - CONSISTENT WITH APP STYLING
-  // ============================================
   receiptModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(10, 31, 68, 0.55)",
@@ -2565,13 +3151,92 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  // ============================================
-  // ROUTE INFO PANEL / BUTTON SHEET
-  // ============================================
+  pauseCategoryCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 14,
+    borderRadius: 16,
+    marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  pauseCategoryIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  pauseCategoryLabel: { fontSize: 15, fontWeight: '800', color: '#0A1F44' },
+  pauseCategoryDesc: { fontSize: 12, color: '#7a8699', marginTop: 2 },
+
+  pauseBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingVertical: 6,
+  },
+  pauseBackText: { marginLeft: 6, color: '#0A1F44', fontWeight: '700' },
+
+  pauseSubOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    padding: 16,
+    borderRadius: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e0e7f3',
+  },
+  pauseSubOptionActive: {
+    borderColor: '#0A1F44',
+    backgroundColor: '#eef2ff',
+  },
+  pauseSubOptionText: { fontSize: 14, fontWeight: '600', color: '#333' },
+  pauseSubOptionTextActive: { color: '#0A1F44', fontWeight: '800' },
+
+  pauseNotesInput: {
+    backgroundColor: '#f3f6fc',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#e0e7f3',
+    fontSize: 15,
+    color: '#0A1F44',
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+
+  pausedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  pausedBannerText: {
+    flex: 1,
+    marginLeft: 8,
+    color: '#9a3412',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+
   infoAreaContainer: {
     flex: 1,
     position: "relative",
     overflow: "hidden",
+    marginBottom: 50
   },
   routeInfoScroll: {
     flex: 1,
