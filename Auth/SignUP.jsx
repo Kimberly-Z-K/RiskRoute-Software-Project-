@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { supabase } from '../lib/supabase';
+import { auditLog } from "../utils/auditlogger";
 
 export default function SignUP({ navigation }) {
   const [role, setRole] = useState('');
@@ -130,8 +131,23 @@ export default function SignUP({ navigation }) {
         console.log('Admin inserted');
       }
 
-      Alert.alert('Success', 'Account created successfully');
-      navigation.navigate('Login');
+      await auditLog({
+  action: "SIGNUP",
+  page: "Mobile Signup",
+  description:
+    "A new user registered through the RiskRoute mobile application",
+  details: {
+    registration_method: "email_password",
+    role: role,
+  },
+});
+
+Alert.alert(
+  "Success",
+  "Account created successfully"
+);
+
+navigation.navigate("Login");
 
     } catch (err) {
       console.error('Sign up error:', err);

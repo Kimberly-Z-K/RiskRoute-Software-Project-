@@ -4,12 +4,24 @@ import { Text,ScrollView, StyleSheet,TouchableOpacity,View } from 'react-native'
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from '../context/AuthContext';
+import { auditLog } from '../utils/auditlogger';
 
 const FuelScreen=({navigation})=>{
 const { user, session } = useAuth();
  useEffect(() => {
   console.log('[fuel screen AUTH]', !!user);
-}, [user])
+
+  if (user) {
+    auditLog({
+      action: "FUEL_VIEW",
+      page: "Mobile Fuel",
+      description: "User viewed the Fuel & Expenses screen",
+      details: {
+        screen: "Fuel & Expenses",
+      },
+    });
+  }
+}, [user]);
 return(
 
  <ScrollView
