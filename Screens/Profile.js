@@ -20,6 +20,7 @@ import {
 } from "@expo/vector-icons";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { auditLog } from "../utils/auditlogger";
 
 export default function Profile() {
   const { user, signOut } = useAuth();
@@ -86,7 +87,12 @@ const loadProfile = async () => {
 };
 
 const handleSave = async () => {
-  if (!userName.trim() || !phone.trim() || !licenseNumber.trim() || !email.trim()) {
+  if (
+    !userName.trim() ||
+    !phone.trim() ||
+    !licenseNumber.trim() ||
+    !email.trim()
+  ) {
     Alert.alert("Error", "Please fill in all required fields");
     return;
   }
@@ -107,11 +113,11 @@ const handleSave = async () => {
 
     if (userUpdateError) throw userUpdateError;
 
-    // Update drivers table with driver_username
+    // Update drivers table
     const { error: driverUpdateError } = await supabase
       .from("drivers")
       .update({
-        driver_username: userName.trim(), // Add this line
+        driver_username: userName.trim(),
         phone: phone.trim(),
         license_number: licenseNumber.trim(),
       })
@@ -119,6 +125,7 @@ const handleSave = async () => {
 
     if (driverUpdateError) throw driverUpdateError;
 
+    // Prepare updated profile data
     const profileData = {
       userName: userName.trim(),
       email: email.trim(),
@@ -126,8 +133,25 @@ const handleSave = async () => {
       licenseNumber: licenseNumber.trim(),
     };
 
+    // Save profile update in mobile audit table
+    await auditLog({
+      action: "PROFILE_UPDATE",
+      page: "Mobile Profile",
+      description:
+        "User updated their profile information",
+      details: {
+        updated_fields: [
+          "user_name",
+          "email",
+          "phone",
+          "license_number",
+        ],
+      },
+    });
+
     setSaved(profileData);
     setEditing(false);
+
     Alert.alert("Success", "Profile saved successfully!");
   } catch (err) {
     Alert.alert("Save Error", err.message);

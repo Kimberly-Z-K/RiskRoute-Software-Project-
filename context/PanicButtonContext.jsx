@@ -21,6 +21,7 @@ import {
 import * as ExpoLocation from "expo-location";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
+import { auditLog } from "../utils/auditlogger";
 
 const PanicContext = createContext(null);
 
@@ -100,35 +101,76 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
   /* ---------------- Logging ---------------- */
 
   const logPanicEvent = useCallback(
-    async (type) => {
-      const timestamp = new Date().toISOString();
-      const location = await captureLocation();
-      const logEntry = { type, timestamp, location };
-      setPanicLog(logEntry);
-      console.log("PANIC LOG:", JSON.stringify(logEntry));
+  async (type) => {
+    const timestamp = new Date().toISOString();
 
-      if (user?.id) {
-        supabase
-          .from("panic_logs")
-          .insert({
-            user_id: user.id,
-            event: type,
-            timestamp,
-            location: location
-              ? {
-                  latitude: location.latitude,
-                  longitude: location.longitude,
-                }
-              : null,
-          })
-          .then(({ error }) => {
-            if (error) console.error("Error saving panic log:", error);
-            else console.log("Panic log saved");
-          });
+    const location = await captureLocation();
+
+    const logEntry = {
+      type,
+      timestamp,
+      location,
+    };
+
+    setPanicLog(logEntry);
+
+    console.log(
+      "PANIC LOG:",
+      JSON.stringify(logEntry)
+    );
+
+    // Save the existing panic event
+    if (user?.id) {
+      const { error } = await supabase
+        .from("panic_logs")
+        .insert({
+          user_id: user.id,
+          event: type,
+          timestamp,
+
+          location: location
+            ? {
+                latitude: location.latitude,
+                longitude: location.longitude,
+              }
+            : null,
+        });
+
+      if (error) {
+        console.error(
+          "Error saving panic log:",
+          error
+        );
+      } else {
+        console.log("Panic log saved");
       }
-    },
-    [captureLocation, user]
-  );
+    }
+
+    // Save the event in the mobile audit table
+    await auditLog({
+      action: type,
+
+      page: "Panic Button",
+
+      description:
+        `Mobile panic event: ${type}`,
+
+      details: {
+        panic_event: type,
+
+        location: location
+          ? {
+              latitude: location.latitude,
+              longitude: location.longitude,
+            }
+          : null,
+
+        automatic: false,
+      },
+    });
+  },
+  [captureLocation, user]
+);
 
   /* ---------------- Timer helpers ---------------- */
 
