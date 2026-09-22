@@ -23,6 +23,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from '../context/AuthContext';
 import { supabase } from "../lib/supabase";
+import { auditLog } from "../utils/auditlogger";
 
 const { width, height } = Dimensions.get("window");
 const INFO_AREA_HEIGHT_PX = height * 0.65;
@@ -498,20 +499,48 @@ export default function LocationScreen({ route }) {
   }, []);
 
   const getLocation = useCallback(async () => {
-    try {
-      const { status } = await ExpoLocation.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission Denied", "Enable location permissions");
-        updateState({ loading: false, screenReady: true });
-        return;
-      }
-      const current = await ExpoLocation.getCurrentPositionAsync({
+  try {
+    const { status } =
+      await ExpoLocation.requestForegroundPermissionsAsync();
+
+    // User denied location permission
+    if (status !== "granted") {
+      await auditLog({
+        action: "LOCATION_PERMISSION_DENIED",
+        page: "Location Activity",
+        element: "Location Permission",
+        description: "User denied location permission",
+      });
+
+      Alert.alert(
+        "Permission Denied",
+        "Enable location permissions"
+      );
+
+      updateState({
+        loading: false,
+        screenReady: true,
+      });
+
+      return;
+    }
+
+    // User granted location permission
+    await auditLog({
+      action: "LOCATION_PERMISSION_GRANTED",
+      page: "Location Activity",
+      element: "Location Permission",
+      description: "User granted location permission",
+    });
+
+    // Get current location
+    const current =
+      await ExpoLocation.getCurrentPositionAsync({
         accuracy: ExpoLocation.Accuracy.High,
       });
       const newLocation = {
         latitude: current.coords.latitude,
         longitude: current.coords.longitude,
-        accuracy: current.coords.accuracy,
       };
       updateState({
         location: newLocation,
@@ -2256,88 +2285,199 @@ export default function LocationScreen({ route }) {
       </View>
 
       <ScrollView
-        style={styles.routeSheetQuickActions}
-        contentContainerStyle={{ paddingBottom: 24 }}
-        showsVerticalScrollIndicator={false}
-      >
-        <Text style={styles.routeSheetSectionTitle}>Quick Actions</Text>
+  style={styles.routeSheetQuickActions}
+  contentContainerStyle={{ paddingBottom: 24 }}
+  showsVerticalScrollIndicator={false}
+>
+  <Text style={styles.routeSheetSectionTitle}>Quick Actions</Text>
+
+  {/* OPEN FULL MAP */}
+  <TouchableOpacity
+    style={styles.primaryButton}
+    onPress={async () => {
+      await auditLog({
+        action: "OPEN_FULL_MAP",
+        page: "Location Activity",
+        description: "User opened the full map",
+        element: "Open Full Map",
+        targetId: tripId,
+        details: {
+          trip_id: tripId,
+        },
+      });
+
+      updateState({ fullMap: true });
+    }}
+  >
+    <Ionicons name="map-outline" size={18} color="#f3a089" />
+    <Text style={styles.buttonText}>Open Full Map</Text>
+  </TouchableOpacity>
+
+  {/* VIEW FUEL STATIONS */}
+  <TouchableOpacity
+    style={[styles.primaryButton, styles.fuelButton]}
+    onPress={async () => {
+      await auditLog({
+        action: "VIEW_FUEL_STATIONS",
+        page: "Location Activity",
+        description: "User viewed fuel stations along route",
+        element: "View Fuel Stations Along Route",
+        targetId: tripId,
+        details: {
+          trip_id: tripId,
+          station_count: fuelStations.length,
+        },
+      });
+
+      updateState({
+        fullMap: true,
+        showFuelModal: true,
+      });
+
+      if (fuelStations.length === 0 && routeCoords.length > 0) {
+        findFuelStationsAlongRoute(routeCoords);
+      }
+    }}
+  >
+    <Ionicons name="flame-outline" size={18} color="#f3a089" />
+    <Text style={styles.buttonText}>
+      View Fuel Stations Along Route
+    </Text>
+  </TouchableOpacity>
+
+  {/* SCAN FUEL RECEIPT */}
+  <TouchableOpacity
+    style={[styles.primaryButton, styles.receiptButton]}
+    onPress={async () => {
+      await auditLog({
+        action: "SCAN_FUEL_RECEIPT",
+        page: "Location Activity",
+        description: "User opened the fuel receipt scanner",
+        element: "Scan Fuel Receipt",
+        targetId: tripId,
+        details: {
+          trip_id: tripId,
+        },
+      });
+
+      openReceiptModal();
+    }}
+  >
+    <Ionicons name="receipt-outline" size={20} color="#f3a089" />
+    <Text style={styles.buttonText}>Scan Fuel Receipt</Text>
+  </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => updateState({ fullMap: true })}
-        >
-          <Ionicons name="map-outline" size={18} color="#f3a089" />
-          <Text style={styles.buttonText}>Open Full Map</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.primaryButton, styles.fuelButton]}
+          style={[styles.primaryButton, { backgroundColor: "white", marginTop: 10 }]}
           onPress={() => {
-            updateState({ fullMap: true, showFuelModal: true });
-            if (fuelStations.length === 0 && routeCoords.length > 0) {
-              findFuelStationsAlongRoute(routeCoords);
-            }
-          }}
-        >
-          <Ionicons name="flame-outline" size={18} color="#f3a089" />
-          <Text style={styles.buttonText}>View Fuel Stations Along Route</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.primaryButton, styles.receiptButton]}
-          onPress={openReceiptModal}
-        >
-          <Ionicons name="receipt-outline" size={20} color="#f3a089" />
-          <Text style={styles.buttonText}>Scan Fuel Receipt</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.primaryButton,
-            styles.pauseButton,
-            isPaused && styles.pauseButtonActive,
-          ]}
-          onPress={isPaused ? resumeTrip : openPauseModal}
-        >
-          <Ionicons
-            name={isPaused ? 'play-outline' : 'pause-outline'}
-            size={20}
-            color={isPaused ? '#2e7d32' : '#f3a089'}
-          />
-          <Text style={[styles.buttonText, isPaused && { color: '#2e7d32' }]}>
-            {isPaused ? 'Resume Trip' : 'Pause Trip'}
-          </Text>
-        </TouchableOpacity>
-
-        {fuelWarning && (
-          <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: "#ff6f00" }]}
-            onPress={() => {
+            const doReset = () => {
               resetReceiptState();
               updateState({
                 showReceiptModal: true,
-                isAtFuelStation: true,
                 waitingForReceipt: true,
+                isAtFuelStation: true,
               });
-            }}
-          >
-            <Ionicons name="receipt-outline" size={18} color="#fff" />
-            <Text style={styles.buttonText}>I've Refueled (Scan Receipt)</Text>
-          </TouchableOpacity>
-        )}
+              showNotification('info', '🔄 Ready to scan a receipt', 2000);
+            };
 
-        {canEndTrip() && (
-          <TouchableOpacity
-            style={[styles.primaryButton, styles.endTripButton]}
-            onPress={endTrip}
-          >
-            <Ionicons name="stop-circle-outline" size={20} color="red" />
-            <Text style={[styles.buttonText, { color: 'red' }]}>End Trip</Text>
-          </TouchableOpacity>
-        )}
+            if (receiptSubmitted || receiptImage) {
+              Alert.alert(
+                'Reset Receipt Scanner',
+                'Reset the receipt state to scan a new receipt?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Reset', onPress: doReset },
+                ]
+              );
+            } else {
+              doReset();
+            }
+          }}
+        >
+          <Ionicons name="refresh-outline" size={18} color="#f3a089" />
+          <Text style={styles.buttonText}>Reset Receipt Scanner</Text>
+        </TouchableOpacity>
 
-        <View style={{ height: 24 }} />
-      </ScrollView>
+  {/* REFUEL / SCAN RECEIPT */}
+  {fuelWarning && (
+    <TouchableOpacity
+      style={[
+        styles.primaryButton,
+        { backgroundColor: "#ff6f00" },
+      ]}
+      onPress={async () => {
+        await auditLog({
+          action: "SCAN_REFUEL_RECEIPT",
+          page: "Location Activity",
+          description:
+            "User selected the refuel receipt scanning action",
+          element: "I've Refueled (Scan Receipt)",
+          targetId: tripId,
+          details: {
+            trip_id: tripId,
+          },
+        });
+
+        resetReceiptState();
+
+        updateState({
+          showReceiptModal: true,
+          isAtFuelStation: true,
+          waitingForReceipt: true,
+        });
+      }}
+    >
+      <Ionicons
+        name="receipt-outline"
+        size={18}
+        color="#fff"
+      />
+      <Text style={styles.buttonText}>
+        I've Refueled (Scan Receipt)
+      </Text>
+    </TouchableOpacity>
+  )}
+
+  {/* END TRIP */}
+  {canEndTrip() && (
+    <TouchableOpacity
+      style={[
+        styles.primaryButton,
+        styles.endTripButton,
+      ]}
+      onPress={async () => {
+        await auditLog({
+          action: "TRIP_END",
+          page: "Location Activity",
+          description: "User ended the trip",
+          element: "End Trip",
+          targetId: tripId,
+          details: {
+            trip_id: tripId,
+          },
+        });
+
+        await endTrip();
+      }}
+    >
+      <Ionicons
+        name="stop-circle-outline"
+        size={20}
+        color="red"
+      />
+      <Text
+        style={[
+          styles.buttonText,
+          { color: "red" },
+        ]}
+      >
+        End Trip
+      </Text>
+    </TouchableOpacity>
+  )}
+
+  <View style={{ height: 24 }} />
+</ScrollView>
     </Animated.View>
   );
 
