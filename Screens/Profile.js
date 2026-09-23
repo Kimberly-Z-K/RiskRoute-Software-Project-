@@ -35,130 +35,179 @@ export default function Profile() {
   const [licenseNumber, setLicenseNumber] = useState("");
   const [email, setEmail] = useState("");
 
-  const [vehicle, setVehicle] = useState("Volvo FH Truck");
-  const [plate, setPlate] = useState("CA 123-456");
   const [rating, setRating] = useState("4.8");
   const [trips, setTrips] = useState(128);
+
+  // Vehicle assigned to this driver
+  const [vehicle, setVehicle] = useState(null);
+  const [vehicleLoading, setVehicleLoading] = useState(true);
 
   useEffect(() => {
     if (!user?.id) return;
     loadProfile();
+    loadVehicle();
   }, [user]);
 
-const loadProfile = async () => {
-  try {
-    setLoading(true);
+  const loadProfile = async () => {
+    try {
+      setLoading(true);
 
-    const userId = user.id;
+      const userId = user.id;
 
-    const { data: userRow, error: userError } = await supabase
-      .from("users")
-      .select("user_id, user_name, email")
-      .eq("user_id", userId)
-      .single();
+      const { data: userRow, error: userError } = await supabase
+        .from("users")
+        .select("user_id, user_name, email")
+        .eq("user_id", userId)
+        .single();
 
-    if (userError) throw userError;
+      if (userError) throw userError;
 
-    const { data: driverRow, error: driverError } = await supabase
-      .from("drivers")
-      .select("driver_id, driver_username, phone, license_number") // Add driver_username here
-      .eq("driver_id", userId)
-      .single();
+      const { data: driverRow, error: driverError } = await supabase
+        .from("drivers")
+        .select("driver_id, driver_username, phone, license_number")
+        .eq("driver_id", userId)
+        .single();
 
-    if (driverError) throw driverError;
+      if (driverError) throw driverError;
 
-    const profileData = {
-      userName: driverRow.driver_username || userRow.user_name || "", // Use driver_username from drivers table
-      email: userRow.email || "",
-      phone: driverRow.phone || "",
-      licenseNumber: driverRow.license_number || "",
-    };
+      const profileData = {
+        userName: driverRow.driver_username || userRow.user_name || "",
+        email: userRow.email || "",
+        phone: driverRow.phone || "",
+        licenseNumber: driverRow.license_number || "",
+      };
 
-    setSaved(profileData);
-    setUserName(profileData.userName);
-    setEmail(profileData.email);
-    setPhone(profileData.phone);
-    setLicenseNumber(profileData.licenseNumber);
-  } catch (err) {
-    Alert.alert("Error", err.message);
-  } finally {
-    setLoading(false);
-  }
-};
+      setSaved(profileData);
+      setUserName(profileData.userName);
+      setEmail(profileData.email);
+      setPhone(profileData.phone);
+      setLicenseNumber(profileData.licenseNumber);
+    } catch (err) {
+      Alert.alert("Error", err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-const handleSave = async () => {
-  if (
-    !userName.trim() ||
-    !phone.trim() ||
-    !licenseNumber.trim() ||
-    !email.trim()
-  ) {
-    Alert.alert("Error", "Please fill in all required fields");
-    return;
-  }
+  // ---- Fetch the vehicle assigned to this user ----
+  const loadVehicle = async () => {
+    setVehicleLoading(true);
+    try {
+      // 1. Find the driver row via user_id (with email fallback)
+      let driverId = null;
 
-  try {
-    setSaving(true);
+      const { data: byUser, error: byUserErr } = await supabase
+        .from("drivers")
+        .select("driver_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-    const userId = user.id;
+      console.log("[Profile] driver by user_id:", {
+        driverId: byUser?.driver_id,
+        error: byUserErr?.message,
+        code: byUserErr?.code,
+      });
 
-    // Update users table
-    const { error: userUpdateError } = await supabase
-      .from("users")
-      .update({
-        user_name: userName.trim(),
+      driverId = byUser?.driver_id ?? null;
+
+      // Fallback: driver_id already equals auth uid in some setups
+      if (!driverId) {
+        driverId = user.id;
+      }
+
+      // 2. Look up the vehicle by driver_id
+      const { data: veh, error: vehErr } = await supabase
+        .from("vehicles")
+        .select(
+          "vehicle_id, registration_number, status, current_location, route_id"
+        )
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      console.log("[Profile] vehicle lookup:", {
+        vehicleId: veh?.vehicle_id,
+        registration: veh?.registration_number,
+        error: vehErr?.message,
+        code: vehErr?.code,
+      });
+
+      setVehicle(veh ?? null);
+    } catch (e) {
+      console.warn("[Profile] vehicle fetch exception:", e?.message);
+      setVehicle(null);
+    } finally {
+      setVehicleLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (
+      !userName.trim() ||
+      !phone.trim() ||
+      !licenseNumber.trim() ||
+      !email.trim()
+    ) {
+      Alert.alert("Error", "Please fill in all required fields");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const userId = user.id;
+
+      const { error: userUpdateError } = await supabase
+        .from("users")
+        .update({
+          user_name: userName.trim(),
+          email: email.trim(),
+        })
+        .eq("user_id", userId);
+
+      if (userUpdateError) throw userUpdateError;
+
+      const { error: driverUpdateError } = await supabase
+        .from("drivers")
+        .update({
+          driver_username: userName.trim(),
+          phone: phone.trim(),
+          license_number: licenseNumber.trim(),
+        })
+        .eq("driver_id", userId);
+
+      if (driverUpdateError) throw driverUpdateError;
+
+      const profileData = {
+        userName: userName.trim(),
         email: email.trim(),
-      })
-      .eq("user_id", userId);
-
-    if (userUpdateError) throw userUpdateError;
-
-    // Update drivers table
-    const { error: driverUpdateError } = await supabase
-      .from("drivers")
-      .update({
-        driver_username: userName.trim(),
         phone: phone.trim(),
-        license_number: licenseNumber.trim(),
-      })
-      .eq("driver_id", userId);
+        licenseNumber: licenseNumber.trim(),
+      };
 
-    if (driverUpdateError) throw driverUpdateError;
+      await auditLog({
+        action: "PROFILE_UPDATE",
+        page: "Mobile Profile",
+        description: "User updated their profile information",
+        details: {
+          updated_fields: [
+            "user_name",
+            "email",
+            "phone",
+            "license_number",
+          ],
+        },
+      });
 
-    // Prepare updated profile data
-    const profileData = {
-      userName: userName.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
-      licenseNumber: licenseNumber.trim(),
-    };
+      setSaved(profileData);
+      setEditing(false);
 
-    // Save profile update in mobile audit table
-    await auditLog({
-      action: "PROFILE_UPDATE",
-      page: "Mobile Profile",
-      description:
-        "User updated their profile information",
-      details: {
-        updated_fields: [
-          "user_name",
-          "email",
-          "phone",
-          "license_number",
-        ],
-      },
-    });
-
-    setSaved(profileData);
-    setEditing(false);
-
-    Alert.alert("Success", "Profile saved successfully!");
-  } catch (err) {
-    Alert.alert("Save Error", err.message);
-  } finally {
-    setSaving(false);
-  }
-};
+      Alert.alert("Success", "Profile saved successfully!");
+    } catch (err) {
+      Alert.alert("Save Error", err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleEdit = () => {
     if (saved) {
@@ -210,6 +259,10 @@ const handleSave = async () => {
       </View>
     );
   }
+
+  const vehicleTitle = vehicle?.registration_number || "No vehicle assigned";
+  const vehicleLocation = vehicle?.current_location || null;
+  const vehicleStatus = vehicle?.status || null;
 
   return (
     <View style={styles.container}>
@@ -392,6 +445,71 @@ const handleSave = async () => {
                     <Text style={styles.value}>{saved?.licenseNumber}</Text>
                   </View>
                 </View>
+              </View>
+
+              {/* ===== Vehicle assigned to this driver ===== */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <MaterialCommunityIcons
+                    name="car"
+                    size={18}
+                    color="#3B82F6"
+                  />
+                  <Text style={styles.sectionTitle}>Assigned Vehicle</Text>
+                </View>
+
+                {vehicleLoading ? (
+                  <View style={styles.vehicleLoadingRow}>
+                    <ActivityIndicator size="small" color="#3B82F6" />
+                    <Text style={styles.vehicleLoadingText}>
+                      Loading vehicle...
+                    </Text>
+                  </View>
+                ) : !vehicle ? (
+                  <View style={styles.vehicleEmptyRow}>
+                    <Ionicons
+                      name="car-outline"
+                      size={22}
+                      color="#9CA3AF"
+                    />
+                    <Text style={styles.vehicleEmptyText}>
+                      No vehicle assigned to your profile yet.
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    <View style={styles.vehicleHeaderRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.label}>Registration</Text>
+                        <Text style={styles.vehicleReg}>
+                          {vehicleTitle}
+                        </Text>
+                      </View>
+                      {vehicleStatus && (
+                        <View style={styles.vehicleStatusBadge}>
+                          <Text style={styles.vehicleStatusText}>
+                            {vehicleStatus}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={[styles.infoRow, { marginTop: 14 }]}>
+                      <View style={styles.infoItem}>
+                        <Text style={styles.label}>Current Location</Text>
+                        <Text style={styles.value}>
+                          {vehicleLocation || "—"}
+                        </Text>
+                      </View>
+                      <View style={styles.infoItem}>
+                        <Text style={styles.label}>Route</Text>
+                        <Text style={styles.value}>
+                          {vehicle.route_id ?? "—"}
+                        </Text>
+                      </View>
+                    </View>
+                  </>
+                )}
               </View>
 
               <View style={styles.section}>
@@ -669,6 +787,53 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginTop: 4,
   },
+
+  // ---- Vehicle section ----
+  vehicleLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 6,
+  },
+  vehicleLoadingText: {
+    fontSize: 13,
+    color: "#6B7280",
+  },
+  vehicleEmptyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 6,
+  },
+  vehicleEmptyText: {
+    fontSize: 13,
+    color: "#6B7280",
+    flex: 1,
+  },
+  vehicleHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  vehicleReg: {
+    fontSize: 16,
+    color: "#111827",
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  vehicleStatusBadge: {
+    backgroundColor: "#DFF7E5",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    marginLeft: 8,
+  },
+  vehicleStatusText: {
+    color: "#1b8634",
+    fontWeight: "700",
+    fontSize: 11,
+    textTransform: "capitalize",
+  },
+
   editButton: {
     flexDirection: "row",
     alignItems: "center",
