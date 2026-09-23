@@ -1,24 +1,12 @@
-
-import React, {
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-
+import React, { useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
-import {
-  NavigationContainer,
-} from "@react-navigation/native";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 
-import {
-  createNativeStackNavigator,
-} from "@react-navigation/native-stack";
-
-import {
-  AuthProvider,
-  useAuth,
-} from "./context/AuthContext";
+// LIVEKIT TEMPORARILY DISABLED FOR EXPO GO
+// import IncomingCallManager from "./components/IncomingCallManager";
 
 import Login from "./Auth/Login";
 import SignUp from "./Auth/SignUP";
@@ -28,6 +16,13 @@ import TabNavigator from "./src/Navigation/TabNavigator";
 
 import { auditLog } from "./utils/auditlogger";
 
+// =====================================================
+// LIVEKIT TEMPORARILY DISABLED
+// =====================================================
+// Do NOT import @livekit/react-native in Expo Go.
+// Do NOT call registerGlobals() in Expo Go.
+// =====================================================
+
 const Stack = createNativeStackNavigator();
 
 /**
@@ -35,11 +30,7 @@ const Stack = createNativeStackNavigator();
  * including nested navigators.
  */
 function getActiveRouteName(state) {
-  if (
-    !state ||
-    !state.routes ||
-    state.index == null
-  ) {
+  if (!state || !state.routes || state.index == null) {
     return null;
   }
 
@@ -59,19 +50,14 @@ function getActiveRouteName(state) {
  * 2. App resumed events
  * 3. App background events
  */
-function AutomaticAudit({
-  navigationState,
-}) {
+function AutomaticAudit({ navigationState }) {
   const { user, isVerified } = useAuth();
 
   const previousScreen = useRef(null);
-
-  const previousAppState = useRef(
-    AppState.currentState
-  );
+  const previousAppState = useRef(AppState.currentState);
 
   /**
-   * Track screen views when the navigation state changes.
+   * Track screen views.
    */
   useEffect(() => {
     const trackScreenView = async () => {
@@ -79,33 +65,24 @@ function AutomaticAudit({
         return;
       }
 
-      const screenName =
-        getActiveRouteName(navigationState);
+      const screenName = getActiveRouteName(navigationState);
 
       if (!screenName) {
         return;
       }
 
-      // Prevent duplicate screen-view events
       if (previousScreen.current === screenName) {
         return;
       }
 
       previousScreen.current = screenName;
 
-      console.log(
-        "📱 SCREEN VIEW:",
-        screenName
-      );
+      console.log("📱 SCREEN VIEW:", screenName);
 
       await auditLog({
         action: "SCREEN_VIEW",
-
         page: screenName,
-
-        description:
-          `User opened the ${screenName} screen`,
-
+        description: `User opened the ${screenName} screen`,
         details: {
           screen: screenName,
           automatic: true,
@@ -114,15 +91,10 @@ function AutomaticAudit({
     };
 
     trackScreenView();
-  }, [
-    navigationState,
-    user,
-    isVerified,
-  ]);
+  }, [navigationState, user, isVerified]);
 
   /**
-   * Reset the previous screen when the user logs out
-   * or becomes unverified.
+   * Reset previous screen after logout/unverified state.
    */
   useEffect(() => {
     if (!user || !isVerified) {
@@ -134,74 +106,54 @@ function AutomaticAudit({
    * Track application lifecycle events.
    */
   useEffect(() => {
-    const subscription =
-      AppState.addEventListener(
-        "change",
-        async (nextAppState) => {
-          const previousState =
-            previousAppState.current;
+    const subscription = AppState.addEventListener(
+      "change",
+      async (nextAppState) => {
+        const previousState = previousAppState.current;
 
-          console.log(
-            "📲 APP STATE:",
-            previousState,
-            "→",
-            nextAppState
-          );
+        console.log("📲 APP STATE:", previousState, "→", nextAppState);
 
-          // Track app resumed
-          if (
-            user &&
-            isVerified &&
-            previousState.match(
-              /inactive|background/
-            ) &&
-            nextAppState === "active"
-          ) {
-            await auditLog({
-              action: "APP_RESUMED",
-
-              page: "Mobile App",
-
-              description:
-                "RiskRoute mobile application resumed",
-
-              details: {
-                previousState,
-                nextAppState,
-                automatic: true,
-              },
-            });
-          }
-
-          // Track app background
-          if (
-            user &&
-            isVerified &&
-            nextAppState.match(
-              /inactive|background/
-            )
-          ) {
-            await auditLog({
-              action: "APP_BACKGROUND",
-
-              page: "Mobile App",
-
-              description:
-                "RiskRoute mobile application moved to the background",
-
-              details: {
-                previousState,
-                nextAppState,
-                automatic: true,
-              },
-            });
-          }
-
-          // Update the previous app state
-          previousAppState.current =
-            nextAppState;
+        // App resumed
+        if (
+          user &&
+          isVerified &&
+          previousState.match(/inactive|background/) &&
+          nextAppState === "active"
+        ) {
+          await auditLog({
+            action: "APP_RESUMED",
+            page: "Mobile App",
+            description: "RiskRoute mobile application resumed",
+            details: {
+              previousState,
+              nextAppState,
+              automatic: true,
+            },
+          });
         }
-      );
+
+        // App moved to background
+        if (
+          user &&
+          isVerified &&
+          nextAppState.match(/inactive|background/)
+        ) {
+          await auditLog({
+            action: "APP_BACKGROUND",
+            page: "Mobile App",
+            description:
+              "RiskRoute mobile application moved to the background",
+            details: {
+              previousState,
+              nextAppState,
+              automatic: true,
+            },
+          });
+        }
+
+        previousAppState.current = nextAppState;
+      }
+    );
 
     return () => {
       subscription.remove();
@@ -215,11 +167,7 @@ function AutomaticAudit({
  * Controls authentication and main app navigation.
  */
 function RootNavigator() {
-  const {
-    user,
-    loading,
-    isVerified,
-  } = useAuth();
+  const { user, loading, isVerified } = useAuth();
 
   console.log("ROOT", {
     loading,
@@ -233,41 +181,19 @@ function RootNavigator() {
 
   return (
     <Stack.Navigator
-      key={
-        user && isVerified
-          ? "app"
-          : "auth"
-      }
+      key={user && isVerified ? "app" : "auth"}
       screenOptions={{
         headerShown: false,
       }}
     >
       {user && isVerified ? (
-        <Stack.Screen
-          name="MainTabs"
-          component={TabNavigator}
-        />
+        <Stack.Screen name="MainTabs" component={TabNavigator} />
       ) : (
         <>
-          <Stack.Screen
-            name="Splash"
-            component={Splash}
-          />
-
-          <Stack.Screen
-            name="Login"
-            component={Login}
-          />
-
-          <Stack.Screen
-            name="SignUP"
-            component={SignUp}
-          />
-
-          <Stack.Screen
-            name="ForgotPassword"
-            component={ForgotPassword}
-          />
+          <Stack.Screen name="Splash" component={Splash} />
+          <Stack.Screen name="Login" component={Login} />
+          <Stack.Screen name="SignUP" component={SignUp} />
+          <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
         </>
       )}
     </Stack.Navigator>
@@ -279,25 +205,18 @@ function RootNavigator() {
  */
 export default function App() {
   const navigationRef = useRef(null);
-
-  // Store the current navigation state
-  const [navigationState, setNavigationState] =
-    useState(null);
+  const [navigationState, setNavigationState] = useState(null);
 
   /**
    * Called when navigation is ready.
    */
   const handleNavigationReady = () => {
-    const state =
-      navigationRef.current?.getRootState();
+    const state = navigationRef.current?.getRootState();
 
     if (state) {
       setNavigationState(state);
 
-      console.log(
-        "🚀 NAVIGATION READY:",
-        getActiveRouteName(state)
-      );
+      console.log("🚀 NAVIGATION READY:", getActiveRouteName(state));
     }
   };
 
@@ -307,13 +226,9 @@ export default function App() {
   const handleNavigationStateChange = (state) => {
     setNavigationState(state);
 
-    const screenName =
-      getActiveRouteName(state);
+    const screenName = getActiveRouteName(state);
 
-    console.log(
-      "🧭 NAVIGATION:",
-      screenName
-    );
+    console.log("🧭 NAVIGATION:", screenName);
   };
 
   return (
@@ -323,9 +238,10 @@ export default function App() {
         onReady={handleNavigationReady}
         onStateChange={handleNavigationStateChange}
       >
-        <AutomaticAudit
-          navigationState={navigationState}
-        />
+        <AutomaticAudit navigationState={navigationState} />
+
+        {/* LiveKit temporarily disabled because Expo Go does not support the required native WebRTC module. */}
+        {/* <IncomingCallManager /> */}
 
         <RootNavigator />
       </NavigationContainer>

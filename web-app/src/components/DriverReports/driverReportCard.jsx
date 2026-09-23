@@ -11,9 +11,13 @@ import {
   User,
   Utensils,
   AlertTriangle,
-  ChevronRight
+  ChevronRight,
 } from 'lucide-react';
 
+
+// =====================================================
+// REPORT ICON
+// =====================================================
 
 const getReportIcon = (type) => {
   switch (type) {
@@ -35,6 +39,10 @@ const getReportIcon = (type) => {
 };
 
 
+// =====================================================
+// REPORT TYPE LABEL
+// =====================================================
+
 const getTypeLabel = (type) => {
   switch (type) {
     case 'rest':
@@ -55,24 +63,106 @@ const getTypeLabel = (type) => {
 };
 
 
-const DriverReportCard = ({
-  report,
-  onCall,
-  onResolve
-}) => {
+// =====================================================
+// STATUS HELPERS
+// =====================================================
 
+const getDisplayStatus = (report) => {
+  if (report?.displayStatus) {
+    return report.displayStatus;
+  }
+
+  const status = String(report?.status || 'active').toLowerCase();
+
+  if (
+    status === 'resolved' ||
+    status === 'completed' ||
+    status === 'closed'
+  ) {
+    return 'Completed';
+  }
+
+  if (
+    status === 'in_progress' ||
+    status === 'in progress' ||
+    status === 'processing'
+  ) {
+    return 'In Progress';
+  }
+
+  return 'Active';
+};
+
+
+const isReportResolved = (report) => {
+  const status = String(report?.status || '').toLowerCase();
+
+  return (
+    status === 'resolved' ||
+    status === 'completed' ||
+    status === 'closed' ||
+    report?.displayStatus === 'Completed'
+  );
+};
+
+
+// =====================================================
+// DRIVER REPORT CARD
+// =====================================================
+
+const DriverReportCard = ({
+  report = {},
+  onCall,
+  onResolve,
+}) => {
   const ReportIcon = getReportIcon(report.type);
 
   const isCritical = report.severity === 'critical';
   const isWarning = report.severity === 'warning';
 
+  const displayStatus = getDisplayStatus(report);
+  const isResolved = isReportResolved(report);
+
+  // Driver information comes from:
+  // user_reports.user_id -> drivers.driver_id
+  const driverName =
+    report.driver ||
+    report.driver_username ||
+    'Unknown Driver';
+
+  const driverPhone =
+    report.phone ||
+    '';
+
+  const truckName =
+    report.truck ||
+    'Vehicle unavailable';
+
+  const reportTitle =
+    report.title ||
+    'Driver Report';
+
+  const reportMessage =
+    report.message ||
+    'No additional details provided.';
+
+  const reportLocation =
+    report.location ||
+    'Location unavailable';
+
+  const reportRoute =
+    report.route ||
+    'Route unavailable';
+
+  const reportTime =
+    report.time ||
+    'Time unavailable';
 
   const iconContainer = isCritical
     ? 'bg-red-50 text-red-600'
     : isWarning
     ? 'bg-amber-50 text-amber-600'
     : 'bg-blue-50 text-blue-600';
-
 
   const typeBadge = isCritical
     ? 'bg-red-50 text-red-700 border-red-100'
@@ -93,14 +183,13 @@ const DriverReportCard = ({
       {/* =====================================================
           MAIN CONTENT
       ===================================================== */}
+
       <div className="p-4">
 
         <div className="flex flex-col lg:flex-row lg:items-start gap-4">
 
+          {/* REPORT ICON */}
 
-          {/* =================================================
-              ICON
-          ================================================= */}
           <div
             className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${iconContainer}`}
           >
@@ -108,12 +197,12 @@ const DriverReportCard = ({
           </div>
 
 
-          {/* =================================================
-              REPORT CONTENT
-          ================================================= */}
+          {/* REPORT CONTENT */}
+
           <div className="flex-1 min-w-0">
 
-            {/* Title Row */}
+            {/* TITLE ROW */}
+
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
 
               <div>
@@ -121,7 +210,7 @@ const DriverReportCard = ({
                 <div className="flex items-center gap-2 flex-wrap">
 
                   <h3 className="text-sm font-bold text-slate-900">
-                    {report.title}
+                    {reportTitle}
                   </h3>
 
                   {isCritical && (
@@ -134,13 +223,14 @@ const DriverReportCard = ({
                 </div>
 
 
-                {/* Driver */}
+                {/* DRIVER */}
+
                 <div className="flex items-center gap-2 mt-1.5 text-sm text-slate-500">
 
                   <User className="w-3.5 h-3.5" />
 
                   <span className="font-medium text-slate-700">
-                    {report.driver}
+                    {driverName}
                   </span>
 
                   <span className="text-slate-300">
@@ -150,7 +240,7 @@ const DriverReportCard = ({
                   <Truck className="w-3.5 h-3.5" />
 
                   <span>
-                    {report.truck}
+                    {truckName}
                   </span>
 
                 </div>
@@ -158,7 +248,8 @@ const DriverReportCard = ({
               </div>
 
 
-              {/* Type */}
+              {/* TYPE */}
+
               <span
                 className={`self-start px-2.5 py-1 rounded-md border text-[10px] font-bold tracking-wide whitespace-nowrap ${typeBadge}`}
               >
@@ -168,9 +259,8 @@ const DriverReportCard = ({
             </div>
 
 
-            {/* =================================================
-                MESSAGE
-            ================================================= */}
+            {/* MESSAGE */}
+
             <div
               className={`mt-3 rounded-lg px-3.5 py-3 ${
                 isCritical
@@ -180,18 +270,18 @@ const DriverReportCard = ({
             >
 
               <p className="text-sm text-slate-600 leading-relaxed">
-                {report.message}
+                {reportMessage}
               </p>
 
             </div>
 
 
-            {/* =================================================
-                DETAILS
-            ================================================= */}
+            {/* DETAILS */}
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 mt-3">
 
-              {/* Location */}
+              {/* LOCATION */}
+
               <div className="flex items-center gap-2 min-w-0">
 
                 <div className="w-7 h-7 rounded-md bg-slate-50 flex items-center justify-center flex-shrink-0">
@@ -204,8 +294,11 @@ const DriverReportCard = ({
                     Location
                   </p>
 
-                  <p className="text-xs font-medium text-slate-700 truncate">
-                    {report.location}
+                  <p
+                    className="text-xs font-medium text-slate-700 truncate"
+                    title={reportLocation}
+                  >
+                    {reportLocation}
                   </p>
 
                 </div>
@@ -213,7 +306,8 @@ const DriverReportCard = ({
               </div>
 
 
-              {/* Route */}
+              {/* ROUTE */}
+
               <div className="flex items-center gap-2 min-w-0">
 
                 <div className="w-7 h-7 rounded-md bg-slate-50 flex items-center justify-center flex-shrink-0">
@@ -226,8 +320,11 @@ const DriverReportCard = ({
                     Route
                   </p>
 
-                  <p className="text-xs font-medium text-slate-700 truncate">
-                    {report.route}
+                  <p
+                    className="text-xs font-medium text-slate-700 truncate"
+                    title={reportRoute}
+                  >
+                    {reportRoute}
                   </p>
 
                 </div>
@@ -235,7 +332,8 @@ const DriverReportCard = ({
               </div>
 
 
-              {/* Time */}
+              {/* TIME */}
+
               <div className="flex items-center gap-2">
 
                 <div className="w-7 h-7 rounded-md bg-slate-50 flex items-center justify-center flex-shrink-0">
@@ -249,7 +347,7 @@ const DriverReportCard = ({
                   </p>
 
                   <p className="text-xs font-medium text-slate-700">
-                    {report.time}
+                    {reportTime}
                   </p>
 
                 </div>
@@ -268,21 +366,22 @@ const DriverReportCard = ({
       {/* =====================================================
           FOOTER / ACTIONS
       ===================================================== */}
+
       <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/50 rounded-b-xl">
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
 
+          {/* STATUS */}
 
-          {/* Status */}
           <div className="flex items-center gap-2">
 
             <span
               className={`w-2 h-2 rounded-full ${
-                isCritical
+                isCritical && !isResolved
                   ? 'bg-red-500'
-                  : isWarning
+                  : isWarning && !isResolved
                   ? 'bg-amber-500'
-                  : report.status === 'Completed'
+                  : isResolved
                   ? 'bg-slate-400'
                   : 'bg-green-500'
               }`}
@@ -290,40 +389,50 @@ const DriverReportCard = ({
 
             <span
               className={`text-xs font-semibold ${
-                isCritical
+                isCritical && !isResolved
                   ? 'text-red-700'
-                  : isWarning
+                  : isWarning && !isResolved
                   ? 'text-amber-700'
-                  : report.status === 'Completed'
+                  : isResolved
                   ? 'text-slate-500'
                   : 'text-green-700'
               }`}
             >
-              {report.status}
+              {displayStatus}
             </span>
 
           </div>
 
 
-          {/* Actions */}
+          {/* ACTIONS */}
+
           <div className="flex items-center gap-2 flex-wrap">
 
-            {/* Call */}
-            {isCritical && (
-              <button
-                onClick={() => onCall(report)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition shadow-sm"
-              >
-                <Phone className="w-3.5 h-3.5" />
-                Call Driver
-              </button>
-            )}
+            {/* =================================================
+                CALL DRIVER
+            ================================================= */}
 
-
-            {/* Location */}
             <button
+              type="button"
+              onClick={() => onCall?.(report)}
+              title={
+                driverPhone
+                  ? `Call ${driverName} - ${driverPhone}`
+                  : `No phone number available for ${driverName}`
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold transition"
+            >
+              <Phone className="w-3.5 h-3.5" />
+              Call Driver
+            </button>
+
+
+            {/* LOCATION */}
+
+            <button
+              type="button"
               onClick={() => {
-                alert(`Location: ${report.location}`);
+                alert(`Location: ${reportLocation}`);
               }}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-semibold transition"
             >
@@ -332,10 +441,18 @@ const DriverReportCard = ({
             </button>
 
 
-            {/* Driver */}
+            {/* DRIVER */}
+
             <button
+              type="button"
               onClick={() => {
-                alert(`Driver: ${report.driver}`);
+                alert(
+                  `Driver: ${driverName}${
+                    driverPhone
+                      ? `\nPhone: ${driverPhone}`
+                      : '\nPhone: No phone number available'
+                  }`
+                );
               }}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-semibold transition"
             >
@@ -344,16 +461,19 @@ const DriverReportCard = ({
             </button>
 
 
-            {/* Resolve */}
-            {isCritical && (
+            {/* RESOLVE */}
+
+            {!isResolved && (
               <button
-                onClick={() => onResolve(report)}
+                type="button"
+                onClick={() => onResolve?.(report)}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-50 border border-green-200 hover:bg-green-100 text-green-700 text-xs font-semibold transition"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 Resolve
               </button>
             )}
+
 
             <ChevronRight className="hidden sm:block w-4 h-4 text-slate-300 ml-1" />
 

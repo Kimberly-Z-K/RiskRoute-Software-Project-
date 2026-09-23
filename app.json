@@ -16,7 +16,8 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "We need your location to show navigation routes."
+        "NSLocationWhenInUseUsageDescription": "We need your location to show navigation routes.",
+        "NSMicrophoneUsageDescription": "RiskRoute needs access to your microphone for driver voice calls."
       }
     },
 
@@ -28,9 +29,15 @@
       "edgeToEdgeEnabled": true,
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "RECORD_AUDIO"
       ]
     },
+
+    "plugins": [
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc"
+    ],
 
     "web": {
       "favicon": "./assets/favicon.png"

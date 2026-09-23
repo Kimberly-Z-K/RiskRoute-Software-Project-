@@ -1,0 +1,22 @@
+{
+  "name": "call-server",
+  "version": "1.0.0",
+   "description": "RiskRoute LiveKit voice call server",
+  "main": "callserver.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.3",
+    "express": "^5.2.1",
+    "livekit-server-sdk": "^2.19.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
