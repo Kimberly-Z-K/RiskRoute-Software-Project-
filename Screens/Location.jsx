@@ -140,7 +140,6 @@ const formatDuration = (seconds) => {
   return `${h}h ${m % 60}m`;
 };
 
-// Map internal event types -> user_reports.category (must match CHECK)
 const EVENT_TO_CATEGORY = {
   trip_started: 'other',
   trip_paused: 'other',
@@ -163,7 +162,7 @@ const buildReportText = (eventType, metadata = {}) => {
       };
     case 'trip_paused':
       return {
-        title: `Trip paused – ${metadata?.reason ?? 'unknown'}`,
+        title: `Trip paused - ${metadata?.reason ?? 'unknown'}`,
         description: `Category: ${metadata?.category ?? 'n/a'}. Notes: ${metadata?.notes || 'none'}.`,
       };
     case 'trip_resumed': {
@@ -219,7 +218,6 @@ export default function LocationScreen({ route }) {
     destinationDistanceToStation: null,
     searchingStations: false,
 
-    // Receipt
     showReceiptModal: false,
     receiptImage: null,
     receiptAmount: '',
@@ -228,7 +226,6 @@ export default function LocationScreen({ route }) {
     waitingForReceipt: false,
     isAtFuelStation: false,
 
-    // Amount Input Modal (OCR confirm / manual entry)
     showAmountModal: false,
     amountInput: '',
     pendingReceiptUri: null,
@@ -236,7 +233,6 @@ export default function LocationScreen({ route }) {
     autoDetectedAmount: null,
     showOCRConfirmation: false,
 
-    // Pause Trip
     showPauseModal: false,
     pauseCategory: null,
     pauseSubReason: null,
@@ -244,13 +240,11 @@ export default function LocationScreen({ route }) {
     isPaused: false,
     pauseStartTime: null,
 
-    // Duration tracking + report resolution
     tripStartedAt: null,
     pauseStartedAt: null,
     lastPauseReportId: null,
     lastTripReportId: null,
 
-    // UI
     notification: null,
     showFuelModal: false,
     selectedFuelStation: null,
@@ -342,14 +336,11 @@ export default function LocationScreen({ route }) {
     }, durationMs);
   }, [updateState]);
 
-  // ============================================
-  // EVENT LOGGING -> public.user_reports
-  // ============================================
   const logTripEvent = useCallback(
     async (eventType, metadata = {}) => {
       const effectiveTripId = stateRef.current.resolvedTripId || tripId || null;
 
-      console.log("📝 [logTripEvent] START", {
+      console.log("[logTripEvent] START", {
         eventType,
         effectiveTripId,
         metadata,
@@ -362,23 +353,21 @@ export default function LocationScreen({ route }) {
         } = await supabase.auth.getUser();
 
         if (userError || !authUser) {
-          console.warn("⚠️ [logTripEvent] No user:", userError?.message);
+          console.warn("[logTripEvent] No user:", userError?.message);
           return null;
         }
 
-        // ---- Resolve vehicle (cached once per session) ----
         let vehicleId = cachedVehicleIdRef.current;
         if (!vehicleId) {
-          console.log("🚗 [logTripEvent] resolving vehicle for user:", authUser.id);
+          console.log("[logTripEvent] resolving vehicle for user:", authUser.id);
 
-          // 1. Try drivers.user_id
           const { data: driverById, error: driverByIdErr } = await supabase
             .from("drivers")
             .select("driver_id")
             .eq("user_id", authUser.id)
             .maybeSingle();
 
-          console.log("🚗 [logTripEvent] drivers by user_id:", {
+          console.log("[logTripEvent] drivers by user_id:", {
             driverId: driverById?.driver_id,
             error: driverByIdErr?.message,
             code: driverByIdErr?.code,
@@ -386,7 +375,6 @@ export default function LocationScreen({ route }) {
 
           let driverId = driverById?.driver_id ?? null;
 
-          // 2. Fallback: drivers.email
           if (!driverId && authUser.email) {
             const { data: driverByEmail, error: driverByEmailErr } = await supabase
               .from("drivers")
@@ -394,7 +382,7 @@ export default function LocationScreen({ route }) {
               .eq("email", authUser.email)
               .maybeSingle();
 
-            console.log("🚗 [logTripEvent] drivers by email:", {
+            console.log("[logTripEvent] drivers by email:", {
               driverId: driverByEmail?.driver_id,
               error: driverByEmailErr?.message,
               code: driverByEmailErr?.code,
@@ -403,7 +391,6 @@ export default function LocationScreen({ route }) {
             driverId = driverByEmail?.driver_id ?? null;
           }
 
-          // 3. From driver, get vehicle
           if (driverId) {
             const { data: vehicle, error: vehicleErr } = await supabase
               .from("vehicles")
@@ -411,7 +398,7 @@ export default function LocationScreen({ route }) {
               .eq("driver_id", driverId)
               .maybeSingle();
 
-            console.log("🚗 [logTripEvent] vehicle lookup:", {
+            console.log("[logTripEvent] vehicle lookup:", {
               vehicleId: vehicle?.vehicle_id,
               error: vehicleErr?.message,
               code: vehicleErr?.code,
@@ -421,7 +408,7 @@ export default function LocationScreen({ route }) {
             cachedVehicleIdRef.current = vehicleId;
           }
         } else {
-          console.log("🚗 [logTripEvent] using cached vehicleId:", vehicleId);
+          console.log("[logTripEvent] using cached vehicleId:", vehicleId);
         }
 
         const current = stateRef.current;
@@ -446,7 +433,7 @@ export default function LocationScreen({ route }) {
           location_timestamp: loc ? new Date().toISOString() : null,
         };
 
-        console.log("📝 [logTripEvent] payload:", payload);
+        console.log("[logTripEvent] payload:", payload);
 
         const { data, error } = await supabase
           .from("user_reports")
@@ -454,7 +441,7 @@ export default function LocationScreen({ route }) {
           .select();
 
         if (error) {
-          console.error("❌ [logTripEvent] INSERT FAILED:", {
+          console.error("[logTripEvent] INSERT FAILED:", {
             message: error.message,
             details: error.details,
             hint: error.hint,
@@ -463,10 +450,10 @@ export default function LocationScreen({ route }) {
           return null;
         }
 
-        console.log("✅ [logTripEvent] INSERT OK:", data);
+        console.log("[logTripEvent] INSERT OK:", data);
         return data?.[0] ?? null;
       } catch (err) {
-        console.error("❌ [logTripEvent] EXCEPTION:", err);
+        console.error("[logTripEvent] EXCEPTION:", err);
         return null;
       }
     },
@@ -475,7 +462,7 @@ export default function LocationScreen({ route }) {
 
   const resolveReport = useCallback(async (reportId, note) => {
     if (!reportId) return;
-    console.log("🛠️ [resolveReport] resolving:", { reportId, note });
+    console.log("[resolveReport] resolving:", { reportId, note });
 
     const { error } = await supabase
       .from("user_reports")
@@ -487,7 +474,7 @@ export default function LocationScreen({ route }) {
       .eq("id", reportId);
 
     if (error) {
-      console.error("❌ [resolveReport] FAILED:", {
+      console.error("[resolveReport] FAILED:", {
         message: error.message,
         code: error.code,
         details: error.details,
@@ -495,49 +482,46 @@ export default function LocationScreen({ route }) {
       });
       return;
     }
-    console.log("✅ [resolveReport] OK:", reportId);
+    console.log("[resolveReport] OK:", reportId);
   }, []);
 
   const getLocation = useCallback(async () => {
-  try {
-    const { status } =
-      await ExpoLocation.requestForegroundPermissionsAsync();
+    try {
+      const { status } =
+        await ExpoLocation.requestForegroundPermissionsAsync();
 
-    // User denied location permission
-    if (status !== "granted") {
+      if (status !== "granted") {
+        await auditLog({
+          action: "LOCATION_PERMISSION_DENIED",
+          page: "Location Activity",
+          element: "Location Permission",
+          description: "User denied location permission",
+        });
+
+        Alert.alert(
+          "Permission Denied",
+          "Enable location permissions"
+        );
+
+        updateState({
+          loading: false,
+          screenReady: true,
+        });
+
+        return;
+      }
+
       await auditLog({
-        action: "LOCATION_PERMISSION_DENIED",
+        action: "LOCATION_PERMISSION_GRANTED",
         page: "Location Activity",
         element: "Location Permission",
-        description: "User denied location permission",
+        description: "User granted location permission",
       });
 
-      Alert.alert(
-        "Permission Denied",
-        "Enable location permissions"
-      );
-
-      updateState({
-        loading: false,
-        screenReady: true,
-      });
-
-      return;
-    }
-
-    // User granted location permission
-    await auditLog({
-      action: "LOCATION_PERMISSION_GRANTED",
-      page: "Location Activity",
-      element: "Location Permission",
-      description: "User granted location permission",
-    });
-
-    // Get current location
-    const current =
-      await ExpoLocation.getCurrentPositionAsync({
-        accuracy: ExpoLocation.Accuracy.High,
-      });
+      const current =
+        await ExpoLocation.getCurrentPositionAsync({
+          accuracy: ExpoLocation.Accuracy.High,
+        });
       const newLocation = {
         latitude: current.coords.latitude,
         longitude: current.coords.longitude,
@@ -812,7 +796,7 @@ export default function LocationScreen({ route }) {
             const durationSec = started ? Math.round((Date.now() - started) / 1000) : null;
             const durationText = formatDuration(durationSec);
 
-            console.log("⏱️ [endTrip] trip duration:", durationText);
+            console.log("[endTrip] trip duration:", durationText);
 
             await logTripEvent('trip_ended', {
               trip_duration_seconds: durationSec,
@@ -833,7 +817,7 @@ export default function LocationScreen({ route }) {
               );
             }
 
-            showNotification('success', 'Trip ended successfully!', 4000);
+            showNotification('success', 'Trip ended successfully', 4000);
 
             setTimeout(() => {
               updateState({
@@ -926,7 +910,22 @@ export default function LocationScreen({ route }) {
       pauseNotes: '',
     });
 
-    showNotification('warning', `⏸️ Trip paused: ${reason}`, 4000);
+    showNotification('warning', `Trip paused: ${reason}`, 4000);
+
+    auditLog({
+      action: "TRIP_PAUSED",
+      page: "Location Activity",
+      description: `User paused the trip: ${reason}`,
+      element: "Confirm Pause",
+      targetId: tripId,
+      details: {
+        trip_id: tripId,
+        category: cat.key,
+        reason,
+        notes: current.pauseNotes || '',
+        paused_at: now,
+      },
+    });
 
     logTripEvent('trip_paused', {
       category: cat.key,
@@ -934,11 +933,11 @@ export default function LocationScreen({ route }) {
       notes: current.pauseNotes || '',
     }).then((row) => {
       if (row?.id) {
-        console.log("🆔 [confirmPause] pause report id:", row.id);
+        console.log("[confirmPause] pause report id:", row.id);
         updateState({ lastPauseReportId: row.id });
       }
     });
-  }, [updateState, showNotification, logTripEvent]);
+  }, [updateState, showNotification, logTripEvent, tripId]);
 
   const resumeTrip = useCallback(() => {
     Alert.alert(
@@ -958,14 +957,27 @@ export default function LocationScreen({ route }) {
               : null;
             const durationText = formatDuration(durationSec);
 
-            console.log("⏱️ [resumeTrip] pause duration:", durationText);
+            console.log("[resumeTrip] pause duration:", durationText);
+
+            await auditLog({
+              action: "TRIP_RESUMED",
+              page: "Location Activity",
+              description: `User resumed the trip after ${durationText}`,
+              element: "Confirm Resume",
+              targetId: tripId,
+              details: {
+                trip_id: tripId,
+                pause_duration_seconds: durationSec,
+                pause_duration_text: durationText,
+              },
+            });
 
             updateState({
               isPaused: false,
               pauseStartTime: null,
               pauseStartedAt: null,
             });
-            showNotification('success', '▶️ Trip resumed', 3000);
+            showNotification('success', 'Trip resumed', 3000);
 
             await logTripEvent('trip_resumed', {
               pause_duration_seconds: durationSec,
@@ -983,7 +995,7 @@ export default function LocationScreen({ route }) {
         },
       ]
     );
-  }, [updateState, showNotification, logTripEvent, resolveReport]);
+  }, [updateState, showNotification, logTripEvent, resolveReport, tripId]);
 
   const loadTrip = useCallback(async () => {
     try {
@@ -1003,7 +1015,7 @@ export default function LocationScreen({ route }) {
       const loadedTrip = tripId ? data : data?.[0];
       if (!loadedTrip) throw new Error("No trip data found");
 
-      console.log("🧭 [loadTrip] resolvedTripId:", loadedTrip.id);
+      console.log("[loadTrip] resolvedTripId:", loadedTrip.id);
       updateState({ resolvedTripId: loadedTrip.id });
 
       const startCoord = toCoord(loadedTrip.start_point);
@@ -1041,7 +1053,7 @@ export default function LocationScreen({ route }) {
         stops_count: stopAddrList.length,
       }).then((row) => {
         if (row?.id) {
-          console.log("🆔 [loadTrip] trip report id:", row.id);
+          console.log("[loadTrip] trip report id:", row.id);
           updateState({ lastTripReportId: row.id });
         }
       });
@@ -1079,14 +1091,14 @@ export default function LocationScreen({ route }) {
 
       updateState({ fuelWarning: true });
 
-      showNotification('warning', `Fuel at ${current.fuelPercent.toFixed(0)}% - Please find a fuel station!`, 5000);
+      showNotification('warning', `Fuel at ${current.fuelPercent.toFixed(0)}% - Please find a fuel station.`, 5000);
 
       updateState({ showFuelModal: true });
     }
   }, [updateState, showNotification]);
 
   // ============================================
-  // OCR INTEGRATION (base64 → Supabase Edge Function)
+  // OCR - Receipt text extraction
   // ============================================
   const extractReceiptWithEasyOCR = useCallback(async (imageUri) => {
     try {
@@ -1095,7 +1107,7 @@ export default function LocationScreen({ route }) {
       const supabaseUrl = 'https://pyqftjxfbjecjdhdzyor.supabase.co';
       const supabaseAnonKey = 'sb_publishable_iFcMrb7-9eJ86p0KU2PWyg_UZ77LRFF';
 
-      console.log('📸 Starting OCR request...');
+      console.log('Starting OCR request...');
 
       const base64 = await FileSystem.readAsStringAsync(imageUri, {
         encoding: 'base64',
@@ -1159,7 +1171,7 @@ export default function LocationScreen({ route }) {
 
       return { total, tax, date, rawText, success: total !== null && total > 0 };
     } catch (error) {
-      console.error('❌ EasyOCR error:', error);
+      console.error('OCR error:', error);
       updateState({ isProcessingOCR: false });
       return {
         total: null,
@@ -1172,9 +1184,6 @@ export default function LocationScreen({ route }) {
     }
   }, [updateState]);
 
-  // ============================================
-  // RECEIPT FUNCTIONS
-  // ============================================
   const uploadReceiptToSupabase = useCallback(async (uri, userId) => {
     try {
       const response = await fetch(uri);
@@ -1205,7 +1214,7 @@ export default function LocationScreen({ route }) {
   const requestCameraPermission = useCallback(async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Camera permission is required to scan receipts.');
+      Alert.alert('Permission Required', 'Camera access is required to scan receipts.');
       return false;
     }
     return true;
@@ -1286,7 +1295,7 @@ export default function LocationScreen({ route }) {
 
     showNotification(
       'success',
-      `✅ Receipt uploaded! R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
+      `Receipt uploaded. R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L)`,
       5000
     );
 
@@ -1341,17 +1350,17 @@ export default function LocationScreen({ route }) {
 
         if (ocrResult.success && ocrResult.total > 0) {
           Alert.alert(
-            '💰 Amount Detected',
-            `EasyOCR found R${ocrResult.total.toFixed(2)} on your receipt.`,
+            'Amount Detected',
+            `A total of R${ocrResult.total.toFixed(2)} was detected on the receipt.`,
             [
-              { text: '✅ Use This', onPress: () => showFuelAmountInput(localUri, ocrResult.total) },
-              { text: '✏️ Enter Manually', onPress: () => showFuelAmountInput(localUri, null), style: 'cancel' },
+              { text: 'Use Detected Amount', onPress: () => showFuelAmountInput(localUri, ocrResult.total) },
+              { text: 'Enter Manually', onPress: () => showFuelAmountInput(localUri, null), style: 'cancel' },
             ]
           );
         } else {
           Alert.alert(
-            '✏️ Manual Entry Required',
-            'Could not automatically detect the amount. Please enter it manually.',
+            'Manual Entry Required',
+            'The amount could not be detected automatically. Please enter it manually.',
             [{ text: 'OK', onPress: () => showFuelAmountInput(localUri, null) }]
           );
         }
@@ -1364,7 +1373,7 @@ export default function LocationScreen({ route }) {
   const pickReceiptImage = useCallback(async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Gallery permission is required to upload receipts.');
+      Alert.alert('Permission Required', 'Gallery access is required to upload receipts.');
       return;
     }
 
@@ -1387,17 +1396,17 @@ export default function LocationScreen({ route }) {
 
         if (ocrResult.success && ocrResult.total > 0) {
           Alert.alert(
-            '💰 Amount Detected',
-            `EasyOCR found R${ocrResult.total.toFixed(2)} on your receipt.`,
+            'Amount Detected',
+            `A total of R${ocrResult.total.toFixed(2)} was detected on the receipt.`,
             [
-              { text: '✅ Use This', onPress: () => showFuelAmountInput(localUri, ocrResult.total) },
-              { text: '✏️ Enter Manually', onPress: () => showFuelAmountInput(localUri, null), style: 'cancel' },
+              { text: 'Use Detected Amount', onPress: () => showFuelAmountInput(localUri, ocrResult.total) },
+              { text: 'Enter Manually', onPress: () => showFuelAmountInput(localUri, null), style: 'cancel' },
             ]
           );
         } else {
           Alert.alert(
-            '✏️ Manual Entry Required',
-            'Could not automatically detect the amount. Please enter it manually.',
+            'Manual Entry Required',
+            'The amount could not be detected automatically. Please enter it manually.',
             [{ text: 'OK', onPress: () => showFuelAmountInput(localUri, null) }]
           );
         }
@@ -1415,9 +1424,6 @@ export default function LocationScreen({ route }) {
     });
   }, [updateState]);
 
-  // ============================================
-  // BUTTON SHEET
-  // ============================================
   const BUTTON_SHEET_HANDLE_HEIGHT = 96;
 
   const measuredInfoAreaHeight =
@@ -1598,7 +1604,7 @@ export default function LocationScreen({ route }) {
   );
 
   // ============================================
-  // AMOUNT INPUT MODAL (restyled)
+  // AMOUNT INPUT MODAL
   // ============================================
   const renderAmountInputModal = () => (
     <Modal
@@ -1624,9 +1630,9 @@ export default function LocationScreen({ route }) {
               <Text style={styles.receiptModalTitle}>Enter Fuel Amount</Text>
               <Text style={styles.receiptModalSubtitleSmall}>
                 {isProcessingOCR
-                  ? "Processing receipt..."
+                  ? "Processing receipt"
                   : autoDetectedAmount
-                  ? "Confirm or adjust detected amount"
+                  ? "Confirm or adjust the detected amount"
                   : "Enter the amount spent on fuel"}
               </Text>
             </View>
@@ -1639,10 +1645,10 @@ export default function LocationScreen({ route }) {
           >
             <Text style={styles.receiptModalSectionTitle}>
               {isProcessingOCR
-                ? "⏳ Analyzing receipt..."
+                ? "Analyzing receipt..."
                 : autoDetectedAmount
-                ? `🤖 EasyOCR detected R${autoDetectedAmount.toFixed(2)}`
-                : "📝 Enter total amount (ZAR)"}
+                ? `Detected amount: R${autoDetectedAmount.toFixed(2)}`
+                : "Total amount (ZAR)"}
             </Text>
 
             {pendingReceiptUri && (
@@ -1657,7 +1663,7 @@ export default function LocationScreen({ route }) {
             {isProcessingOCR && (
               <View style={styles.receiptLoadingCard}>
                 <ActivityIndicator size="large" color="#0A1F44" />
-                <Text style={styles.receiptLoadingText}>Reading your receipt...</Text>
+                <Text style={styles.receiptLoadingText}>Reading receipt...</Text>
               </View>
             )}
 
@@ -1712,7 +1718,7 @@ export default function LocationScreen({ route }) {
   );
 
   // ============================================
-  // RECEIPT MODAL (restyled)
+  // RECEIPT MODAL
   // ============================================
   const renderReceiptModal = () => (
     <Modal
@@ -1722,7 +1728,7 @@ export default function LocationScreen({ route }) {
       onRequestClose={() => {
         if (!receiptSubmitted && waitingForReceipt) {
           Alert.alert(
-            "Scan Receipt",
+            "Receipt Required",
             "Please scan your receipt to continue.",
             [{ text: "OK", style: "default" }]
           );
@@ -1753,7 +1759,7 @@ export default function LocationScreen({ route }) {
               <Text style={styles.receiptModalSubtitleSmall}>
                 {receiptSubmitted
                   ? "Your fuel level has been updated"
-                  : "Snap or upload your fuel receipt"}
+                  : "Capture or upload your fuel receipt"}
               </Text>
             </View>
           </View>
@@ -1790,14 +1796,14 @@ export default function LocationScreen({ route }) {
               <View style={styles.receiptLoadingCard}>
                 <ActivityIndicator size="large" color="#0A1F44" />
                 <Text style={styles.receiptLoadingText}>
-                  Analyzing receipt with AI...
+                  Analyzing receipt...
                 </Text>
               </View>
             )}
 
             {receiptAmount && receiptSubmitted && (
               <View style={styles.receiptSuccessCard}>
-                <Text style={styles.receiptSuccessTitle}>✓ Receipt Recorded</Text>
+                <Text style={styles.receiptSuccessTitle}>Receipt Recorded</Text>
                 <View style={styles.receiptSuccessRow}>
                   <Text style={styles.receiptSuccessLabel}>Amount</Text>
                   <Text style={styles.receiptSuccessValue}>R{receiptAmount}</Text>
@@ -1888,7 +1894,7 @@ export default function LocationScreen({ route }) {
                   style={[styles.receiptModalBtn, styles.receiptModalBtnSecondary]}
                   onPress={() => {
                     resetReceiptState();
-                    showNotification("info", "📸 Ready to scan a new receipt", 1500);
+                    showNotification("info", "Ready to scan a new receipt", 1500);
                   }}
                 >
                   <Ionicons name="camera-outline" size={20} color="#0A1F44" />
@@ -2186,7 +2192,7 @@ export default function LocationScreen({ route }) {
       {fuelWarning && (
         <View style={styles.fuelWarningOverlay}>
           <Ionicons name="warning-outline" size={24} color="#fff" />
-          <Text style={styles.fuelWarningText}>Low Fuel!</Text>
+          <Text style={styles.fuelWarningText}>Low Fuel</Text>
         </View>
       )}
 
@@ -2285,199 +2291,201 @@ export default function LocationScreen({ route }) {
       </View>
 
       <ScrollView
-  style={styles.routeSheetQuickActions}
-  contentContainerStyle={{ paddingBottom: 24 }}
-  showsVerticalScrollIndicator={false}
->
-  <Text style={styles.routeSheetSectionTitle}>Quick Actions</Text>
-
-  {/* OPEN FULL MAP */}
-  <TouchableOpacity
-    style={styles.primaryButton}
-    onPress={async () => {
-      await auditLog({
-        action: "OPEN_FULL_MAP",
-        page: "Location Activity",
-        description: "User opened the full map",
-        element: "Open Full Map",
-        targetId: tripId,
-        details: {
-          trip_id: tripId,
-        },
-      });
-
-      updateState({ fullMap: true });
-    }}
-  >
-    <Ionicons name="map-outline" size={18} color="#f3a089" />
-    <Text style={styles.buttonText}>Open Full Map</Text>
-  </TouchableOpacity>
-
-  {/* VIEW FUEL STATIONS */}
-  <TouchableOpacity
-    style={[styles.primaryButton, styles.fuelButton]}
-    onPress={async () => {
-      await auditLog({
-        action: "VIEW_FUEL_STATIONS",
-        page: "Location Activity",
-        description: "User viewed fuel stations along route",
-        element: "View Fuel Stations Along Route",
-        targetId: tripId,
-        details: {
-          trip_id: tripId,
-          station_count: fuelStations.length,
-        },
-      });
-
-      updateState({
-        fullMap: true,
-        showFuelModal: true,
-      });
-
-      if (fuelStations.length === 0 && routeCoords.length > 0) {
-        findFuelStationsAlongRoute(routeCoords);
-      }
-    }}
-  >
-    <Ionicons name="flame-outline" size={18} color="#f3a089" />
-    <Text style={styles.buttonText}>
-      View Fuel Stations Along Route
-    </Text>
-  </TouchableOpacity>
-
-  {/* SCAN FUEL RECEIPT */}
-  <TouchableOpacity
-    style={[styles.primaryButton, styles.receiptButton]}
-    onPress={async () => {
-      await auditLog({
-        action: "SCAN_FUEL_RECEIPT",
-        page: "Location Activity",
-        description: "User opened the fuel receipt scanner",
-        element: "Scan Fuel Receipt",
-        targetId: tripId,
-        details: {
-          trip_id: tripId,
-        },
-      });
-
-      openReceiptModal();
-    }}
-  >
-    <Ionicons name="receipt-outline" size={20} color="#f3a089" />
-    <Text style={styles.buttonText}>Scan Fuel Receipt</Text>
-  </TouchableOpacity>
+        style={styles.routeSheetQuickActions}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.routeSheetSectionTitle}>Quick Actions</Text>
 
         <TouchableOpacity
-          style={[styles.primaryButton, { backgroundColor: "white", marginTop: 10 }]}
-          onPress={() => {
-            const doReset = () => {
-              resetReceiptState();
-              updateState({
-                showReceiptModal: true,
-                waitingForReceipt: true,
-                isAtFuelStation: true,
-              });
-              showNotification('info', '🔄 Ready to scan a receipt', 2000);
-            };
+          style={styles.primaryButton}
+          onPress={async () => {
+            await auditLog({
+              action: "OPEN_FULL_MAP",
+              page: "Location Activity",
+              description: "User opened the full map",
+              element: "Open Full Map",
+              targetId: tripId,
+              details: {
+                trip_id: tripId,
+              },
+            });
 
-            if (receiptSubmitted || receiptImage) {
-              Alert.alert(
-                'Reset Receipt Scanner',
-                'Reset the receipt state to scan a new receipt?',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'Reset', onPress: doReset },
-                ]
-              );
-            } else {
-              doReset();
+            updateState({ fullMap: true });
+          }}
+        >
+          <Ionicons name="map-outline" size={18} color="#f3a089" />
+          <Text style={styles.buttonText}>Open Full Map</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.primaryButton, styles.fuelButton]}
+          onPress={async () => {
+            await auditLog({
+              action: "VIEW_FUEL_STATIONS",
+              page: "Location Activity",
+              description: "User viewed fuel stations along route",
+              element: "View Fuel Stations Along Route",
+              targetId: tripId,
+              details: {
+                trip_id: tripId,
+                station_count: fuelStations.length,
+              },
+            });
+
+            updateState({
+              fullMap: true,
+              showFuelModal: true,
+            });
+
+            if (fuelStations.length === 0 && routeCoords.length > 0) {
+              findFuelStationsAlongRoute(routeCoords);
             }
           }}
         >
-          <Ionicons name="refresh-outline" size={18} color="#f3a089" />
-          <Text style={styles.buttonText}>Reset Receipt Scanner</Text>
+          <Ionicons name="flame-outline" size={18} color="#f3a089" />
+          <Text style={styles.buttonText}>
+            View Fuel Stations Along Route
+          </Text>
         </TouchableOpacity>
 
-  {/* REFUEL / SCAN RECEIPT */}
-  {fuelWarning && (
-    <TouchableOpacity
-      style={[
-        styles.primaryButton,
-        { backgroundColor: "#ff6f00" },
-      ]}
-      onPress={async () => {
-        await auditLog({
-          action: "SCAN_REFUEL_RECEIPT",
-          page: "Location Activity",
-          description:
-            "User selected the refuel receipt scanning action",
-          element: "I've Refueled (Scan Receipt)",
-          targetId: tripId,
-          details: {
-            trip_id: tripId,
-          },
-        });
+        <TouchableOpacity
+          style={[styles.primaryButton, styles.receiptButton]}
+          onPress={async () => {
+            await auditLog({
+              action: "SCAN_FUEL_RECEIPT",
+              page: "Location Activity",
+              description: "User opened the fuel receipt scanner",
+              element: "Scan Fuel Receipt",
+              targetId: tripId,
+              details: {
+                trip_id: tripId,
+              },
+            });
 
-        resetReceiptState();
+            openReceiptModal();
+          }}
+        >
+          <Ionicons name="receipt-outline" size={20} color="#f3a089" />
+          <Text style={styles.buttonText}>Scan Fuel Receipt</Text>
+        </TouchableOpacity>
 
-        updateState({
-          showReceiptModal: true,
-          isAtFuelStation: true,
-          waitingForReceipt: true,
-        });
-      }}
-    >
-      <Ionicons
-        name="receipt-outline"
-        size={18}
-        color="#fff"
-      />
-      <Text style={styles.buttonText}>
-        I've Refueled (Scan Receipt)
-      </Text>
-    </TouchableOpacity>
-  )}
+        <TouchableOpacity
+          style={[
+            styles.primaryButton,
+            styles.pauseButton,
+            isPaused && styles.pauseButtonActive,
+          ]}
+          onPress={async () => {
+            await auditLog({
+              action: isPaused ? "TRIP_RESUME_OPEN" : "TRIP_PAUSE_OPEN",
+              page: "Location Activity",
+              description: isPaused
+                ? "User opened the resume trip confirmation"
+                : "User opened the pause trip modal",
+              element: isPaused ? "Resume Trip" : "Pause Trip",
+              targetId: tripId,
+              details: {
+                trip_id: tripId,
+                was_paused: isPaused,
+              },
+            });
 
-  {/* END TRIP */}
-  {canEndTrip() && (
-    <TouchableOpacity
-      style={[
-        styles.primaryButton,
-        styles.endTripButton,
-      ]}
-      onPress={async () => {
-        await auditLog({
-          action: "TRIP_END",
-          page: "Location Activity",
-          description: "User ended the trip",
-          element: "End Trip",
-          targetId: tripId,
-          details: {
-            trip_id: tripId,
-          },
-        });
+            if (isPaused) {
+              resumeTrip();
+            } else {
+              openPauseModal();
+            }
+          }}
+        >
+          <Ionicons
+            name={isPaused ? 'play-outline' : 'pause-outline'}
+            size={20}
+            color={isPaused ? '#2e7d32' : '#f3a089'}
+          />
+          <Text style={[styles.buttonText, isPaused && { color: '#2e7d32' }]}>
+            {isPaused ? 'Resume Trip' : 'Pause Trip'}
+          </Text>
+        </TouchableOpacity>
 
-        await endTrip();
-      }}
-    >
-      <Ionicons
-        name="stop-circle-outline"
-        size={20}
-        color="red"
-      />
-      <Text
-        style={[
-          styles.buttonText,
-          { color: "red" },
-        ]}
-      >
-        End Trip
-      </Text>
-    </TouchableOpacity>
-  )}
+        {fuelWarning && (
+          <TouchableOpacity
+            style={[
+              styles.primaryButton,
+              { backgroundColor: "#ff6f00" },
+            ]}
+            onPress={async () => {
+              await auditLog({
+                action: "SCAN_REFUEL_RECEIPT",
+                page: "Location Activity",
+                description:
+                  "User selected the refuel receipt scanning action",
+                element: "I've Refueled (Scan Receipt)",
+                targetId: tripId,
+                details: {
+                  trip_id: tripId,
+                },
+              });
 
-  <View style={{ height: 24 }} />
-</ScrollView>
+              resetReceiptState();
+
+              updateState({
+                showReceiptModal: true,
+                isAtFuelStation: true,
+                waitingForReceipt: true,
+              });
+            }}
+          >
+            <Ionicons
+              name="receipt-outline"
+              size={18}
+              color="#fff"
+            />
+            <Text style={styles.buttonText}>
+              I've Refueled (Scan Receipt)
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {canEndTrip() && (
+          <TouchableOpacity
+            style={[
+              styles.primaryButton,
+              styles.endTripButton,
+            ]}
+            onPress={async () => {
+              await auditLog({
+                action: "TRIP_END",
+                page: "Location Activity",
+                description: "User ended the trip",
+                element: "End Trip",
+                targetId: tripId,
+                details: {
+                  trip_id: tripId,
+                },
+              });
+
+              await endTrip();
+            }}
+          >
+            <Ionicons
+              name="stop-circle-outline"
+              size={20}
+              color="red"
+            />
+            <Text
+              style={[
+                styles.buttonText,
+                { color: "red" },
+              ]}
+            >
+              End Trip
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        <View style={{ height: 24 }} />
+      </ScrollView>
     </Animated.View>
   );
 
@@ -2573,7 +2581,7 @@ export default function LocationScreen({ route }) {
         {fuelWarning && (
           <View style={styles.lowFuelWarning}>
             <Ionicons name="warning-outline" size={18} color="#fff" />
-            <Text style={styles.lowFuelWarningText}>Low Fuel - Please refuel soon!</Text>
+            <Text style={styles.lowFuelWarningText}>Low Fuel - Please refuel soon.</Text>
           </View>
         )}
 
@@ -2625,7 +2633,7 @@ export default function LocationScreen({ route }) {
 
       {receiptSubmitted && (
         <View style={styles.receiptStatusCard}>
-          <Text style={styles.receiptStatusTitle}>✓ Receipt Submitted</Text>
+          <Text style={styles.receiptStatusTitle}>Receipt Submitted</Text>
           <Text style={styles.receiptStatusText}>Amount: R{receiptAmount}</Text>
           <Text style={styles.receiptStatusText}>Fuel: {fuelPurchased.toFixed(1)}L</Text>
           <Text style={styles.receiptStatusText}>New Fuel Level: {fuelPercent.toFixed(1)}%</Text>
@@ -2690,7 +2698,7 @@ export default function LocationScreen({ route }) {
               <Text style={styles.stationName}>{station.name}</Text>
               <Text style={styles.stationDistance}>
                 {recommendedStation?.id === station.id
-                  ? "⭐ Best"
+                  ? "Best match"
                   : formatDistance(
                       station.distanceToRoute || haversineKm(
                         location?.latitude || 0,
