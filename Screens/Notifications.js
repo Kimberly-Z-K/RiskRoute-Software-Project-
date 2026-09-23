@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,15 +11,18 @@ import {
   Modal,
 } from "react-native";
 import * as Speech from "expo-speech";
-import {
-  MaterialCommunityIcons,
-  Feather,
-} from "@expo/vector-icons";
+import { MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../context/AuthContext";
+import { supabase } from "../lib/supabase";
 
 const { width } = Dimensions.get("window");
 const OSRM_BASE_URL = "https://router.project-osrm.org";
+
+const FALLBACK_COORDINATES = [
+  [28.0473, -26.2041], // Johannesburg
+  [28.2293, -25.7479], // Pretoria
+];
 
 const geocodeCache = new Map();
 
@@ -38,55 +41,54 @@ const LOCATION_MAP = {
 
 const getCachedLocation = (lat, lng) => {
   const key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-  
-  if (LOCATION_MAP[key]) {
-    return LOCATION_MAP[key];
-  }
-  
+  if (LOCATION_MAP[key]) return LOCATION_MAP[key];
+
   for (const [mapKey, mapValue] of Object.entries(LOCATION_MAP)) {
-    const [mapLat, mapLng] = mapKey.split(',').map(Number);
+    const [mapLat, mapLng] = mapKey.split(",").map(Number);
     if (Math.abs(mapLat - lat) < 0.05 && Math.abs(mapLng - lng) < 0.05) {
       return mapValue;
     }
   }
-  
   return null;
 };
 
 const reverseGeocode = async (lat, lng) => {
   const cacheKey = `${lat.toFixed(6)},${lng.toFixed(6)}`;
-  
-  if (geocodeCache.has(cacheKey)) {
-    return geocodeCache.get(cacheKey);
-  }
+  if (geocodeCache.has(cacheKey)) return geocodeCache.get(cacheKey);
 
   const cachedLocation = getCachedLocation(lat, lng);
   if (cachedLocation) {
     geocodeCache.set(cacheKey, cachedLocation);
-    console.log('[Geocoding] Found in location map:', cachedLocation);
     return cachedLocation;
   }
 
   const geocodingServices = [
     {
-      name: 'Nominatim',
+      name: "Nominatim",
       url: `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=10&accept-language=en`,
-      headers: {
-        'User-Agent': 'YourApp/1.0',
-      },
+      headers: { "User-Agent": "YourApp/1.0" },
       parser: (data) => {
         if (data && data.display_name) {
-          const parts = data.display_name.split(',');
+          const parts = data.display_name.split(",");
           const address = data.address || {};
-          return address.road || address.suburb || address.neighbourhood || 
-                 address.city || address.town || address.village || 
-                 address.county || address.state || parts[0] || null;
+          return (
+            address.road ||
+            address.suburb ||
+            address.neighbourhood ||
+            address.city ||
+            address.town ||
+            address.village ||
+            address.county ||
+            address.state ||
+            parts[0] ||
+            null
+          );
         }
         return null;
-      }
+      },
     },
     {
-      name: 'BigDataCloud',
+      name: "BigDataCloud",
       url: `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`,
       headers: {},
       parser: (data) => {
@@ -94,34 +96,22 @@ const reverseGeocode = async (lat, lng) => {
           return data.locality || data.city || data.principalSubdivision || null;
         }
         return null;
-      }
+      },
     },
   ];
 
   for (const service of geocodingServices) {
     try {
-      console.log(`[Geocoding] Trying ${service.name}...`);
-      
-      const response = await fetch(service.url, {
-        headers: service.headers,
-      });
-
-      if (!response.ok) {
-        console.log(`[Geocoding] ${service.name} returned ${response.status}`);
-        continue;
-      }
-
+      const response = await fetch(service.url, { headers: service.headers });
+      if (!response.ok) continue;
       const data = await response.json();
       const location = service.parser(data);
-      
       if (location) {
         let cleanLocation = location.trim();
-        if (cleanLocation.includes(',')) {
-          cleanLocation = cleanLocation.split(',')[0].trim();
+        if (cleanLocation.includes(",")) {
+          cleanLocation = cleanLocation.split(",")[0].trim();
         }
-        
         geocodeCache.set(cacheKey, cleanLocation);
-        console.log(`[Geocoding] ${service.name} found:`, cleanLocation);
         return cleanLocation;
       }
     } catch (error) {
@@ -131,21 +121,18 @@ const reverseGeocode = async (lat, lng) => {
 
   const fallbackName = `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
   geocodeCache.set(cacheKey, fallbackName);
-  console.log('[Geocoding] Using fallback:', fallbackName);
   return fallbackName;
 };
 
 function analyzeRouteForIssues(route, index) {
   const duration = route?.duration || 0;
   const distance = route?.distance || 0;
-  
-  const avgSpeed = (distance / 1000) / (duration / 3600);
-  
+  const avgSpeed = duration > 0 ? (distance / 1000) / (duration / 3600) : 0;
 
   let condition = "Normal";
   let severity = "";
   let emoji = "✅";
-  
+
   if (avgSpeed < 10 && avgSpeed > 0) {
     condition = "Heavy Traffic Jam";
     severity = "Severe - Speed under 10 km/h";
@@ -174,15 +161,21 @@ function analyzeRouteForIssues(route, index) {
   };
 }
 
-async function buildTrafficNotification(routeData, index, coordinates, startLocation, endLocation) {
+async function buildTrafficNotification(
+  routeData,
+  index,
+  coordinates,
+  startLocation,
+  endLocation
+) {
   const analysis = analyzeRouteForIssues(routeData, index);
-  
-  const from = startLocation || `${coordinates[0][1].toFixed(4)}, ${coordinates[0][0].toFixed(4)}`;
-  const to = endLocation || `${coordinates[1][1].toFixed(4)}, ${coordinates[1][0].toFixed(4)}`;
-  
+
+  const from = startLocation || "Unknown";
+  const to = endLocation || "Unknown";
+
   let message = "";
   let title = "";
-  
+
   if (analysis.condition === "Normal") {
     title = `Route from ${from} to ${to} is clear`;
     message = `Distance: ${analysis.distance}km, Estimated time: ${analysis.duration} minutes, Speed: ${analysis.avgSpeed}km/h`;
@@ -194,16 +187,16 @@ async function buildTrafficNotification(routeData, index, coordinates, startLoca
   return {
     id: `traffic-route-${Date.now()}-${index}`,
     category: "ROUTE & TRAFFIC",
-    title: title,
-    message: message,
+    title,
+    message,
     time: "Just now",
     icon: analysis.condition === "Normal" ? "check-circle" : "traffic-light",
     iconColor: analysis.condition === "Normal" ? "#10B981" : "#3B82F6",
     bg: analysis.condition === "Normal" ? "#D1FAE5" : "#DBEAFE",
     unread: true,
-    routeData: routeData,
-    from: from,
-    to: to,
+    routeData,
+    from,
+    to,
     condition: analysis.condition,
     duration: analysis.duration,
     distance: analysis.distance,
@@ -213,7 +206,7 @@ async function buildTrafficNotification(routeData, index, coordinates, startLoca
 }
 
 export default function Notifications() {
-  const { user, session } = useAuth();
+  const { user } = useAuth();
 
   useEffect(() => {
     console.log("[noti screen AUTH]", !!user);
@@ -241,17 +234,6 @@ export default function Notifications() {
       iconColor: "#F59E0B",
       bg: "#FEF3C7",
       unread: false,
-    },
-    {
-      id: Date.now() + 3,
-      category: "ROUTE & TRAFFIC",
-      title: "N3 congestion — route updated via R24",
-      message: "Estimated time saving: 8 minutes",
-      time: "28 minutes ago",
-      icon: "map-marker-path",
-      iconColor: "#3B82F6",
-      bg: "#DBEAFE",
-      unread: true,
     },
     {
       id: Date.now() + 4,
@@ -290,31 +272,132 @@ export default function Notifications() {
 
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [lastSpeechTime, setLastSpeechTime] = useState(0);
 
   const unreadCount = notifications.filter((n) => n.unread).length;
 
-  const [lastSpeechTime, setLastSpeechTime] = useState(0);
+  // ============================================================
+  // Resolve the current user's vehicle -> route -> coordinates
+  // ============================================================
+  const resolveRouteCoordinates = useCallback(async () => {
+    if (!user?.id) {
+      console.log("[resolveRoute] No user, using fallback");
+      return { coordinates: FALLBACK_COORDINATES, routeId: null };
+    }
 
-  const fetchTrafficUpdates = async () => {
     try {
-      const coordinates = [
-        [28.0473, -26.2041], 
-        [28.2293, -25.7479], 
-      ];
+      // 1. Find the driver row via user_id (with driver_id fallback)
+      let driverId = null;
 
-      console.log('[fetchTrafficUpdates] Geocoding locations...');
-      const startLocation = await reverseGeocode(coordinates[0][1], coordinates[0][0]);
-      const endLocation = await reverseGeocode(coordinates[1][1], coordinates[1][0]);
-      
-      console.log('[fetchTrafficUpdates] Locations:', { startLocation, endLocation });
+      const { data: byUser, error: byUserErr } = await supabase
+        .from("drivers")
+        .select("driver_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      console.log("[resolveRoute] driver by user_id:", {
+        driverId: byUser?.driver_id,
+        error: byUserErr?.message,
+        code: byUserErr?.code,
+      });
+
+      driverId = byUser?.driver_id ?? null;
+      if (!driverId) driverId = user.id;
+
+      // 2. Find the vehicle assigned to that driver
+      const { data: veh, error: vehErr } = await supabase
+        .from("vehicles")
+        .select("vehicle_id, route_id, registration_number")
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      console.log("[resolveRoute] vehicle:", {
+        vehicleId: veh?.vehicle_id,
+        routeId: veh?.route_id,
+        registration: veh?.registration_number,
+        error: vehErr?.message,
+        code: vehErr?.code,
+      });
+
+      const routeId = veh?.route_id ?? null;
+      if (!routeId) {
+        console.log("[resolveRoute] No route assigned to vehicle, using fallback");
+        return { coordinates: FALLBACK_COORDINATES, routeId: null };
+      }
+
+      // 3. Fetch the route
+      const { data: routeRow, error: routeErr } = await supabase
+        .from("optimized_routes")
+        .select("id, start_point, stops")
+        .eq("id", routeId)
+        .maybeSingle();
+
+      console.log("[resolveRoute] route row:", {
+        id: routeRow?.id,
+        start: routeRow?.start_point,
+        stopsCount: Array.isArray(routeRow?.stops) ? routeRow.stops.length : 0,
+        error: routeErr?.message,
+        code: routeErr?.code,
+      });
+
+      if (!routeRow) {
+        console.log("[resolveRoute] Route not found, using fallback");
+        return { coordinates: FALLBACK_COORDINATES, routeId };
+      }
+
+      // 4. Convert to [lng, lat] coordinate pairs for OSRM
+      const startCoord = routeRow.start_point;
+      const stopCoords = Array.isArray(routeRow.stops) ? routeRow.stops : [];
+
+      const chain = [];
+      if (startCoord?.lat != null && startCoord?.lng != null) {
+        chain.push([Number(startCoord.lng), Number(startCoord.lat)]);
+      }
+      for (const s of stopCoords) {
+        if (s?.lat != null && s?.lng != null) {
+          chain.push([Number(s.lng), Number(s.lat)]);
+        }
+      }
+
+      if (chain.length < 2) {
+        console.log("[resolveRoute] Not enough coordinates, using fallback");
+        return { coordinates: FALLBACK_COORDINATES, routeId };
+      }
+
+      console.log("[resolveRoute] coordinates chain:", chain.length, "points");
+      return { coordinates: chain, routeId };
+    } catch (e) {
+      console.warn("[resolveRoute] exception:", e?.message);
+      return { coordinates: FALLBACK_COORDINATES, routeId: null };
+    }
+  }, [user]);
+
+  const fetchTrafficUpdates = useCallback(async () => {
+    try {
+      // Resolve coordinates from the user's vehicle -> route
+      const { coordinates, routeId } = await resolveRouteCoordinates();
+
+      console.log("[fetchTrafficUpdates] Using coordinates:", coordinates.length, "points", {
+        routeId,
+      });
+
+      // For geocoding the human-readable names, use first and last
+      const firstCoord = coordinates[0];
+      const lastCoord = coordinates[coordinates.length - 1];
+
+      console.log("[fetchTrafficUpdates] Geocoding locations...");
+      const startLocation = await reverseGeocode(firstCoord[1], firstCoord[0]);
+      const endLocation = await reverseGeocode(lastCoord[1], lastCoord[0]);
+
+      console.log("[fetchTrafficUpdates] Locations:", { startLocation, endLocation });
 
       const coordsString = coordinates
-        .map(coord => `${coord[0]},${coord[1]}`)
-        .join(';');
-      
+        .map((coord) => `${coord[0]},${coord[1]}`)
+        .join(";");
+
       const url = `${OSRM_BASE_URL}/route/v1/driving/${coordsString}?overview=false&steps=false&annotations=true`;
-      
-      console.log('[fetchTrafficUpdates] Fetching from OSRM:', url);
+
+      console.log("[fetchTrafficUpdates] Fetching from OSRM:", url);
 
       const response = await fetch(url);
 
@@ -323,32 +406,23 @@ export default function Notifications() {
       }
 
       const result = await response.json();
-      console.log('[fetchTrafficUpdates] OSRM Response received');
+      console.log("[fetchTrafficUpdates] OSRM Response received");
 
       if (result.code === "Ok" && result.routes && result.routes.length > 0) {
         const routes = result.routes;
-        console.log('[fetchTrafficUpdates] Number of routes found:', routes.length);
+        console.log("[fetchTrafficUpdates] Number of routes found:", routes.length);
 
         const trafficNotifications = [];
-        
+
         for (let i = 0; i < routes.length; i++) {
           const notification = await buildTrafficNotification(
-            routes[i], 
-            i, 
-            coordinates, 
-            startLocation, 
+            routes[i],
+            i,
+            coordinates,
+            startLocation,
             endLocation
           );
           trafficNotifications.push(notification);
-          
-          console.log(`[fetchTrafficUpdates] Route ${i + 1}:`, {
-            from: startLocation,
-            to: endLocation,
-            condition: notification.condition,
-            speed: notification.speed,
-            duration: notification.duration,
-            distance: notification.distance,
-          });
         }
 
         const firstRouteAnalysis = analyzeRouteForIssues(routes[0], 0);
@@ -357,7 +431,7 @@ export default function Notifications() {
             id: `traffic-alt-${Date.now()}`,
             category: "ROUTE & TRAFFIC",
             title: `🔄 Alternative route available with less traffic`,
-            message: `Suggested detour from ${startLocation} to ${endLocation}: ${(routes[0].distance / 1000 * 1.15).toFixed(1)}km, estimated ${Math.round(routes[0].duration / 60 * 1.2)} minutes (15% longer but less traffic)`,
+            message: `Suggested detour from ${startLocation} to ${endLocation}: ${((routes[0].distance / 1000) * 1.15).toFixed(1)}km, estimated ${Math.round((routes[0].duration / 60) * 1.2)} minutes (15% longer but less traffic)`,
             time: "Just now",
             icon: "map-marker-path",
             iconColor: "#10B981",
@@ -369,19 +443,11 @@ export default function Notifications() {
           trafficNotifications.push(alternativeRoute);
         }
 
-        console.log('[fetchTrafficUpdates] Final notifications:', trafficNotifications.length);
+        console.log("[fetchTrafficUpdates] Final notifications:", trafficNotifications.length);
 
         setNotifications((prev) => {
           const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
-          const updated = [...trafficNotifications, ...nonTraffic];
-          
-          console.log('[fetchTrafficUpdates] Updated state:', {
-            total: updated.length,
-            traffic: trafficNotifications.length,
-            nonTraffic: nonTraffic.length
-          });
-          
-          return updated;
+          return [...trafficNotifications, ...nonTraffic];
         });
 
         const now = Date.now();
@@ -390,25 +456,18 @@ export default function Notifications() {
 
           for (let i = 0; i < trafficNotifications.length; i++) {
             const alert = trafficNotifications[i];
-
-            await new Promise(resolve => setTimeout(resolve, i * 2000));
-            
+            await new Promise((resolve) => setTimeout(resolve, i * 2000));
             Speech.speak(`${alert.title}. ${alert.message}`, {
               rate: 0.9,
               pitch: 1.0,
-              language: 'en',
+              language: "en",
             });
-            
-            console.log('[Speech] Spoke alert:', alert.title);
+            console.log("[Speech] Spoke alert:", alert.title);
           }
         }
-
       } else {
-        console.log('[fetchTrafficUpdates] No routes found or API error:', result.code);
+        console.log("[fetchTrafficUpdates] No routes found or API error:", result.code);
 
-        const startLocation = await reverseGeocode(coordinates[0][1], coordinates[0][0]);
-        const endLocation = await reverseGeocode(coordinates[1][1], coordinates[1][0]);
-        
         const fallbackNotification = {
           id: `traffic-fallback-${Date.now()}`,
           category: "ROUTE & TRAFFIC",
@@ -422,7 +481,7 @@ export default function Notifications() {
           from: startLocation,
           to: endLocation,
         };
-        
+
         setNotifications((prev) => {
           const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
           return [fallbackNotification, ...nonTraffic];
@@ -437,18 +496,15 @@ export default function Notifications() {
           });
         }
       }
-
     } catch (error) {
-      console.error('[fetchTrafficUpdates] Error:', error);
-      
+      console.error("[fetchTrafficUpdates] Error:", error);
+
       try {
-        const coordinates = [
-          [28.0473, -26.2041],
-          [28.2293, -25.7479],
-        ];
-        const startLocation = await reverseGeocode(coordinates[0][1], coordinates[0][0]);
-        const endLocation = await reverseGeocode(coordinates[1][1], coordinates[1][0]);
-        
+        const firstCoord = FALLBACK_COORDINATES[0];
+        const lastCoord = FALLBACK_COORDINATES[1];
+        const startLocation = await reverseGeocode(firstCoord[1], firstCoord[0]);
+        const endLocation = await reverseGeocode(lastCoord[1], lastCoord[0]);
+
         const errorNotification = {
           id: `traffic-error-${Date.now()}`,
           category: "ROUTE & TRAFFIC",
@@ -462,26 +518,26 @@ export default function Notifications() {
           from: startLocation,
           to: endLocation,
         };
-        
+
         setNotifications((prev) => {
           const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
           return [errorNotification, ...nonTraffic];
         });
       } catch (e) {
-        console.error('[fetchTrafficUpdates] Error creating fallback:', e);
+        console.error("[fetchTrafficUpdates] Error creating fallback:", e);
       }
     }
-  };
+  }, [resolveRouteCoordinates, lastSpeechTime]);
 
   useEffect(() => {
     fetchTrafficUpdates();
     const interval = setInterval(fetchTrafficUpdates, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchTrafficUpdates]);
 
   useEffect(() => {
     let mockInterval = null;
-    
+
     const addMockNotification = () => {
       const mockNotifications = [
         {
@@ -504,7 +560,7 @@ export default function Notifications() {
 
       const randomIndex = Math.floor(Math.random() * mockNotifications.length);
       const mock = mockNotifications[randomIndex];
-      
+
       const uniqueItem = {
         ...mock,
         id: Date.now() + Math.random() * 1000,
@@ -513,7 +569,7 @@ export default function Notifications() {
       };
 
       setNotifications((prev) => [uniqueItem, ...prev]);
-      
+
       Speech.speak(`${mock.title}. ${mock.message}`, {
         rate: 0.9,
         pitch: 1.0,
@@ -521,11 +577,10 @@ export default function Notifications() {
     };
 
     mockInterval = setInterval(() => {
-      const recentTraffic = notifications.some(n => 
-        n.category === "ROUTE & TRAFFIC" && 
-        n.time === "Just now"
+      const recentTraffic = notifications.some(
+        (n) => n.category === "ROUTE & TRAFFIC" && n.time === "Just now"
       );
-      
+
       if (!recentTraffic) {
         addMockNotification();
       }
@@ -579,7 +634,6 @@ export default function Notifications() {
 
   const renderCategory = (category) => {
     const items = notifications.filter((n) => n.category === category);
-
     if (!items.length) return null;
 
     const categoryColor = getCategoryColor(category);
@@ -591,7 +645,7 @@ export default function Notifications() {
           <Text style={styles.section}>{category}</Text>
         </View>
 
-        {items.map((item, index) => (
+        {items.map((item) => (
           <TouchableOpacity
             key={item.id.toString()}
             style={[styles.card, item.unread && styles.unreadCard]}
