@@ -50,6 +50,7 @@ import './styles/globals.css';
 import { supabase } from '../lib/supabase';
 import Settings from '../../../RiskRoute-Software-Project-/web-app/src/components/settings/Settings';
 import DriverReports from './components/DriverReports/driverreports';
+import FuelAllocation from './components/FuelAllocation';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -689,6 +690,8 @@ const DashboardContent = React.memo(
               {activeTab === 'driver-reports' && (
               <DriverReports />
             )}
+
+            {activeTab === 'fuel-allocation' && <FuelAllocation />}
 
 
             </div>

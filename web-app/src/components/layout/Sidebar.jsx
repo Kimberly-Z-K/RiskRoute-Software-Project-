@@ -13,7 +13,8 @@ import {
   X,
   Truck,
   Settings,
-  MessageSquare
+  MessageSquare,
+  Fuel
 } from 'lucide-react';
 
 const navItems = [
@@ -46,6 +47,11 @@ const navItems = [
     id: 'analytics',
     label: 'Analytics',
     icon: TrendingUp
+  },
+  {
+    id: 'fuel-allocation',
+    label: 'Fuel Allocation',
+    icon: Fuel
   },
   {
     id: 'driver-reports',
