@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   Text,
   ScrollView,
@@ -10,11 +10,17 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
+  TextInput,
+  Dimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useAuth } from "../context/AuthContext";
 import { auditLog } from "../utils/auditlogger";
 import { supabase } from "../lib/supabase";
+
+const { width, height } = Dimensions.get("window");
 
 const MONTHS_SHORT = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -24,6 +30,10 @@ const MONTHS_SHORT = [
 // Placeholder monthly fuel budget. Replace with a per-user/vehicle
 // value from a budgets table when that exists.
 const SPEND_LIMIT_ZAR = 20000;
+
+// Tank capacity for fuel percent calculation
+const TANK_CAPACITY = 70;
+const FUEL_PRICE_PER_LITRE = 22; // ZAR
 
 const formatZAR = (value) => {
   if (value == null || isNaN(value)) return "R0.00";
@@ -130,6 +140,20 @@ const FuelScreen = ({ navigation }) => {
   const [previewReceipt, setPreviewReceipt] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+
+  // ============================================
+  // SCAN RECEIPT STATE (moved from LocationScreen)
+  // ============================================
+  const [showAmountModal, setShowAmountModal] = useState(false);
+  const [amountInput, setAmountInput] = useState('');
+  const [pendingReceiptUri, setPendingReceiptUri] = useState(null);
+  const [isProcessingOCR, setIsProcessingOCR] = useState(false);
+  const [autoDetectedAmount, setAutoDetectedAmount] = useState(null);
+  const [receiptImage, setReceiptImage] = useState(null);
+  const [isScanning, setIsScanning] = useState(false);
+
+  // Current fuel level (you may want to fetch this from vehicle/trip state)
+  const [currentFuelPercent, setCurrentFuelPercent] = useState(50); // placeholder
 
   useEffect(() => {
     console.log("[fuel screen AUTH]", !!user);
@@ -292,6 +316,367 @@ const FuelScreen = ({ navigation }) => {
     fetchReceipts();
   }, [fetchVehicle, fetchReceipts]);
 
+  // ============================================
+  // OCR - Receipt text extraction (moved from LocationScreen)
+  // ============================================
+  const extractReceiptWithEasyOCR = useCallback(async (imageUri) => {
+    try {
+      setIsProcessingOCR(true);
+
+      const supabaseUrl = 'https://pyqftjxfbjecjdhdzyor.supabase.co';
+      const supabaseAnonKey = 'sb_publishable_iFcMrb7-9eJ86p0KU2PWyg_UZ77LRFF';
+
+      console.log('Starting OCR request...');
+
+      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+        encoding: 'base64',
+      });
+
+      const filename = imageUri.split('/').pop() || 'receipt.jpg';
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/easyocr-proxy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+        },
+        body: JSON.stringify({
+          image: `data:image/jpeg;base64,${base64}`,
+          filename: filename,
+        }),
+      });
+
+      const responseText = await response.text();
+
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        throw new Error('Invalid response from server');
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || data.details || `HTTP ${response.status}`);
+      }
+
+      const rawText = data.text || '';
+
+      const patterns = [
+        /(?:total|amount|grand\s*total|amount\s*due|balance\s*due|total\s*amount|total\s*due|subtotal|total\s*including\s*vat)[:\s]*R?\s*([\d,]+[.,]\d{2})/i,
+        /R\s*([\d,]+[.,]\d{2})/i,
+        /([\d,]+[.,]\d{2})\s*(?:total|amount|due|balance)/i,
+      ];
+
+      let total = null;
+      for (const pattern of patterns) {
+        const match = rawText.match(pattern);
+        if (match && match[1]) {
+          const cleanAmount = match[1].replace(/,/g, '').replace(/,/g, '.');
+          total = parseFloat(cleanAmount);
+          if (total) break;
+        }
+      }
+
+      const taxMatch = rawText.match(/(?:vat|tax)[:\s]*R?\s*([\d,]+[.,]\d{2})/i);
+      let tax = null;
+      if (taxMatch && taxMatch[1]) {
+        tax = parseFloat(taxMatch[1].replace(/,/g, '').replace(/,/g, '.'));
+      }
+
+      const dateMatch = rawText.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/);
+      const date = dateMatch ? dateMatch[1] : null;
+
+      setIsProcessingOCR(false);
+
+      return { total, tax, date, rawText, success: total !== null && total > 0 };
+    } catch (error) {
+      console.error('OCR error:', error);
+      setIsProcessingOCR(false);
+      return {
+        total: null,
+        tax: null,
+        date: null,
+        rawText: '',
+        success: false,
+        error: error.message || 'OCR processing failed',
+      };
+    }
+  }, []);
+
+  // ============================================
+  // Upload receipt to Supabase Storage
+  // ============================================
+  const uploadReceiptToSupabase = useCallback(async (uri, userId) => {
+    try {
+      const response = await fetch(uri);
+      const arrayBuffer = await response.arrayBuffer();
+
+      const timestamp = Date.now();
+      const fileName = `${userId}/receipt-${timestamp}.jpg`;
+
+      const { data, error } = await supabase.storage
+        .from('receipts')
+        .upload(fileName, arrayBuffer, {
+          contentType: 'image/jpeg',
+          upsert: false,
+        });
+
+      if (error) {
+        Alert.alert('Upload Error', error.message);
+        return null;
+      }
+
+      return data.path;
+    } catch (error) {
+      Alert.alert('Error', 'Failed to upload receipt.');
+      return null;
+    }
+  }, []);
+
+  // ============================================
+  // Camera permissions
+  // ============================================
+  const requestCameraPermission = useCallback(async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Camera access is required to scan receipts.');
+      return false;
+    }
+    return true;
+  }, []);
+
+  // ============================================
+  // Reset scan state
+  // ============================================
+  const resetScanState = useCallback(() => {
+    setReceiptImage(null);
+    setPendingReceiptUri(null);
+    setAutoDetectedAmount(null);
+    setAmountInput('');
+    setIsProcessingOCR(false);
+    setShowAmountModal(false);
+  }, []);
+
+  // ============================================
+  // Submit receipt (save to DB)
+  // ============================================
+  const handleSubmitReceipt = useCallback(async (localUri, parsedAmount) => {
+    if (!user) {
+      Alert.alert('Error', 'You must be logged in to submit a receipt.');
+      return;
+    }
+
+    const receiptPath = await uploadReceiptToSupabase(localUri, user.id);
+    if (!receiptPath) {
+      Alert.alert('Upload Error', 'Failed to upload receipt image. Please try again.');
+      return;
+    }
+
+    const litresPurchased = parsedAmount / FUEL_PRICE_PER_LITRE;
+    const fuelAdded = (litresPurchased / TANK_CAPACITY) * 100;
+    const newFuelPercent = Math.min(currentFuelPercent + fuelAdded, 100);
+
+    try {
+      const { error: dbError } = await supabase
+        .from('receipts')
+        .insert({
+          user_id: user.id,
+          receipt_amount: parsedAmount,
+          fuel_purchased: litresPurchased,
+          receipt_image_path: receiptPath,
+          fuel_percent_before: currentFuelPercent,
+          fuel_percent_after: newFuelPercent,
+        })
+        .select();
+
+      if (dbError) {
+        console.error('[FuelScreen] receipt insert failed:', dbError);
+        Alert.alert('Database Error', 'Receipt image uploaded but failed to save record.');
+        return;
+      }
+    } catch (dbError) {
+      console.error('[FuelScreen] receipt insert exception:', dbError);
+      Alert.alert('Database Error', 'Failed to save receipt record.');
+      return;
+    }
+
+    // Update local fuel percent (in a real app, this would be synced with the trip)
+    setCurrentFuelPercent(newFuelPercent);
+
+    // Reset and close modal
+    resetScanState();
+
+    // Refresh the receipts list
+    fetchReceipts();
+
+    Alert.alert(
+      'Receipt Saved',
+      `R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L) recorded successfully.`,
+      [{ text: 'OK' }]
+    );
+
+    auditLog({
+      action: "FUEL_RECEIPT_SUBMITTED",
+      page: "Mobile Fuel",
+      description: "User submitted a fuel receipt from the Fuel screen",
+      details: {
+        amount: parsedAmount,
+        litres: litresPurchased,
+        fuel_percent_before: currentFuelPercent,
+        fuel_percent_after: newFuelPercent,
+      },
+    });
+  }, [user, currentFuelPercent, uploadReceiptToSupabase, fetchReceipts, resetScanState]);
+
+  // ============================================
+  // Show amount input modal
+  // ============================================
+  const showFuelAmountInput = useCallback((localUri, prefillAmount = null) => {
+    setPendingReceiptUri(localUri);
+    setReceiptImage(localUri);
+    setShowAmountModal(true);
+    setAmountInput(prefillAmount ? prefillAmount.toString() : '');
+    setAutoDetectedAmount(prefillAmount);
+    setIsProcessingOCR(false);
+  }, []);
+
+  // ============================================
+  // Handle amount modal submit
+  // ============================================
+  const handleAmountModalSubmit = useCallback(async () => {
+    if (!amountInput || isNaN(parseFloat(amountInput))) {
+      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+      return;
+    }
+
+    const parsedAmount = parseFloat(amountInput);
+    await handleSubmitReceipt(pendingReceiptUri, parsedAmount);
+  }, [amountInput, pendingReceiptUri, handleSubmitReceipt]);
+
+  // ============================================
+  // Scan receipt with camera
+  // ============================================
+  const scanReceipt = useCallback(async () => {
+    const hasPermission = await requestCameraPermission();
+    if (!hasPermission) return;
+
+    setIsScanning(true);
+
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const localUri = result.assets[0].uri;
+
+        setReceiptImage(localUri);
+        setPendingReceiptUri(localUri);
+
+        const ocrResult = await extractReceiptWithEasyOCR(localUri);
+
+        if (ocrResult.success && ocrResult.total > 0) {
+          Alert.alert(
+            'Amount Detected',
+            `A total of R${ocrResult.total.toFixed(2)} was detected on the receipt.`,
+            [
+              { text: 'Use Detected Amount', onPress: () => showFuelAmountInput(localUri, ocrResult.total) },
+              { text: 'Enter Manually', onPress: () => showFuelAmountInput(localUri, null), style: 'cancel' },
+            ]
+          );
+        } else {
+          Alert.alert(
+            'Manual Entry Required',
+            'The amount could not be detected automatically. Please enter it manually.',
+            [{ text: 'OK', onPress: () => showFuelAmountInput(localUri, null) }]
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      Alert.alert('Error', 'Failed to open camera.');
+    } finally {
+      setIsScanning(false);
+    }
+  }, [requestCameraPermission, extractReceiptWithEasyOCR, showFuelAmountInput]);
+
+  // ============================================
+  // Pick receipt from gallery
+  // ============================================
+  const pickReceiptImage = useCallback(async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Required', 'Gallery access is required to upload receipts.');
+      return;
+    }
+
+    setIsScanning(true);
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const localUri = result.assets[0].uri;
+
+        setReceiptImage(localUri);
+        setPendingReceiptUri(localUri);
+
+        const ocrResult = await extractReceiptWithEasyOCR(localUri);
+
+        if (ocrResult.success && ocrResult.total > 0) {
+          Alert.alert(
+            'Amount Detected',
+            `A total of R${ocrResult.total.toFixed(2)} was detected on the receipt.`,
+            [
+              { text: 'Use Detected Amount', onPress: () => showFuelAmountInput(localUri, ocrResult.total) },
+              { text: 'Enter Manually', onPress: () => showFuelAmountInput(localUri, null), style: 'cancel' },
+            ]
+          );
+        } else {
+          Alert.alert(
+            'Manual Entry Required',
+            'The amount could not be detected automatically. Please enter it manually.',
+            [{ text: 'OK', onPress: () => showFuelAmountInput(localUri, null) }]
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Gallery error:', error);
+      Alert.alert('Error', 'Failed to open gallery.');
+    } finally {
+      setIsScanning(false);
+    }
+  }, [extractReceiptWithEasyOCR, showFuelAmountInput]);
+
+  // ============================================
+  // Open scan options (camera or gallery)
+  // ============================================
+  const openScanOptions = useCallback(() => {
+    auditLog({
+      action: "SCAN_RECEIPT_OPEN",
+      page: "Mobile Fuel",
+      description: "User opened the receipt scan options",
+      details: { screen: "Fuel & Expenses" },
+    });
+
+    Alert.alert(
+      'Scan Fuel Receipt',
+      'Choose how you want to add your receipt',
+      [
+        { text: 'Take Photo', onPress: scanReceipt },
+        { text: 'Choose from Gallery', onPress: pickReceiptImage },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  }, [scanReceipt, pickReceiptImage]);
+
+  // ---- Computed values ----
   const totalSpend = receipts.reduce(
     (sum, r) => sum + Number(r.receipt_amount || 0),
     0
@@ -405,6 +790,26 @@ const FuelScreen = ({ navigation }) => {
             BODY
         ============================================ */}
         <View style={styles.body}>
+
+          {/* ===== Scan Receipt CTA ===== */}
+          <TouchableOpacity
+            style={styles.scanReceiptButton}
+            onPress={openScanOptions}
+            activeOpacity={0.85}
+            disabled={isScanning}
+          >
+            {isScanning ? (
+              <>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={styles.scanReceiptButtonText}>Processing...</Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="scan-outline" size={22} color="#fff" />
+                <Text style={styles.scanReceiptButtonText}>Scan Fuel Receipt</Text>
+              </>
+            )}
+          </TouchableOpacity>
 
           {/* ===== Budget card ===== */}
           <Text style={styles.sectionTitle}>Monthly Budget</Text>
@@ -633,7 +1038,7 @@ const FuelScreen = ({ navigation }) => {
               />
               <Text style={styles.emptyTitle}>No receipts this month</Text>
               <Text style={styles.emptySubtitle}>
-                Scan a fuel receipt from the Location screen to see it here.
+                Tap "Scan Fuel Receipt" above to add your first receipt.
               </Text>
             </View>
           ) : (
@@ -709,6 +1114,110 @@ const FuelScreen = ({ navigation }) => {
           <View style={{ height: 40 }} />
         </View>
       </ScrollView>
+
+      {/* ============================================
+          AMOUNT INPUT MODAL (moved from LocationScreen)
+      ============================================ */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showAmountModal}
+        onRequestClose={() => {
+          resetScanState();
+        }}
+      >
+        <View style={styles.receiptModalOverlay}>
+          <View style={styles.receiptModalSheet}>
+            <View style={styles.receiptModalHandleWrap}>
+              <View style={styles.receiptModalHandle} />
+            </View>
+
+            <View style={styles.receiptModalHeader}>
+              <View style={styles.receiptModalHeaderIcon}>
+                <Ionicons name="cash-outline" size={22} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.receiptModalTitle}>Enter Fuel Amount</Text>
+                <Text style={styles.receiptModalSubtitleSmall}>
+                  {isProcessingOCR
+                    ? "Processing receipt"
+                    : autoDetectedAmount
+                    ? "Confirm or adjust the detected amount"
+                    : "Enter the amount spent on fuel"}
+                </Text>
+              </View>
+            </View>
+
+            <ScrollView
+              style={styles.receiptModalBody}
+              contentContainerStyle={{ paddingBottom: 20 }}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.receiptModalSectionTitle}>
+                {isProcessingOCR
+                  ? "Analyzing receipt..."
+                  : autoDetectedAmount
+                  ? `Detected amount: R${autoDetectedAmount.toFixed(2)}`
+                  : "Total amount (ZAR)"}
+              </Text>
+
+              {pendingReceiptUri && (
+                <View style={styles.receiptPreviewCard}>
+                  <Image
+                    source={{ uri: pendingReceiptUri }}
+                    style={styles.receiptPreviewImage}
+                  />
+                </View>
+              )}
+
+              {isProcessingOCR && (
+                <View style={styles.receiptLoadingCard}>
+                  <ActivityIndicator size="large" color="#0A1F44" />
+                  <Text style={styles.receiptLoadingText}>Reading receipt...</Text>
+                </View>
+              )}
+
+              {!isProcessingOCR && (
+                <>
+                  <View style={styles.receiptInputCard}>
+                    <Text style={styles.receiptInputLabel}>Amount (ZAR)</Text>
+                    <View style={styles.receiptInputWrapper}>
+                      <Text style={styles.receiptInputPrefix}>R</Text>
+                      <TextInput
+                        style={styles.receiptInput}
+                        placeholder="0.00"
+                        placeholderTextColor="#9CA3AF"
+                        keyboardType="numeric"
+                        value={amountInput}
+                        onChangeText={setAmountInput}
+                        autoFocus={true}
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.receiptModalActions}>
+                    <TouchableOpacity
+                      style={[styles.receiptModalBtn, styles.receiptModalBtnCancel]}
+                      onPress={resetScanState}
+                    >
+                      <Ionicons name="close-outline" size={18} color="#0A1F44" />
+                      <Text style={styles.receiptModalBtnTextCancel}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.receiptModalBtn, styles.receiptModalBtnPrimary]}
+                      onPress={handleAmountModalSubmit}
+                    >
+                      <Ionicons name="checkmark-outline" size={18} color="#fff" />
+                      <Text style={styles.receiptModalBtnTextPrimary}>Submit</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* ===== Preview modal ===== */}
       <Modal
@@ -919,6 +1428,29 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     marginTop: 22,
     marginBottom: 12,
+  },
+
+  // ---- Scan receipt button ----
+  scanReceiptButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0A1F44",
+    marginHorizontal: 20,
+    marginTop: 20,
+    paddingVertical: 16,
+    borderRadius: 16,
+    shadowColor: "#0A1F44",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  scanReceiptButtonText: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 16,
+    marginLeft: 10,
   },
 
   // ---- Budget card ----
@@ -1457,6 +1989,199 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "800",
     fontSize: 15,
+  },
+
+  // ============================================
+  // RECEIPT SCAN MODAL STYLES (from LocationScreen)
+  // ============================================
+  receiptModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(10, 31, 68, 0.55)",
+    justifyContent: "flex-end",
+  },
+  receiptModalSheet: {
+    backgroundColor: "#ebf2ff",
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    maxHeight: height * 0.82,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
+    overflow: "hidden",
+  },
+  receiptModalHandleWrap: {
+    paddingTop: 10,
+    paddingBottom: 4,
+    alignItems: "center",
+    backgroundColor: "#ebf2ff",
+  },
+  receiptModalHandle: {
+    width: 45,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#c9c9c9",
+  },
+  receiptModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0A1F44",
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    marginTop: 8,
+  },
+  receiptModalHeaderIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  receiptModalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  receiptModalSubtitleSmall: {
+    fontSize: 12,
+    color: "#aebbd3",
+    marginTop: 3,
+  },
+  receiptModalBody: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+  },
+  receiptModalSectionTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#171717",
+    marginTop: 4,
+    marginBottom: 12,
+  },
+
+  receiptPreviewCard: {
+    width: "100%",
+    height: 220,
+    borderRadius: 16,
+    overflow: "hidden",
+    marginBottom: 16,
+    position: "relative",
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  receiptPreviewImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "contain",
+  },
+
+  receiptLoadingCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 24,
+    alignItems: "center",
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  receiptLoadingText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: "#0A1F44",
+    fontWeight: "600",
+  },
+
+  receiptInputCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
+    elevation: 2,
+  },
+  receiptInputLabel: {
+    fontSize: 12,
+    color: "#777",
+    fontWeight: "700",
+    marginBottom: 8,
+  },
+  receiptInputWrapper: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f3f6fc",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#e0e7f3",
+  },
+  receiptInputPrefix: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#0A1F44",
+    marginRight: 6,
+  },
+  receiptInput: {
+    flex: 1,
+    fontSize: 22,
+    fontWeight: "700",
+    color: "#0A1F44",
+    padding: 0,
+  },
+
+  receiptModalActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  receiptModalBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 52,
+    borderRadius: 15,
+    paddingHorizontal: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  receiptModalBtnPrimary: {
+    backgroundColor: "#0A1F44",
+  },
+  receiptModalBtnCancel: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#c9c9c9",
+  },
+  receiptModalBtnTextPrimary: {
+    color: "#fff",
+    fontWeight: "800",
+    fontSize: 15,
+    marginLeft: 8,
+  },
+  receiptModalBtnTextCancel: {
+    color: "#0A1F44",
+    fontWeight: "800",
+    fontSize: 15,
+    marginLeft: 8,
   },
 });
 
