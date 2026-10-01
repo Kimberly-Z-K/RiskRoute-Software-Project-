@@ -12,11 +12,11 @@ import VehicleTrackingMap from './components/monitoring/VehicleTrackingMap';
 import VehicleList from './components/monitoring/VehicleList';
 import VehicleDetailModal from './components/monitoring/VehicleDetailModal';
 import RouteOptimisationForm from './components/route-planning/RouteOptimisationForm';
-import RouteOptionCard from '.src/components/route-planning/RouteOptionCard';
+import RouteOptionCard from './components/route-planning/RouteoptionCard';
 import TrafficWeatherPanel from './components/route-planning/TrafficWeatherPanel';
 import RiskAnalysisPanel from './components/route-planning/RiskAnalysisPanel';
 import RiskScoreCard from './components/risk-analysis/RiskScoreCard';
-import RiskHeatmap from '.src/components/risk-analysis/RiskHeatmap';
+import RiskHeatmap from './components/risk-analysis/RiskHeatMap';
 import RiskTrends from './components/risk-analysis/RiskTrends';
 import SimulationControls from './components/simulation/SimulationControls';
 import KPICard from './components/analytics/KPICard';
@@ -29,7 +29,7 @@ import {
   routeOptions,
   performanceData
 } from './data/mockData';
-import { useRealTimeUpdates } from '.src/components/hooks/useRealTimeUpdates';
+import { useRealTimeUpdates } from './hooks/useRealTimeupdates';
 import { useRoutes } from './hooks/useRoutes';
 import {
   Truck,
@@ -49,7 +49,7 @@ import {
 import './styles/globals.css';
 import { supabase } from '../lib/supabase';
 import Settings from '../../../RiskRoute-Software-Project-/web-app/src/components/settings/Settings';
-import DriverReports from '.src/components/driver-reports/DriverReports';
+import DriverReports from './components/DriverReports/driverReports';
 import FuelAllocation from './components/FuelAllocation';
 
 const navItems = [
