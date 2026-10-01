@@ -27,10 +27,6 @@ const MONTHS_SHORT = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-// Placeholder monthly fuel budget. Replace with a per-user/vehicle
-// value from a budgets table when that exists.
-const SPEND_LIMIT_ZAR = 20000;
-
 // Tank capacity for fuel percent calculation
 const TANK_CAPACITY = 70;
 const FUEL_PRICE_PER_LITRE = 22; // ZAR
@@ -137,12 +133,16 @@ const FuelScreen = ({ navigation }) => {
   const [vehicle, setVehicle] = useState(null);
   const [vehicleLoading, setVehicleLoading] = useState(true);
 
+  // NEW: fuel allocation state
+  const [allocation, setAllocation] = useState(null);
+  const [allocationLoading, setAllocationLoading] = useState(true);
+
   const [previewReceipt, setPreviewReceipt] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // ============================================
-  // SCAN RECEIPT STATE (moved from LocationScreen)
+  // SCAN RECEIPT STATE
   // ============================================
   const [showAmountModal, setShowAmountModal] = useState(false);
   const [amountInput, setAmountInput] = useState('');
@@ -152,8 +152,7 @@ const FuelScreen = ({ navigation }) => {
   const [receiptImage, setReceiptImage] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
 
-  // Current fuel level (you may want to fetch this from vehicle/trip state)
-  const [currentFuelPercent, setCurrentFuelPercent] = useState(50); // placeholder
+  const [currentFuelPercent, setCurrentFuelPercent] = useState(50);
 
   useEffect(() => {
     console.log("[fuel screen AUTH]", !!user);
@@ -168,14 +167,18 @@ const FuelScreen = ({ navigation }) => {
     }
   }, [user]);
 
-  // ---- Fetch the vehicle assigned to the signed-in user ----
-  const fetchVehicle = useCallback(async () => {
+  // ============================================
+  // DRIVER CONTEXT: vehicle + active allocation
+  // ============================================
+  const fetchDriverContext = useCallback(async () => {
     if (!user) {
       setVehicleLoading(false);
+      setAllocationLoading(false);
       return;
     }
 
     setVehicleLoading(true);
+    setAllocationLoading(true);
 
     try {
       // 1. Find the driver row via user_id, with email fallback
@@ -183,7 +186,7 @@ const FuelScreen = ({ navigation }) => {
 
       const { data: byUser, error: byUserErr } = await supabase
         .from("drivers")
-        .select("driver_id")
+        .select("driver_id, driver_username, phone, email")
         .eq("user_id", user.id)
         .maybeSingle();
 
@@ -198,7 +201,7 @@ const FuelScreen = ({ navigation }) => {
       if (!driverId && user.email) {
         const { data: byEmail, error: byEmailErr } = await supabase
           .from("drivers")
-          .select("driver_id")
+          .select("driver_id, driver_username, phone, email")
           .eq("email", user.email)
           .maybeSingle();
 
@@ -213,37 +216,63 @@ const FuelScreen = ({ navigation }) => {
 
       if (!driverId) {
         setVehicle(null);
+        setAllocation(null);
         return;
       }
 
-      // 2. Fetch the vehicle assigned to that driver
-      const { data: veh, error: vehErr } = await supabase
-        .from("vehicles")
-        .select(
-          "vehicle_id, registration_number, status, current_location, route_id"
-        )
-        .eq("driver_id", driverId)
-        .maybeSingle();
+      // 2. Fetch vehicle + active allocation in parallel
+      const [vehResult, allocResult] = await Promise.all([
+        supabase
+          .from("vehicles")
+          .select(
+            "vehicle_id, registration_number, status, current_location, route_id"
+          )
+          .eq("driver_id", driverId)
+          .maybeSingle(),
+
+        supabase
+          .from("fuel_allocations")
+          .select(
+            "id, driver_id, vehicle_id, route_id, allocated_amount, amount_used, remaining_amount, status, allocation_date, notes, created_at"
+          )
+          .eq("driver_id", driverId)
+          .eq("status", "Active")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
 
       console.log("[FuelScreen] vehicle lookup:", {
-        vehicleId: veh?.vehicle_id,
-        registration: veh?.registration_number,
-        error: vehErr?.message,
-        code: vehErr?.code,
+        vehicleId: vehResult.data?.vehicle_id,
+        registration: vehResult.data?.registration_number,
+        error: vehResult.error?.message,
+        code: vehResult.error?.code,
       });
 
-      setVehicle(veh ?? null);
+      console.log("[FuelScreen] allocation lookup:", {
+        allocationId: allocResult.data?.id,
+        allocated: allocResult.data?.allocated_amount,
+        used: allocResult.data?.amount_used,
+        remaining: allocResult.data?.remaining_amount,
+        error: allocResult.error?.message,
+        code: allocResult.error?.code,
+      });
+
+      setVehicle(vehResult.data ?? null);
+      setAllocation(allocResult.data ?? null);
     } catch (e) {
-      console.warn("[FuelScreen] vehicle fetch exception:", e?.message);
+      console.warn("[FuelScreen] driver context exception:", e?.message);
       setVehicle(null);
+      setAllocation(null);
     } finally {
       setVehicleLoading(false);
+      setAllocationLoading(false);
     }
   }, [user]);
 
   useEffect(() => {
-    fetchVehicle();
-  }, [fetchVehicle]);
+    fetchDriverContext();
+  }, [fetchDriverContext]);
 
   const fetchReceipts = useCallback(async () => {
     if (!user) {
@@ -312,12 +341,12 @@ const FuelScreen = ({ navigation }) => {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchVehicle();
+    fetchDriverContext();
     fetchReceipts();
-  }, [fetchVehicle, fetchReceipts]);
+  }, [fetchDriverContext, fetchReceipts]);
 
   // ============================================
-  // OCR - Receipt text extraction (moved from LocationScreen)
+  // OCR - Receipt text extraction
   // ============================================
   const extractReceiptWithEasyOCR = useCallback(async (imageUri) => {
     try {
@@ -500,14 +529,12 @@ const FuelScreen = ({ navigation }) => {
       return;
     }
 
-    // Update local fuel percent (in a real app, this would be synced with the trip)
     setCurrentFuelPercent(newFuelPercent);
-
-    // Reset and close modal
     resetScanState();
-
-    // Refresh the receipts list
     fetchReceipts();
+
+    // Refresh allocation too in case admin updated it
+    fetchDriverContext();
 
     Alert.alert(
       'Receipt Saved',
@@ -526,7 +553,7 @@ const FuelScreen = ({ navigation }) => {
         fuel_percent_after: newFuelPercent,
       },
     });
-  }, [user, currentFuelPercent, uploadReceiptToSupabase, fetchReceipts, resetScanState]);
+  }, [user, currentFuelPercent, uploadReceiptToSupabase, fetchReceipts, resetScanState, fetchDriverContext]);
 
   // ============================================
   // Show amount input modal
@@ -689,10 +716,21 @@ const FuelScreen = ({ navigation }) => {
   const costPerRefill = refillCount > 0 ? totalSpend / refillCount : 0;
   const avgLPer100 = 11.2;
 
-  const remaining = SPEND_LIMIT_ZAR - totalSpend;
+  // ---- Allocation-driven budget ----
+  const allocatedAmount = Number(allocation?.allocated_amount || 0);
+  const reconciledUsed = Number(allocation?.amount_used || 0);
+
+  // Treat this month's receipts as "pending" usage against the allocation
+  const pendingFromReceipts = totalSpend;
+  const effectiveUsed = reconciledUsed > 0 ? reconciledUsed : pendingFromReceipts;
+
+  const hasAllocation = allocatedAmount > 0;
+  const budgetLimit = hasAllocation ? allocatedAmount : 0;
+
+  const remaining = budgetLimit - effectiveUsed;
   const spendPercentRaw =
-    SPEND_LIMIT_ZAR > 0 ? (totalSpend / SPEND_LIMIT_ZAR) * 100 : 0;
-  const budget = getBudgetStatus(totalSpend, SPEND_LIMIT_ZAR);
+    budgetLimit > 0 ? (effectiveUsed / budgetLimit) * 100 : 0;
+  const budget = getBudgetStatus(effectiveUsed, budgetLimit);
 
   const openPreview = useCallback(async (receipt) => {
     setPreviewReceipt(receipt);
@@ -811,93 +849,155 @@ const FuelScreen = ({ navigation }) => {
             )}
           </TouchableOpacity>
 
-          {/* ===== Budget card ===== */}
-          <Text style={styles.sectionTitle}>Monthly Budget</Text>
+          {/* ===== Fuel Allocation card ===== */}
+          <Text style={styles.sectionTitle}>Fuel Allocation</Text>
 
           <View style={styles.budgetCard}>
-            <View style={styles.budgetTopRow}>
-              <View style={styles.budgetIconWrap}>
-                <Ionicons name="wallet-outline" size={20} color="#007bff" />
+            {allocationLoading ? (
+              <View style={styles.vehicleLoadingWrap}>
+                <ActivityIndicator size="small" color="#007bff" />
+                <Text style={styles.loadingText}>Loading allocation...</Text>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.budgetLabel}>SPEND LIMIT</Text>
-                <Text style={styles.budgetLimit}>
-                  {formatZAR(SPEND_LIMIT_ZAR)}
+            ) : !hasAllocation ? (
+              <View style={styles.vehicleEmptyWrap}>
+                <View style={styles.vehicleEmptyIcon}>
+                  <Ionicons name="wallet-outline" size={28} color="#9CA3AF" />
+                </View>
+                <Text style={styles.vehicleEmptyTitle}>No fuel allocated</Text>
+                <Text style={styles.vehicleEmptySubtitle}>
+                  Ask your dispatcher to allocate a fuel budget to your profile.
                 </Text>
               </View>
-              <View
-                style={[
-                  styles.budgetStatusBadge,
-                  { backgroundColor: `${budget.color}1A` },
-                ]}
-              >
-                <Text
-                  style={[styles.budgetStatusText, { color: budget.color }]}
-                >
-                  {budget.label}
-                </Text>
-              </View>
-            </View>
+            ) : (
+              <>
+                <View style={styles.budgetTopRow}>
+                  <View style={styles.budgetIconWrap}>
+                    <Ionicons name="wallet-outline" size={20} color="#007bff" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.budgetLabel}>ALLOCATED BUDGET</Text>
+                    <Text style={styles.budgetLimit}>
+                      {formatZAR(budgetLimit)}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.budgetStatusBadge,
+                      { backgroundColor: `${budget.color}1A` },
+                    ]}
+                  >
+                    <Text
+                      style={[styles.budgetStatusText, { color: budget.color }]}
+                    >
+                      {budget.label}
+                    </Text>
+                  </View>
+                </View>
 
-            <View style={styles.budgetProgressBackground}>
-              <View
-                style={[
-                  styles.budgetProgressFill,
-                  {
-                    width: `${budget.percent}%`,
-                    backgroundColor: budget.barColor,
-                  },
-                ]}
-              />
-            </View>
+                <View style={styles.budgetProgressBackground}>
+                  <View
+                    style={[
+                      styles.budgetProgressFill,
+                      {
+                        width: `${budget.percent}%`,
+                        backgroundColor: budget.barColor,
+                      },
+                    ]}
+                  />
+                </View>
 
-            <View style={styles.budgetNumbersRow}>
-              <Text style={styles.budgetSpent}>
-                {formatZAR(totalSpend)} spent
-              </Text>
-              <Text style={styles.budgetPercent}>
-                {spendPercentRaw.toFixed(0)}%
-              </Text>
-            </View>
+                <View style={styles.budgetNumbersRow}>
+                  <Text style={styles.budgetSpent}>
+                    {formatZAR(effectiveUsed)} spent
+                  </Text>
+                  <Text style={styles.budgetPercent}>
+                    {spendPercentRaw.toFixed(0)}%
+                  </Text>
+                </View>
 
-            <View style={styles.budgetDivider} />
+                {reconciledUsed > 0 && pendingFromReceipts !== reconciledUsed && (
+                  <Text style={styles.budgetPendingText}>
+                    Receipts this month: {formatZAR(pendingFromReceipts)} ·
+                    Reconciled by admin: {formatZAR(reconciledUsed)}
+                  </Text>
+                )}
 
-            <View style={styles.budgetFooterRow}>
-              <View style={styles.budgetFooterCol}>
-                <Text style={styles.budgetFooterLabel}>Remaining</Text>
-                <Text
-                  style={[
-                    styles.budgetFooterValue,
-                    { color: remaining < 0 ? "#b91c1c" : "#0A1F44" },
-                  ]}
-                >
-                  {remaining < 0
-                    ? `-${formatZAR(Math.abs(remaining))}`
-                    : formatZAR(remaining)}
-                </Text>
-              </View>
+                <View style={styles.budgetDivider} />
 
-              <View style={styles.budgetFooterCol}>
-                <Text style={styles.budgetFooterLabel}>Refills</Text>
-                <Text style={styles.budgetFooterValue}>{refillCount}</Text>
-              </View>
+                <View style={styles.budgetFooterRow}>
+                  <View style={styles.budgetFooterCol}>
+                    <Text style={styles.budgetFooterLabel}>Remaining</Text>
+                    <Text
+                      style={[
+                        styles.budgetFooterValue,
+                        { color: remaining < 0 ? "#b91c1c" : "#0A1F44" },
+                      ]}
+                    >
+                      {remaining < 0
+                        ? `-${formatZAR(Math.abs(remaining))}`
+                        : formatZAR(remaining)}
+                    </Text>
+                  </View>
 
-              <View style={styles.budgetFooterCol}>
-                <Text style={styles.budgetFooterLabel}>Avg / refill</Text>
-                <Text style={styles.budgetFooterValue}>
-                  {formatZAR(costPerRefill)}
-                </Text>
-              </View>
-            </View>
+                  <View style={styles.budgetFooterCol}>
+                    <Text style={styles.budgetFooterLabel}>Refills</Text>
+                    <Text style={styles.budgetFooterValue}>{refillCount}</Text>
+                  </View>
 
-            {budget.over && (
-              <View style={styles.overBudgetBanner}>
-                <Ionicons name="warning-outline" size={18} color="#fff" />
-                <Text style={styles.overBudgetText}>
-                  You have exceeded your monthly fuel budget by{" "}
-                  {formatZAR(Math.abs(remaining))}.
-                </Text>
-              </View>
+                  <View style={styles.budgetFooterCol}>
+                    <Text style={styles.budgetFooterLabel}>Avg / refill</Text>
+                    <Text style={styles.budgetFooterValue}>
+                      {formatZAR(costPerRefill)}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Allocation meta */}
+                <View style={styles.allocationMetaRow}>
+                  <View style={styles.allocationMetaItem}>
+                    <Ionicons name="calendar-outline" size={14} color="#7a8699" />
+                    <Text style={styles.allocationMetaText}>
+                      {allocation.allocation_date
+                        ? formatDate(allocation.allocation_date)
+                        : "—"}
+                    </Text>
+                  </View>
+
+                  {allocation.route_id ? (
+                    <View style={styles.allocationMetaItem}>
+                      <Ionicons name="navigate-outline" size={14} color="#7a8699" />
+                      <Text style={styles.allocationMetaText}>
+                        Route #{allocation.route_id}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {reconciledUsed > 0 ? (
+                    <View style={styles.allocationMetaItem}>
+                      <Ionicons
+                        name="checkmark-circle-outline"
+                        size={14}
+                        color="#1b8634"
+                      />
+                      <Text
+                        style={[styles.allocationMetaText, { color: "#1b8634" }]}
+                      >
+                        Reconciled
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {budget.over && (
+                  <View style={styles.overBudgetBanner}>
+                    <Ionicons name="warning-outline" size={18} color="#fff" />
+                    <Text style={styles.overBudgetText}>
+                      You have exceeded your allocated fuel budget by{" "}
+                      {formatZAR(Math.abs(remaining))}.
+                    </Text>
+                  </View>
+                )}
+              </>
             )}
           </View>
 
@@ -1116,7 +1216,7 @@ const FuelScreen = ({ navigation }) => {
       </ScrollView>
 
       {/* ============================================
-          AMOUNT INPUT MODAL (moved from LocationScreen)
+          AMOUNT INPUT MODAL
       ============================================ */}
       <Modal
         animationType="slide"
@@ -1526,6 +1626,12 @@ const styles = StyleSheet.create({
     color: "#0A1F44",
     fontWeight: "800",
   },
+  budgetPendingText: {
+    fontSize: 11,
+    color: "#7a8699",
+    fontWeight: "600",
+    marginTop: 6,
+  },
   budgetDivider: {
     height: 1,
     backgroundColor: "#eef1f6",
@@ -1565,6 +1671,28 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginLeft: 8,
     flex: 1,
+  },
+
+  // ---- Allocation meta ----
+  allocationMetaRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#eef1f6",
+  },
+  allocationMetaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 16,
+    marginBottom: 4,
+  },
+  allocationMetaText: {
+    fontSize: 12,
+    color: "#7a8699",
+    fontWeight: "600",
+    marginLeft: 6,
   },
 
   // ---- Stats grid ----
@@ -1992,7 +2120,7 @@ const styles = StyleSheet.create({
   },
 
   // ============================================
-  // RECEIPT SCAN MODAL STYLES (from LocationScreen)
+  // RECEIPT SCAN MODAL STYLES
   // ============================================
   receiptModalOverlay: {
     flex: 1,
