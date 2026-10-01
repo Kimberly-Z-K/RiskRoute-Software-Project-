@@ -8,6 +8,7 @@ import Profile from "../../Screens/Profile";
 import Location from "../../Screens/Location";
 import Notifications from "../../Screens/Notifications";
 import FuelScreen from "../../Screens/fuel";
+import SupportScreen from "../../Screens/Support";
 
 import { PanicProvider } from "../../context/PanicButtonContext";
 import { BatteryProvider } from "../../context/BatteryLevelContext";
@@ -104,6 +105,23 @@ export default function TabNavigator() {
                     color={focused ? "#007bff" : "#888"}
                   />
                 ),
+              }}
+            />
+           <Tab.Screen
+              name="Support"
+              component={SupportScreen}
+              options={{
+                headerShown: false,
+                tabBarIcon: ({ focused, color, size }) => (
+                  <Ionicons
+                    name={focused ? "help-circle" : "help-circle-outline"}
+                    size={size ?? 24}
+                    color={color}
+                  />
+                ),
+                tabBarLabel: "Support",
+                tabBarActiveTintColor: "#0A1F44",
+                tabBarInactiveTintColor: "#7a8699",
               }}
             />
           </Tab.Navigator>

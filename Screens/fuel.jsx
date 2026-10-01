@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   Text,
   ScrollView,
@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import { useAuth } from "../context/AuthContext";
 import { auditLog } from "../utils/auditlogger";
 import { supabase } from "../lib/supabase";
@@ -27,7 +27,6 @@ const MONTHS_SHORT = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-// Tank capacity for fuel percent calculation
 const TANK_CAPACITY = 70;
 const FUEL_PRICE_PER_LITRE = 22; // ZAR
 
@@ -133,7 +132,6 @@ const FuelScreen = ({ navigation }) => {
   const [vehicle, setVehicle] = useState(null);
   const [vehicleLoading, setVehicleLoading] = useState(true);
 
-  // NEW: fuel allocation state
   const [allocation, setAllocation] = useState(null);
   const [allocationLoading, setAllocationLoading] = useState(true);
 
@@ -181,7 +179,6 @@ const FuelScreen = ({ navigation }) => {
     setAllocationLoading(true);
 
     try {
-      // 1. Find the driver row via user_id, with email fallback
       let driverId = null;
 
       const { data: byUser, error: byUserErr } = await supabase
@@ -220,7 +217,6 @@ const FuelScreen = ({ navigation }) => {
         return;
       }
 
-      // 2. Fetch vehicle + active allocation in parallel
       const [vehResult, allocResult] = await Promise.all([
         supabase
           .from("vehicles")
@@ -310,13 +306,33 @@ const FuelScreen = ({ navigation }) => {
       const urls = {};
       await Promise.all(
         (data || []).map(async (r) => {
-          if (!r.receipt_image_path) return;
+          if (!r.receipt_image_path) {
+            console.log('[FuelScreen] receipt missing image_path:', r.id);
+            return;
+          }
+
           try {
             const { data: signed, error: urlErr } = await supabase.storage
               .from("receipts")
               .createSignedUrl(r.receipt_image_path, 3600);
+
+            console.log('[FuelScreen] signed URL result:', {
+              receiptId: r.id,
+              hasUrl: !!signed?.signedUrl,
+              error: urlErr?.message,
+            });
+
             if (!urlErr && signed?.signedUrl) {
               urls[r.id] = signed.signedUrl;
+              return;
+            }
+
+            const { data: pub } = supabase.storage
+              .from("receipts")
+              .getPublicUrl(r.receipt_image_path);
+
+            if (pub?.publicUrl) {
+              urls[r.id] = pub.publicUrl;
             }
           } catch (e) {
             console.warn("[FuelScreen] signed url failed for", r.id, e?.message);
@@ -324,6 +340,12 @@ const FuelScreen = ({ navigation }) => {
         })
       );
       setReceiptUrls(urls);
+      console.log(
+        '[FuelScreen] resolved URLs:',
+        Object.keys(urls).length,
+        '/',
+        data?.length
+      );
     } catch (e) {
       console.error("[FuelScreen] receipts exception:", e);
       setError("Could not load receipts.");
@@ -434,31 +456,87 @@ const FuelScreen = ({ navigation }) => {
 
   // ============================================
   // Upload receipt to Supabase Storage
+  // - Normalizes content:// or ph:// URIs to file://
+  // - Uses FormData so RN streams real file bytes
+  // - Validates the file exists with a real size
   // ============================================
   const uploadReceiptToSupabase = useCallback(async (uri, userId) => {
+    let normalizedUri = uri;
+    let copiedToCache = false;
+
     try {
-      const response = await fetch(uri);
-      const arrayBuffer = await response.arrayBuffer();
+      console.log('[FuelScreen] raw uri:', uri);
+      console.log('[FuelScreen] uri starts with:', uri?.substring(0, 40));
+
+      // Normalize content:// (Android) or ph:// (iOS) to file://
+      if (!uri.startsWith('file://')) {
+        const stamp = Date.now();
+        const target = `${FileSystem.cacheDirectory}receipt-${stamp}.jpg`;
+
+        console.log('[FuelScreen] copying to cache:', target);
+        await FileSystem.copyAsync({ from: uri, to: target });
+
+        normalizedUri = target;
+        copiedToCache = true;
+        console.log('[FuelScreen] normalized uri:', normalizedUri);
+      }
+
+      // Verify the file really exists and has bytes
+      const info = await FileSystem.getInfoAsync(normalizedUri);
+      console.log('[FuelScreen] file info:', info);
+
+      if (!info.exists) {
+        Alert.alert('Error', 'Receipt file not found.');
+        return null;
+      }
+
+      if (info.size != null && info.size < 100) {
+        Alert.alert('Error', 'Receipt file appears empty. Please try again.');
+        return null;
+      }
 
       const timestamp = Date.now();
       const fileName = `${userId}/receipt-${timestamp}.jpg`;
 
+      const formData = new FormData();
+      formData.append('file', {
+        uri: normalizedUri,
+        name: `receipt-${timestamp}.jpg`,
+        type: 'image/jpeg',
+      });
+
+      console.log('[FuelScreen] uploading to bucket path:', fileName);
+
       const { data, error } = await supabase.storage
         .from('receipts')
-        .upload(fileName, arrayBuffer, {
+        .upload(fileName, formData, {
           contentType: 'image/jpeg',
           upsert: false,
         });
 
       if (error) {
+        console.error('[FuelScreen] UPLOAD FAILED:', {
+          message: error.message,
+          statusCode: error.statusCode,
+          error: error.error,
+        });
         Alert.alert('Upload Error', error.message);
         return null;
       }
 
+      console.log('[FuelScreen] UPLOAD OK:', data.path);
       return data.path;
-    } catch (error) {
-      Alert.alert('Error', 'Failed to upload receipt.');
+    } catch (e) {
+      console.error('[FuelScreen] upload exception:', e);
+      Alert.alert('Error', `Failed to upload receipt: ${e.message}`);
       return null;
+    } finally {
+      // Clean up the temp file if we copied it
+      if (copiedToCache) {
+        try {
+          await FileSystem.deleteAsync(normalizedUri, { idempotent: true });
+        } catch {}
+      }
     }
   }, []);
 
@@ -532,8 +610,6 @@ const FuelScreen = ({ navigation }) => {
     setCurrentFuelPercent(newFuelPercent);
     resetScanState();
     fetchReceipts();
-
-    // Refresh allocation too in case admin updated it
     fetchDriverContext();
 
     Alert.alert(
@@ -591,13 +667,23 @@ const FuelScreen = ({ navigation }) => {
 
     try {
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
-        const localUri = result.assets[0].uri;
+        const asset = result.assets[0];
+        console.log('[FuelScreen] picked asset:', {
+          uri: asset.uri,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          type: asset.type,
+          width: asset.width,
+          height: asset.height,
+        });
+
+        const localUri = asset.uri;
 
         setReceiptImage(localUri);
         setPendingReceiptUri(localUri);
@@ -643,13 +729,23 @@ const FuelScreen = ({ navigation }) => {
 
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
-        const localUri = result.assets[0].uri;
+        const asset = result.assets[0];
+        console.log('[FuelScreen] picked asset:', {
+          uri: asset.uri,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          type: asset.type,
+          width: asset.width,
+          height: asset.height,
+        });
+
+        const localUri = asset.uri;
 
         setReceiptImage(localUri);
         setPendingReceiptUri(localUri);
@@ -682,7 +778,7 @@ const FuelScreen = ({ navigation }) => {
   }, [extractReceiptWithEasyOCR, showFuelAmountInput]);
 
   // ============================================
-  // Open scan options (camera or gallery)
+  // Open scan options
   // ============================================
   const openScanOptions = useCallback(() => {
     auditLog({
@@ -720,7 +816,6 @@ const FuelScreen = ({ navigation }) => {
   const allocatedAmount = Number(allocation?.allocated_amount || 0);
   const reconciledUsed = Number(allocation?.amount_used || 0);
 
-  // Treat this month's receipts as "pending" usage against the allocation
   const pendingFromReceipts = totalSpend;
   const effectiveUsed = reconciledUsed > 0 ? reconciledUsed : pendingFromReceipts;
 
@@ -777,9 +872,7 @@ const FuelScreen = ({ navigation }) => {
           />
         }
       >
-        {/* ============================================
-            HEADER
-        ============================================ */}
+        {/* HEADER */}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Fuel &amp; Expenses</Text>
           <Text style={styles.headerSubtitle}>
@@ -824,12 +917,10 @@ const FuelScreen = ({ navigation }) => {
           </ScrollView>
         </View>
 
-        {/* ============================================
-            BODY
-        ============================================ */}
+        {/* BODY */}
         <View style={styles.body}>
 
-          {/* ===== Scan Receipt CTA ===== */}
+          {/* Scan Receipt CTA */}
           <TouchableOpacity
             style={styles.scanReceiptButton}
             onPress={openScanOptions}
@@ -849,7 +940,7 @@ const FuelScreen = ({ navigation }) => {
             )}
           </TouchableOpacity>
 
-          {/* ===== Fuel Allocation card ===== */}
+          {/* Fuel Allocation card */}
           <Text style={styles.sectionTitle}>Fuel Allocation</Text>
 
           <View style={styles.budgetCard}>
@@ -952,7 +1043,6 @@ const FuelScreen = ({ navigation }) => {
                   </View>
                 </View>
 
-                {/* Allocation meta */}
                 <View style={styles.allocationMetaRow}>
                   <View style={styles.allocationMetaItem}>
                     <Ionicons name="calendar-outline" size={14} color="#7a8699" />
@@ -1001,7 +1091,7 @@ const FuelScreen = ({ navigation }) => {
             )}
           </View>
 
-          {/* ===== Stats grid ===== */}
+          {/* Stats grid */}
           <Text style={styles.sectionTitle}>This Month</Text>
           <View style={styles.statsContainer}>
             <View style={styles.statCard}>
@@ -1045,7 +1135,7 @@ const FuelScreen = ({ navigation }) => {
             </View>
           </View>
 
-          {/* ===== Vehicle efficiency ===== */}
+          {/* Vehicle efficiency */}
           <Text style={styles.sectionTitle}>Vehicle Efficiency</Text>
 
           <View style={styles.efficiencyCard}>
@@ -1106,7 +1196,7 @@ const FuelScreen = ({ navigation }) => {
             )}
           </View>
 
-          {/* ===== Receipt history ===== */}
+          {/* Receipt history */}
           <Text style={styles.sectionTitle}>Receipt History</Text>
 
           {loading ? (
@@ -1157,6 +1247,16 @@ const FuelScreen = ({ navigation }) => {
                         source={{ uri: thumb }}
                         style={styles.receiptThumb}
                         resizeMode="cover"
+                        onError={(e) =>
+                          console.log(
+                            '[FuelScreen] image load error:',
+                            r.id,
+                            e.nativeEvent?.error
+                          )
+                        }
+                        onLoad={() =>
+                          console.log('[FuelScreen] image loaded:', r.id)
+                        }
                       />
                     ) : (
                       <View style={styles.receiptThumbPlaceholder}>
@@ -1215,9 +1315,7 @@ const FuelScreen = ({ navigation }) => {
         </View>
       </ScrollView>
 
-      {/* ============================================
-          AMOUNT INPUT MODAL
-      ============================================ */}
+      {/* AMOUNT INPUT MODAL */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -1319,7 +1417,7 @@ const FuelScreen = ({ navigation }) => {
         </View>
       </Modal>
 
-      {/* ===== Preview modal ===== */}
+      {/* Preview modal */}
       <Modal
         visible={!!previewReceipt}
         transparent={true}
@@ -1367,6 +1465,12 @@ const FuelScreen = ({ navigation }) => {
                     source={{ uri: previewUrl }}
                     style={styles.previewImage}
                     resizeMode="contain"
+                    onError={(e) =>
+                      console.log(
+                        '[FuelScreen] preview image error:',
+                        e.nativeEvent?.error
+                      )
+                    }
                   />
                 </View>
               ) : (
@@ -1530,7 +1634,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
-  // ---- Scan receipt button ----
   scanReceiptButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -1553,7 +1656,6 @@ const styles = StyleSheet.create({
     marginLeft: 10,
   },
 
-  // ---- Budget card ----
   budgetCard: {
     backgroundColor: "#fff",
     marginHorizontal: 20,
@@ -1673,7 +1775,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // ---- Allocation meta ----
   allocationMetaRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1695,7 +1796,6 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
 
-  // ---- Stats grid ----
   statsContainer: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1742,7 +1842,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
 
-  // ---- Vehicle efficiency ----
   efficiencyCard: {
     backgroundColor: "#fff",
     marginHorizontal: 20,
@@ -1856,7 +1955,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 
-  // ---- Receipts list ----
   loadingCard: {
     backgroundColor: "#fff",
     marginHorizontal: 20,
@@ -2005,7 +2103,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
 
-  // ---- Preview modal ----
   previewOverlay: {
     flex: 1,
     backgroundColor: "rgba(10, 31, 68, 0.55)",
@@ -2119,9 +2216,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 
-  // ============================================
-  // RECEIPT SCAN MODAL STYLES
-  // ============================================
   receiptModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(10, 31, 68, 0.55)",

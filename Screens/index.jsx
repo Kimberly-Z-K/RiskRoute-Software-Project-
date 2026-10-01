@@ -431,7 +431,10 @@ const RiskRouteScreen = ({ navigation, route }) => {
               <Text style={styles.actionText}>Fuel</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.actionBtn}>
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => navigation.navigate("Support")}
+            >
               <View style={styles.actionIconWrap}>
                 <Ionicons name="help-circle" size={18} color="#fff" />
               </View>
