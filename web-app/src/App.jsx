@@ -48,7 +48,7 @@ import {
 } from 'lucide-react';
 import './styles/globals.css';
 import { supabase } from '../lib/supabase';
-import Settings from '../../../RiskRoute-Software-Project-/web-app/src/components/settings/Settings';
+import Settings from './components/settings/Settings';
 import DriverReports from './components/DriverReports/driverReports';
 import FuelAllocation from './components/FuelAllocation';
 
