@@ -68,6 +68,11 @@ const AdminAuditLog = ({ user }) => {
       // GET CURRENT AUTH USER
       // -------------------------------------------------------
 
+      const { data: sessionData, error: sessionError } =
+  await supabase.auth.getSession();
+
+console.log('SESSION:', sessionData.session);
+console.log('SESSION ERROR:', sessionError);
       const {
         data: { user: authUser },
         error: authError,
