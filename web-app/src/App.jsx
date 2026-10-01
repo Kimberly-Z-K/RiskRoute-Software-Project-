@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import Login from './components/Login';
+import Login from './components/login';
 import Sidebar from './components/layout/Sidebar';
 import Header from './components/layout/Header';
-import StatCard from './components/dashboard/StatCard';
+import StatCard from './components/dashboard/Statcard';
 import LiveFleetMap from './components/dashboard/LiveFleetMap';
 import AlertsPanel from './components/dashboard/AlertsPanel';
 import QuickActions from './components/dashboard/QuickActions';
@@ -12,11 +12,11 @@ import VehicleTrackingMap from './components/monitoring/VehicleTrackingMap';
 import VehicleList from './components/monitoring/VehicleList';
 import VehicleDetailModal from './components/monitoring/VehicleDetailModal';
 import RouteOptimisationForm from './components/route-planning/RouteOptimisationForm';
-import RouteOptionCard from './components/route-planning/RouteOptionCard';
+import RouteOptionCard from './components/route-planning/RouteoptionCard';
 import TrafficWeatherPanel from './components/route-planning/TrafficWeatherPanel';
 import RiskAnalysisPanel from './components/route-planning/RiskAnalysisPanel';
 import RiskScoreCard from './components/risk-analysis/RiskScoreCard';
-import RiskHeatmap from './components/risk-analysis/RiskHeatmap';
+import RiskHeatmap from './components/risk-analysis/RiskHeatMap';
 import RiskTrends from './components/risk-analysis/RiskTrends';
 import SimulationControls from './components/simulation/SimulationControls';
 import KPICard from './components/analytics/KPICard';
@@ -29,7 +29,7 @@ import {
   routeOptions,
   performanceData
 } from './data/mockData';
-import { useRealTimeUpdates } from './hooks/useRealTimeUpdates';
+import { useRealTimeUpdates } from './hooks/useRealTimeupdates';
 import { useRoutes } from './hooks/useRoutes';
 import {
   Truck,
@@ -48,8 +48,8 @@ import {
 } from 'lucide-react';
 import './styles/globals.css';
 import { supabase } from '../lib/supabase';
-import Settings from '../../../RiskRoute-Software-Project-/web-app/src/components/settings/Settings';
-import DriverReports from './components/DriverReports/driverreports';
+import Settings from './components/settings/Settings';
+import DriverReports from './components/DriverReports/driverReports';
 import FuelAllocation from './components/FuelAllocation';
 
 const navItems = [
