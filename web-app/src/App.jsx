@@ -1,27 +1,27 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import Login from '.src/components/login';
-import Sidebar from '.src/components/layout/Sidebar';
-import Header from '.src/components/layout/Header';
-import StatCard from '.src/components/dashboard/Statcard';
-import LiveFleetMap from '.src/components/dashboard/LiveFleetMap';
-import AlertsPanel from '.src/components/dashboard/AlertsPanel';
-import QuickActions from '.src/components/dashboard/QuickActions';
-import VehicleTrackingMap from '.src/components/monitoring/VehicleTrackingMap';
-import VehicleList from '.src/components/monitoring/VehicleList';
-import VehicleDetailModal from '.src/components/monitoring/VehicleDetailModal';
-import RouteOptimisationForm from '.src/components/route-planning/RouteOptimisationForm';
+import Login from './components/login';
+import Sidebar from './components/layout/Sidebar';
+import Header from './components/layout/Header';
+import StatCard from './components/dashboard/Statcard';
+import LiveFleetMap from './components/dashboard/LiveFleetMap';
+import AlertsPanel from './components/dashboard/AlertsPanel';
+import QuickActions from './components/dashboard/QuickActions';
+import VehicleTrackingMap from './components/monitoring/VehicleTrackingMap';
+import VehicleList from './components/monitoring/VehicleList';
+import VehicleDetailModal from './components/monitoring/VehicleDetailModal';
+import RouteOptimisationForm from './components/route-planning/RouteOptimisationForm';
 import RouteOptionCard from '.src/components/route-planning/RouteOptionCard';
-import TrafficWeatherPanel from '.src/components/route-planning/TrafficWeatherPanel';
-import RiskAnalysisPanel from '.src/components/route-planning/RiskAnalysisPanel';
-import RiskScoreCard from '.src/components/risk-analysis/RiskScoreCard';
+import TrafficWeatherPanel from './components/route-planning/TrafficWeatherPanel';
+import RiskAnalysisPanel from './components/route-planning/RiskAnalysisPanel';
+import RiskScoreCard from './components/risk-analysis/RiskScoreCard';
 import RiskHeatmap from '.src/components/risk-analysis/RiskHeatmap';
-import RiskTrends from '.src/components/risk-analysis/RiskTrends';
-import SimulationControls from '.src/components/simulation/SimulationControls';
-import KPICard from '.src/components/analytics/KPICard';
-import PerformanceCharts from '.src/components/analytics/PerformanceCharts';
-import DriverPerformanceTable from '.src/components/analytics/DriverPerformanceTable';
+import RiskTrends from './components/risk-analysis/RiskTrends';
+import SimulationControls from './components/simulation/SimulationControls';
+import KPICard from './components/analytics/KPICard';
+import PerformanceCharts from './components/analytics/PerformanceCharts';
+import DriverPerformanceTable from './components/analytics/DriverPerformanceTable';
 import {
   generateFleetVehicles,
   generateStats,
