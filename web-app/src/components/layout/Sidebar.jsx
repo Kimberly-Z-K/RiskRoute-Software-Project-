@@ -149,13 +149,9 @@ const Sidebar = ({
                 : 'hover:bg-gray-100 text-gray-600'
             }`}
           >
-            <User className="w-5 h-5" />
+            
 
-            {sidebarOpen && (
-              <span className="text-sm">
-                Profile
-              </span>
-            )}
+            
           </button>
 
           {/* Settings */}
