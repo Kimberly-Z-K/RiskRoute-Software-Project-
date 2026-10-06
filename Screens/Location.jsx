@@ -14,6 +14,7 @@ import {
   Animated,
   PanResponder,
   TextInput,
+  Vibration,
 } from "react-native";
 import MapView, { Marker, Polyline, Callout } from "react-native-maps";
 import * as ExpoLocation from "expo-location";
@@ -55,6 +56,7 @@ const PAUSE_CATEGORIES = [
     description: 'Taking a short break',
     color: '#7c3aed',
     subOptions: null,
+    durationMs: 20 * 1000,
   },
   {
     key: 'lunch',
@@ -63,6 +65,7 @@ const PAUSE_CATEGORIES = [
     description: 'Meal break',
     color: '#ea580c',
     subOptions: null,
+    durationMs: 15 * 1000,
   },
   {
     key: 'route',
@@ -75,6 +78,7 @@ const PAUSE_CATEGORIES = [
       'Stop and Go',
       'Car Accident (not on route)',
     ],
+    durationMs: 10 * 1000,
   },
   {
     key: 'vehicle',
@@ -87,6 +91,7 @@ const PAUSE_CATEGORIES = [
       'Tire Burst',
       'Other Vehicle Issue',
     ],
+    durationMs: 25 * 1000,
   },
 ];
 
@@ -135,6 +140,28 @@ const formatDuration = (seconds) => {
   if (m < 60) return `${m}m ${s}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
+};
+
+const formatCountdown = (ms) => {
+  if (ms == null) return '';
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+};
+
+const formatCountdownClock = (ms) => {
+  if (ms == null) return '00:00';
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  if (h > 0) return `${pad(h)}:${pad(m)}:${pad(s)}`;
+  return `${pad(m)}:${pad(s)}`;
 };
 
 const EVENT_TO_CATEGORY = {
@@ -190,12 +217,13 @@ export default function LocationScreen({ route }) {
 
   const [state, setState] = useState({
     location: null,
+    locationReady: false,
+    permissionDenied: false,
+
     destination: null,
     routeCoords: [],
     routeDistance: 0,
-    loading: true,
     fullMap: false,
-    screenReady: false,
 
     start: null,
     stops: [],
@@ -203,7 +231,8 @@ export default function LocationScreen({ route }) {
     stopAddresses: [],
     tripLoading: false,
     routeLoading: false,
-    tripLoaded: false,
+    tripResolved: false,
+    hasTrip: false,
     resolvedTripId: null,
 
     fuelPercent: 20,
@@ -221,6 +250,11 @@ export default function LocationScreen({ route }) {
     pauseNotes: '',
     isPaused: false,
     pauseStartTime: null,
+    pauseEndsAt: null,
+    pauseRemainingMs: null,
+    pauseExpired: false,
+    resumedFlash: false,
+    tripEndedFlash: false,
 
     tripStartedAt: null,
     pauseStartedAt: null,
@@ -241,6 +275,9 @@ export default function LocationScreen({ route }) {
   const redirectingRef = useRef(false);
   const stateRef = useRef(state);
   const cachedVehicleIdRef = useRef(null);
+  const pauseExpiredRef = useRef(false);
+  const resumedFlashTimeoutRef = useRef(null);
+  const tripEndedFlashTimeoutRef = useRef(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -248,9 +285,11 @@ export default function LocationScreen({ route }) {
 
   const {
     location,
+    locationReady,
+    permissionDenied,
     destination,
     routeCoords,
-    loading,
+    routeDistance,
     fullMap,
     fuelPercent,
     fuelWarning,
@@ -267,8 +306,8 @@ export default function LocationScreen({ route }) {
     stopAddresses,
     tripLoading,
     routeLoading,
-    screenReady,
-    tripLoaded,
+    tripResolved,
+    hasTrip,
     resolvedTripId,
     isCalculatingStation,
     stationSearchFailed,
@@ -280,6 +319,11 @@ export default function LocationScreen({ route }) {
     pauseNotes,
     isPaused,
     pauseStartTime,
+    pauseEndsAt,
+    pauseRemainingMs,
+    pauseExpired,
+    resumedFlash,
+    tripEndedFlash,
     tripStartedAt,
     pauseStartedAt,
     lastPauseReportId,
@@ -309,75 +353,42 @@ export default function LocationScreen({ route }) {
     async (eventType, metadata = {}) => {
       const effectiveTripId = stateRef.current.resolvedTripId || tripId || null;
 
-      console.log("[logTripEvent] START", {
-        eventType,
-        effectiveTripId,
-        metadata,
-      });
-
       try {
         const {
           data: { user: authUser },
           error: userError,
         } = await supabase.auth.getUser();
 
-        if (userError || !authUser) {
-          console.warn("[logTripEvent] No user:", userError?.message);
-          return null;
-        }
+        if (userError || !authUser) return null;
 
         let vehicleId = cachedVehicleIdRef.current;
         if (!vehicleId) {
-          console.log("[logTripEvent] resolving vehicle for user:", authUser.id);
-
-          const { data: driverById, error: driverByIdErr } = await supabase
+          const { data: driverById } = await supabase
             .from("drivers")
             .select("driver_id")
             .eq("user_id", authUser.id)
             .maybeSingle();
 
-          console.log("[logTripEvent] drivers by user_id:", {
-            driverId: driverById?.driver_id,
-            error: driverByIdErr?.message,
-            code: driverByIdErr?.code,
-          });
-
           let driverId = driverById?.driver_id ?? null;
 
           if (!driverId && authUser.email) {
-            const { data: driverByEmail, error: driverByEmailErr } = await supabase
+            const { data: driverByEmail } = await supabase
               .from("drivers")
               .select("driver_id")
               .eq("email", authUser.email)
               .maybeSingle();
-
-            console.log("[logTripEvent] drivers by email:", {
-              driverId: driverByEmail?.driver_id,
-              error: driverByEmailErr?.message,
-              code: driverByEmailErr?.code,
-            });
-
             driverId = driverByEmail?.driver_id ?? null;
           }
 
           if (driverId) {
-            const { data: vehicle, error: vehicleErr } = await supabase
+            const { data: vehicle } = await supabase
               .from("vehicles")
               .select("vehicle_id")
               .eq("driver_id", driverId)
               .maybeSingle();
-
-            console.log("[logTripEvent] vehicle lookup:", {
-              vehicleId: vehicle?.vehicle_id,
-              error: vehicleErr?.message,
-              code: vehicleErr?.code,
-            });
-
             vehicleId = vehicle?.vehicle_id ?? null;
             cachedVehicleIdRef.current = vehicleId;
           }
-        } else {
-          console.log("[logTripEvent] using cached vehicleId:", vehicleId);
         }
 
         const current = stateRef.current;
@@ -402,24 +413,16 @@ export default function LocationScreen({ route }) {
           location_timestamp: loc ? new Date().toISOString() : null,
         };
 
-        console.log("[logTripEvent] payload:", payload);
-
         const { data, error } = await supabase
           .from("user_reports")
           .insert(payload)
           .select();
 
         if (error) {
-          console.error("[logTripEvent] INSERT FAILED:", {
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            code: error.code,
-          });
+          console.error("[logTripEvent] INSERT FAILED:", error);
           return null;
         }
 
-        console.log("[logTripEvent] INSERT OK:", data);
         return data?.[0] ?? null;
       } catch (err) {
         console.error("[logTripEvent] EXCEPTION:", err);
@@ -431,8 +434,6 @@ export default function LocationScreen({ route }) {
 
   const resolveReport = useCallback(async (reportId, note) => {
     if (!reportId) return;
-    console.log("[resolveReport] resolving:", { reportId, note });
-
     const { error } = await supabase
       .from("user_reports")
       .update({
@@ -442,16 +443,7 @@ export default function LocationScreen({ route }) {
       })
       .eq("id", reportId);
 
-    if (error) {
-      console.error("[resolveReport] FAILED:", {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint,
-      });
-      return;
-    }
-    console.log("[resolveReport] OK:", reportId);
+    if (error) console.error("[resolveReport] FAILED:", error);
   }, []);
 
   const getLocation = useCallback(async () => {
@@ -467,16 +459,10 @@ export default function LocationScreen({ route }) {
           description: "User denied location permission",
         });
 
-        Alert.alert(
-          "Permission Denied",
-          "Enable location permissions"
-        );
-
         updateState({
-          loading: false,
-          screenReady: true,
+          locationReady: true,
+          permissionDenied: true,
         });
-
         return;
       }
 
@@ -491,18 +477,16 @@ export default function LocationScreen({ route }) {
         await ExpoLocation.getCurrentPositionAsync({
           accuracy: ExpoLocation.Accuracy.High,
         });
-      const newLocation = {
-        latitude: current.coords.latitude,
-        longitude: current.coords.longitude,
-      };
       updateState({
-        location: newLocation,
-        loading: false,
-        screenReady: true,
+        location: {
+          latitude: current.coords.latitude,
+          longitude: current.coords.longitude,
+        },
+        locationReady: true,
       });
     } catch (error) {
       console.error("Location error:", error);
-      updateState({ loading: false, screenReady: true });
+      updateState({ locationReady: true });
     }
   }, [updateState]);
 
@@ -517,22 +501,16 @@ export default function LocationScreen({ route }) {
     const res = await fetch(url);
     const json = await res.json();
 
-    if (!res.ok) {
-      throw new Error(json?.message || "OSRM route request failed");
-    }
+    if (!res.ok) throw new Error(json?.message || "OSRM route request failed");
 
     const route = json?.routes?.[0];
     if (!route) throw new Error("No route found");
 
-    const geometry = route?.geometry;
-    const coordsArray = geojsonToCoords(geometry);
-    const distanceKm = route.distance / 1000;
-    const durationMin = route.duration / 60;
-
+    const coordsArray = geojsonToCoords(route?.geometry);
     return {
       coords: coordsArray,
-      distance: distanceKm,
-      duration: durationMin,
+      distance: route.distance / 1000,
+      duration: route.duration / 60,
       routeData: route,
     };
   }, []);
@@ -540,11 +518,9 @@ export default function LocationScreen({ route }) {
   const fetchRoute = useCallback(async (startPoint, endPoint) => {
     try {
       updateState({ routeLoading: true });
-
       const result = await fetchOSRMRoute([startPoint, endPoint]);
 
       if (!result || !result.coords || result.coords.length < 2) {
-        console.log("Route not found, using direct path");
         const directDistance = haversineKm(
           startPoint.latitude, startPoint.longitude,
           endPoint.latitude, endPoint.longitude
@@ -562,14 +538,12 @@ export default function LocationScreen({ route }) {
       }
 
       const { coords, distance, duration } = result;
-
       updateState({
         routeCoords: coords,
         routeDistance: distance,
         routeInfo: { distance, duration },
         routeLoading: false,
       });
-
     } catch (error) {
       console.error("Route error:", error);
       updateState({
@@ -597,16 +571,10 @@ export default function LocationScreen({ route }) {
       });
 
       const text = await response.text();
-
-      if (text.startsWith('<')) {
-        console.log("Overpass API returned HTML, using mock data");
-        return getMockStations(lat, lon);
-      }
+      if (text.startsWith('<')) return getMockStations(lat, lon);
 
       const data = JSON.parse(text);
-
       if (!data.elements || data.elements.length === 0) {
-        console.log("No stations found, using mock data");
         return getMockStations(lat, lon);
       }
 
@@ -620,13 +588,11 @@ export default function LocationScreen({ route }) {
         openingHours: station.tags?.opening_hours || null,
       }));
 
-      const sorted = [...stations].sort((a, b) => {
+      return [...stations].sort((a, b) => {
         const distA = haversineKm(lat, lon, a.latitude, a.longitude);
         const distB = haversineKm(lat, lon, b.latitude, b.longitude);
         return distA - distB;
       });
-
-      return sorted;
     } catch (error) {
       console.error("Fuel station sensing error:", error);
       return getMockStations(lat, lon);
@@ -652,10 +618,7 @@ export default function LocationScreen({ route }) {
   }, []);
 
   const findFuelStationsAlongRoute = useCallback(async (routePoints) => {
-    if (!routePoints || routePoints.length < 2) {
-      console.log("Not enough route points to find stations");
-      return [];
-    }
+    if (!routePoints || routePoints.length < 2) return [];
 
     try {
       updateState({ searchingStations: true, stationSearchFailed: false });
@@ -759,13 +722,14 @@ export default function LocationScreen({ route }) {
           style: 'destructive',
           onPress: async () => {
             const current = stateRef.current;
+
             const started = current.tripStartedAt
               ? new Date(current.tripStartedAt).getTime()
               : null;
-            const durationSec = started ? Math.round((Date.now() - started) / 1000) : null;
+            const durationSec = started
+              ? Math.round((Date.now() - started) / 1000)
+              : null;
             const durationText = formatDuration(durationSec);
-
-            console.log("[endTrip] trip duration:", durationText);
 
             await logTripEvent('trip_ended', {
               trip_duration_seconds: durationSec,
@@ -778,7 +742,6 @@ export default function LocationScreen({ route }) {
                 `Trip ended. Duration: ${durationText}.`
               );
             }
-
             if (current.lastPauseReportId) {
               await resolveReport(
                 current.lastPauseReportId,
@@ -786,11 +749,78 @@ export default function LocationScreen({ route }) {
               );
             }
 
-            showNotification('success', 'Trip ended successfully', 4000);
+            // ---- Critical part: unassign from vehicle and VERIFY it worked ----
+            try {
+              const {
+                data: { user: authUser },
+              } = await supabase.auth.getUser();
+
+              if (!authUser) {
+                Alert.alert('Could not end trip', 'You are not signed in.');
+                return;
+              }
+
+              const { data: updated, error: unassignErr } = await supabase
+                .from("vehicles")
+                .update({
+                  driver_id: null,
+                  route_id: null,
+                  status: "idle",
+                })
+                .eq("driver_id", authUser.id)
+                .select("vehicle_id, driver_id, route_id");
+
+              if (unassignErr) {
+                console.error("[endTrip] unassign failed:", unassignErr);
+                Alert.alert(
+                  'Could not end trip',
+                  unassignErr.message || 'Please try again.'
+                );
+                return;
+              }
+
+              if (!updated || updated.length === 0) {
+                console.error(
+                  "[endTrip] no vehicle row was updated (RLS or no matching row)"
+                );
+                Alert.alert(
+                  'Could not end trip',
+                  'The vehicle could not be unassigned. Please try again or contact dispatch.'
+                );
+                return;
+              }
+
+              console.log(
+                "[endTrip] vehicle unassigned for auth user",
+                authUser.id,
+                "-> rows:",
+                updated.length
+              );
+            } catch (err) {
+              console.error("[endTrip] exception while unassigning:", err);
+              Alert.alert('Could not end trip', 'Please try again.');
+              return;
+            }
+
+            // ---- Success: show green pill + reset state ----
+            pauseExpiredRef.current = false;
+            if (resumedFlashTimeoutRef.current) {
+              clearTimeout(resumedFlashTimeoutRef.current);
+              resumedFlashTimeoutRef.current = null;
+            }
+            if (tripEndedFlashTimeoutRef.current) {
+              clearTimeout(tripEndedFlashTimeoutRef.current);
+            }
+            updateState({ tripEndedFlash: true });
+            tripEndedFlashTimeoutRef.current = setTimeout(() => {
+              updateState({ tripEndedFlash: false });
+              tripEndedFlashTimeoutRef.current = null;
+            }, 3000);
 
             setTimeout(() => {
               updateState({
-                tripLoaded: false,
+                hasTrip: false,
+                tripResolved: true,
                 tripLoading: false,
                 routeCoords: [],
                 routeInfo: null,
@@ -809,6 +839,10 @@ export default function LocationScreen({ route }) {
                 pauseNotes: '',
                 isPaused: false,
                 pauseStartTime: null,
+                pauseEndsAt: null,
+                pauseRemainingMs: null,
+                pauseExpired: false,
+                resumedFlash: false,
                 resolvedTripId: null,
                 tripStartedAt: null,
                 pauseStartedAt: null,
@@ -820,11 +854,11 @@ export default function LocationScreen({ route }) {
         },
       ]
     );
-  }, [showNotification, updateState, logTripEvent, resolveReport]);
+  }, [updateState, logTripEvent, resolveReport]);
 
   const canEndTrip = useCallback(() => {
-    return tripLoaded && !tripLoading;
-  }, [tripLoaded, tripLoading]);
+    return hasTrip && !tripLoading;
+  }, [hasTrip, tripLoading]);
 
   const openPauseModal = useCallback(() => {
     updateState({
@@ -856,18 +890,28 @@ export default function LocationScreen({ route }) {
 
     const reason = current.pauseSubReason || cat.label;
     const now = new Date().toISOString();
+    const durationMs = cat.durationMs ?? null;
+    const pauseEndsAt = durationMs ? Date.now() + durationMs : null;
+
+    pauseExpiredRef.current = false;
+    if (resumedFlashTimeoutRef.current) {
+      clearTimeout(resumedFlashTimeoutRef.current);
+      resumedFlashTimeoutRef.current = null;
+    }
 
     updateState({
       isPaused: true,
       pauseStartTime: Date.now(),
       pauseStartedAt: now,
+      pauseEndsAt,
+      pauseRemainingMs: durationMs,
+      pauseExpired: false,
+      resumedFlash: false,
       showPauseModal: false,
       pauseCategory: null,
       pauseSubReason: null,
       pauseNotes: '',
     });
-
-    showNotification('warning', `Trip paused: ${reason}`, 4000);
 
     auditLog({
       action: "TRIP_PAUSED",
@@ -881,6 +925,8 @@ export default function LocationScreen({ route }) {
         reason,
         notes: current.pauseNotes || '',
         paused_at: now,
+        pause_duration_ms: durationMs,
+        pause_ends_at: pauseEndsAt ? new Date(pauseEndsAt).toISOString() : null,
       },
     });
 
@@ -889,12 +935,9 @@ export default function LocationScreen({ route }) {
       reason,
       notes: current.pauseNotes || '',
     }).then((row) => {
-      if (row?.id) {
-        console.log("[confirmPause] pause report id:", row.id);
-        updateState({ lastPauseReportId: row.id });
-      }
+      if (row?.id) updateState({ lastPauseReportId: row.id });
     });
-  }, [updateState, showNotification, logTripEvent, tripId]);
+  }, [updateState, logTripEvent, tripId]);
 
   const resumeTrip = useCallback(() => {
     Alert.alert(
@@ -914,8 +957,6 @@ export default function LocationScreen({ route }) {
               : null;
             const durationText = formatDuration(durationSec);
 
-            console.log("[resumeTrip] pause duration:", durationText);
-
             await auditLog({
               action: "TRIP_RESUMED",
               page: "Location Activity",
@@ -929,12 +970,26 @@ export default function LocationScreen({ route }) {
               },
             });
 
+            pauseExpiredRef.current = false;
+
+            if (resumedFlashTimeoutRef.current) {
+              clearTimeout(resumedFlashTimeoutRef.current);
+            }
+
             updateState({
               isPaused: false,
               pauseStartTime: null,
               pauseStartedAt: null,
+              pauseEndsAt: null,
+              pauseRemainingMs: null,
+              pauseExpired: false,
+              resumedFlash: true,
             });
-            showNotification('success', 'Trip resumed', 3000);
+
+            resumedFlashTimeoutRef.current = setTimeout(() => {
+              updateState({ resumedFlash: false });
+              resumedFlashTimeoutRef.current = null;
+            }, 3000);
 
             await logTripEvent('trip_resumed', {
               pause_duration_seconds: durationSec,
@@ -952,80 +1007,7 @@ export default function LocationScreen({ route }) {
         },
       ]
     );
-  }, [updateState, showNotification, logTripEvent, resolveReport, tripId]);
-
-  const loadTrip = useCallback(async () => {
-    try {
-      updateState({ tripLoading: true, routeLoading: true, error: "" });
-
-      let query = supabase.from("optimized_routes").select("id, start_point, stops");
-
-      if (tripId) {
-        query = query.eq("id", tripId).maybeSingle();
-      } else {
-        query = query.order("created_at", { ascending: false }).limit(1);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-
-      const loadedTrip = tripId ? data : data?.[0];
-      if (!loadedTrip) throw new Error("No trip data found");
-
-      console.log("[loadTrip] resolvedTripId:", loadedTrip.id);
-      updateState({ resolvedTripId: loadedTrip.id });
-
-      const startCoord = toCoord(loadedTrip.start_point);
-      const stopCoords = Array.isArray(loadedTrip.stops) ? loadedTrip.stops.map(toCoord).filter(Boolean) : [];
-
-      if (!startCoord) throw new Error("Invalid start_point data");
-
-      updateState({
-        start: startCoord,
-        stops: stopCoords,
-        destination: stopCoords[0] || null,
-      });
-
-      const startAddr = await reverseGeocodePoint(startCoord);
-      const stopAddrList = await Promise.all(
-        stopCoords.map(async (coord) => {
-          const addr = await reverseGeocodePoint(coord);
-          return formatAddress(addr);
-        })
-      );
-
-      updateState({
-        startAddress: formatAddress(startAddr),
-        stopAddresses: stopAddrList,
-        tripLoaded: true,
-        tripStartedAt: new Date().toISOString(),
-      });
-
-      if (stopCoords.length > 0 && startCoord) {
-        await fetchRoute(startCoord, stopCoords[0]);
-      }
-
-      logTripEvent('trip_started', {
-        start_address: formatAddress(startAddr),
-        stops_count: stopAddrList.length,
-      }).then((row) => {
-        if (row?.id) {
-          console.log("[loadTrip] trip report id:", row.id);
-          updateState({ lastTripReportId: row.id });
-        }
-      });
-
-    } catch (e) {
-      updateState({
-        error: e.message || "Failed to load trip",
-        tripLoading: false,
-        routeLoading: false,
-        tripLoaded: true,
-      });
-    } finally {
-      updateState({ tripLoading: false });
-    }
-  }, [tripId, fetchRoute, updateState, logTripEvent]);
+  }, [updateState, logTripEvent, resolveReport, tripId]);
 
   const reverseGeocodePoint = useCallback(async (coord) => {
     try {
@@ -1036,6 +1018,128 @@ export default function LocationScreen({ route }) {
     }
   }, []);
 
+  const resolveTripForDriver = useCallback(async () => {
+    try {
+      updateState({ tripLoading: true, error: "" });
+
+      const {
+        data: { user: authUser },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !authUser) {
+        updateState({ tripResolved: true, hasTrip: false, tripLoading: false });
+        return;
+      }
+
+      const { data: vehicle, error: vehicleErr } = await supabase
+        .from("vehicles")
+        .select("vehicle_id, route_id, status")
+        .eq("driver_id", authUser.id)
+        .not("route_id", "is", null)
+        .maybeSingle();
+
+      if (vehicleErr) throw vehicleErr;
+
+      if (!vehicle?.route_id) {
+        updateState({
+          tripResolved: true,
+          hasTrip: false,
+          tripLoading: false,
+          routeLoading: false,
+          start: null,
+          stops: [],
+          routeCoords: [],
+          routeInfo: null,
+          destination: null,
+          resolvedTripId: null,
+        });
+        return;
+      }
+
+      const { data: loadedTrip, error: tripErr } = await supabase
+        .from("optimized_routes")
+        .select("id, start_point, stops")
+        .eq("id", vehicle.route_id)
+        .maybeSingle();
+
+      if (tripErr) throw tripErr;
+
+      if (!loadedTrip) {
+        updateState({
+          tripResolved: true,
+          hasTrip: false,
+          tripLoading: false,
+          routeLoading: false,
+          start: null,
+          stops: [],
+          routeCoords: [],
+          routeInfo: null,
+          destination: null,
+          resolvedTripId: null,
+        });
+        return;
+      }
+
+      const startCoord = toCoord(loadedTrip.start_point);
+      const stopCoords = Array.isArray(loadedTrip.stops)
+        ? loadedTrip.stops.map(toCoord).filter(Boolean)
+        : [];
+
+      if (!startCoord) {
+        updateState({
+          tripResolved: true,
+          hasTrip: false,
+          tripLoading: false,
+          routeLoading: false,
+        });
+        return;
+      }
+
+      updateState({
+        tripResolved: true,
+        hasTrip: true,
+        tripLoading: false,
+        resolvedTripId: loadedTrip.id,
+        start: startCoord,
+        stops: stopCoords,
+        destination: stopCoords[0] || null,
+        tripStartedAt: new Date().toISOString(),
+      });
+
+      Promise.all([
+        reverseGeocodePoint(startCoord).then((addr) =>
+          updateState({ startAddress: formatAddress(addr) })
+        ),
+        Promise.all(
+          stopCoords.map(async (c) => formatAddress(await reverseGeocodePoint(c)))
+        ).then((addrs) => updateState({ stopAddresses: addrs })),
+      ]).catch((e) =>
+        console.warn("[loadTrip] reverse geocode failed:", e?.message)
+      );
+
+      if (stopCoords.length > 0) {
+        fetchRoute(startCoord, stopCoords[0]);
+      }
+
+      logTripEvent('trip_started', {
+        start_address: '',
+        stops_count: stopCoords.length,
+      }).then((row) => {
+        if (row?.id) updateState({ lastTripReportId: row.id });
+      });
+
+    } catch (e) {
+      updateState({
+        error: e.message || "Failed to load trip",
+        tripLoading: false,
+        routeLoading: false,
+        tripResolved: true,
+        hasTrip: false,
+      });
+    }
+  }, [updateState, fetchRoute, logTripEvent, reverseGeocodePoint]);
+
   const checkFuelAndRedirect = useCallback(async () => {
     const current = stateRef.current;
 
@@ -1044,12 +1148,8 @@ export default function LocationScreen({ route }) {
       !current.fuelWarning &&
       !redirectingRef.current
     ) {
-      console.log("Low fuel warning:", current.fuelPercent.toFixed(1), "%");
-
       updateState({ fuelWarning: true });
-
       showNotification('warning', `Fuel at ${current.fuelPercent.toFixed(0)}% - Please find a fuel station.`, 5000);
-
       updateState({ showFuelModal: true });
     }
   }, [updateState, showNotification]);
@@ -1068,6 +1168,7 @@ export default function LocationScreen({ route }) {
   const buttonSheetStartY = useRef(0);
   const buttonSheetOpenRef = useRef(false);
   const maxDragRef = useRef(BUTTON_SHEET_MAX_DRAG);
+
   useEffect(() => {
     maxDragRef.current = BUTTON_SHEET_MAX_DRAG;
 
@@ -1140,24 +1241,20 @@ export default function LocationScreen({ route }) {
 
   useEffect(() => {
     getLocation();
+    resolveTripForDriver();
+
     return () => {
-      if (notificationTimeoutRef.current) {
-        clearTimeout(notificationTimeoutRef.current);
-      }
+      if (notificationTimeoutRef.current) clearTimeout(notificationTimeoutRef.current);
+      if (resumedFlashTimeoutRef.current) clearTimeout(resumedFlashTimeoutRef.current);
+      if (tripEndedFlashTimeoutRef.current) clearTimeout(tripEndedFlashTimeoutRef.current);
     };
-  }, [getLocation, user]);
+  }, [getLocation, resolveTripForDriver, user]);
 
   useEffect(() => {
-    if (screenReady && location && !tripLoaded && !tripLoading) {
-      loadTrip();
-    }
-  }, [screenReady, location, tripLoaded, tripLoading, loadTrip]);
-
-  useEffect(() => {
-    if (tripLoaded && fuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD && !fuelWarning) {
+    if (hasTrip && fuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD && !fuelWarning) {
       checkFuelAndRedirect();
     }
-  }, [fuelPercent, tripLoaded, fuelWarning, checkFuelAndRedirect]);
+  }, [fuelPercent, hasTrip, fuelWarning, checkFuelAndRedirect]);
 
   useEffect(() => {
     if (mapRef.current && routeCoords.length > 1) {
@@ -1168,12 +1265,46 @@ export default function LocationScreen({ route }) {
     }
   }, [routeCoords]);
 
-  const renderLoading = () => (
-    <View style={styles.loadingContainer}>
-      <ActivityIndicator size="large" color="#007bff" />
-      <Text style={styles.loadingText}>Loading...</Text>
-    </View>
-  );
+  useEffect(() => {
+    if (!isPaused || !pauseEndsAt) return;
+
+    const tick = () => {
+      const remaining = pauseEndsAt - Date.now();
+
+      if (remaining <= 0) {
+        if (!pauseExpiredRef.current) {
+          pauseExpiredRef.current = true;
+          updateState({ pauseRemainingMs: 0, pauseExpired: true });
+          Vibration.vibrate([0, 500, 300, 500, 300, 700]);
+          Alert.alert(
+            'Break Time Over',
+            'Your scheduled pause time has ended. Please resume the trip when you are ready.',
+            [
+              {
+                text: 'Extend 10s',
+                onPress: () => {
+                  pauseExpiredRef.current = false;
+                  updateState({
+                    pauseEndsAt: Date.now() + 10 * 1000,
+                    pauseRemainingMs: 10 * 1000,
+                    pauseExpired: false,
+                  });
+                },
+              },
+              { text: 'OK', style: 'cancel' },
+            ]
+          );
+        }
+        return;
+      }
+
+      updateState({ pauseRemainingMs: remaining });
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [isPaused, pauseEndsAt, updateState]);
 
   const renderNotification = () => {
     if (!notification) return null;
@@ -1233,9 +1364,6 @@ export default function LocationScreen({ route }) {
     </TouchableOpacity>
   );
 
-  // ============================================
-  // PAUSE MODAL
-  // ============================================
   const renderPauseModal = () => {
     const activeCat = PAUSE_CATEGORIES.find((c) => c.key === pauseCategory);
     const requiresSub = !!activeCat?.subOptions;
@@ -1445,6 +1573,101 @@ export default function LocationScreen({ route }) {
     </Modal>
   );
 
+  const renderPauseTimerOverlay = () => {
+    if (tripEndedFlash) {
+      return (
+        <View
+          pointerEvents="none"
+          style={[styles.pauseTimerPill, styles.pauseTimerPillResumed]}
+        >
+          <View style={[styles.pauseTimerIconWrap, styles.pauseTimerIconWrapResumed]}>
+            <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.pauseTimerLabel, styles.pauseTimerLabelResumed]}>
+              Trip ended
+            </Text>
+            <Text style={[styles.pauseTimerValue, styles.pauseTimerValueResumed]}>
+              Successfully
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    if (!isPaused && resumedFlash) {
+      return (
+        <View
+          pointerEvents="none"
+          style={[styles.pauseTimerPill, styles.pauseTimerPillResumed]}
+        >
+          <View style={[styles.pauseTimerIconWrap, styles.pauseTimerIconWrapResumed]}>
+            <Ionicons name="play-outline" size={16} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.pauseTimerLabel, styles.pauseTimerLabelResumed]}>
+              Trip resumed
+            </Text>
+            <Text style={[styles.pauseTimerValue, styles.pauseTimerValueResumed]}>
+              Drive safe
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    if (!isPaused) return null;
+
+    const urgent =
+      pauseExpired ||
+      (pauseRemainingMs != null && pauseRemainingMs <= 10 * 1000);
+
+    return (
+      <View
+        pointerEvents="none"
+        style={[
+          styles.pauseTimerPill,
+          urgent && styles.pauseTimerPillUrgent,
+        ]}
+      >
+        <View
+          style={[
+            styles.pauseTimerIconWrap,
+            urgent && styles.pauseTimerIconWrapUrgent,
+          ]}
+        >
+          <Ionicons
+            name={pauseExpired ? 'alarm-outline' : 'time-outline'}
+            size={16}
+            color={urgent ? '#fff' : '#9a3412'}
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[
+              styles.pauseTimerLabel,
+              urgent && styles.pauseTimerLabelUrgent,
+            ]}
+          >
+            {pauseExpired ? 'Break time over' : 'Paused'}
+          </Text>
+          <Text
+            style={[
+              styles.pauseTimerValue,
+              urgent && styles.pauseTimerValueUrgent,
+            ]}
+          >
+            {pauseExpired
+              ? 'Please resume'
+              : pauseEndsAt
+                ? formatCountdownClock(pauseRemainingMs ?? 0)
+                : '--:--'}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
   const renderMap = () => (
     <View style={fullMap ? styles.mapContainerFull : styles.mapContainer}>
       <MapView
@@ -1629,9 +1852,7 @@ export default function LocationScreen({ route }) {
               description: "User opened the full map",
               element: "Open Full Map",
               targetId: tripId,
-              details: {
-                trip_id: tripId,
-              },
+              details: { trip_id: tripId },
             });
 
             updateState({ fullMap: true });
@@ -1723,9 +1944,7 @@ export default function LocationScreen({ route }) {
                 description: "User ended the trip",
                 element: "End Trip",
                 targetId: tripId,
-                details: {
-                  trip_id: tripId,
-                },
+                details: { trip_id: tripId },
               });
 
               await endTrip();
@@ -1736,12 +1955,7 @@ export default function LocationScreen({ route }) {
               size={20}
               color="red"
             />
-            <Text
-              style={[
-                styles.buttonText,
-                { color: "red" },
-              ]}
-            >
+            <Text style={[styles.buttonText, { color: "red" }]}>
               End Trip
             </Text>
           </TouchableOpacity>
@@ -1761,12 +1975,33 @@ export default function LocationScreen({ route }) {
       <Text style={styles.routeSheetSectionTitle}>Active Route</Text>
 
       {isPaused && (
-        <View style={styles.pausedBanner}>
-          <Ionicons name="pause-circle" size={22} color="#9a3412" />
-          <Text style={styles.pausedBannerText}>
-            Trip paused{pauseStartTime
-              ? ` • started ${Math.max(1, Math.round((Date.now() - pauseStartTime) / 60000))} min ago`
-              : ''}
+        <View
+          style={[
+            styles.pausedBanner,
+            pauseExpired && styles.pausedBannerExpired,
+          ]}
+        >
+          <Ionicons
+            name={pauseExpired ? 'alarm-outline' : 'pause-circle'}
+            size={22}
+            color={pauseExpired ? '#7f1d1d' : '#9a3412'}
+          />
+          <Text
+            style={[
+              styles.pausedBannerText,
+              pauseExpired && { color: '#7f1d1d' },
+            ]}
+          >
+            {pauseExpired
+              ? 'Trip paused • break time is over — please resume'
+              : pauseEndsAt
+                ? `Trip paused • ends in ${formatCountdown(pauseRemainingMs ?? 0)}`
+                : pauseStartTime
+                  ? `Trip paused • started ${Math.max(
+                      1,
+                      Math.round((Date.now() - pauseStartTime) / 60000)
+                    )} min ago`
+                  : 'Trip paused'}
           </Text>
         </View>
       )}
@@ -1774,212 +2009,222 @@ export default function LocationScreen({ route }) {
       {error ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.primaryButton} onPress={loadTrip}>
+          <TouchableOpacity style={styles.primaryButton} onPress={resolveTripForDriver}>
             <Text style={styles.buttonText}>Retry</Text>
           </TouchableOpacity>
         </View>
       ) : null}
 
-      <View style={styles.routeInfoWhiteCard}>
-        <View style={styles.infoCardIcon}>
-          <Ionicons name="navigate-outline" size={20} color="#007bff" />
-        </View>
-        <View style={styles.infoCardTextContainer}>
-          <Text style={styles.infoCardLabel}>Start</Text>
-          <Text style={styles.infoCardValue}>
-            {tripLoading ? "Loading address..." : startAddress || "Unknown address"}
+      {tripResolved && !hasTrip && !error ? (
+        <View style={styles.emptyTripCard}>
+          <View style={styles.emptyTripIconWrap}>
+            <Ionicons name="car-outline" size={26} color="#0A1F44" />
+          </View>
+          <Text style={styles.emptyTripTitle}>No active trip</Text>
+          <Text style={styles.emptyTripSubtitle}>
+            You don't have a trip assigned to your vehicle right now.
+            It will appear here as soon as dispatch assigns one.
           </Text>
         </View>
-      </View>
+      ) : null}
 
-      {routeLoading ? (
+      {(hasTrip || tripLoading) && (
+        <View style={styles.routeInfoWhiteCard}>
+          <View style={styles.infoCardIcon}>
+            <Ionicons name="navigate-outline" size={20} color="#007bff" />
+          </View>
+          <View style={styles.infoCardTextContainer}>
+            <Text style={styles.infoCardLabel}>Start</Text>
+            {startAddress ? (
+              <Text style={styles.infoCardValue}>{startAddress}</Text>
+            ) : (
+              <View style={styles.skeletonLine} />
+            )}
+          </View>
+        </View>
+      )}
+
+      {routeLoading && hasTrip ? (
         <View style={styles.routeInfoWhiteCard}>
           <ActivityIndicator size="small" color="#007bff" />
           <Text style={[styles.infoCardValue, { marginLeft: 12 }]}>Building route...</Text>
         </View>
       ) : null}
 
-      {stopAddresses.map((addr, i) => (
+      {stops.map((_, i) => (
         <View key={i} style={styles.routeInfoWhiteCard}>
           <View style={styles.infoCardIcon}>
             <Ionicons name="location-outline" size={20} color="#007bff" />
           </View>
           <View style={styles.infoCardTextContainer}>
             <Text style={styles.infoCardLabel}>Stop {i + 1}</Text>
-            <Text style={styles.infoCardValue}>{addr}</Text>
+            {stopAddresses[i] ? (
+              <Text style={styles.infoCardValue}>{stopAddresses[i]}</Text>
+            ) : (
+              <View style={styles.skeletonLine} />
+            )}
           </View>
         </View>
       ))}
 
-      <Text style={styles.routeSheetSectionTitle}>Fuel Status</Text>
-
-      <View style={[styles.fuelStatusCard, fuelWarning ? styles.fuelStatusWarning : null]}>
-        <View style={styles.fuelStatusHeader}>
-          <View style={styles.fuelStatusIcon}>
-            <Ionicons name="flame" size={22} color="#fff" />
-          </View>
-          <View>
-            <Text style={styles.fuelStatusTitle}>Fuel Level</Text>
-            <Text style={styles.fuelPercentage}>{fuelPercent.toFixed(1)}%</Text>
-          </View>
-        </View>
-
-        <View style={styles.fuelProgressBackground}>
-          <View
-            style={[
-              styles.fuelProgress,
-              { width: `${Math.max(0, Math.min(100, fuelPercent))}%` },
-            ]}
-          />
-        </View>
-
-        <View style={styles.fuelRangeRow}>
-          <View>
-            <Text style={styles.fuelRangeLabel}>Estimated Range</Text>
-            <Text style={styles.fuelRangeValue}>{calculateRemainingRange().toFixed(1)} km</Text>
-          </View>
-          <Ionicons name="speedometer-outline" size={24} color="#007bff" />
-        </View>
-
-        {fuelWarning && (
-          <View style={styles.lowFuelWarning}>
-            <Ionicons name="warning-outline" size={18} color="#fff" />
-            <Text style={styles.lowFuelWarningText}>Low Fuel - Please refuel soon.</Text>
-          </View>
-        )}
-
-        {recommendedStation && (
-          <View style={styles.nearestStation}>
-            <Ionicons name="location" size={18} color="#007bff" />
-            <Text style={styles.nearestStationText}>
-              Nearest: {recommendedStation.name} ({formatDistance(
-                recommendedStation.distanceToRoute || haversineKm(
-                  location?.latitude || 0,
-                  location?.longitude || 0,
-                  recommendedStation.latitude,
-                  recommendedStation.longitude
-                )
-              )} from route)
-            </Text>
-          </View>
-        )}
-
-        {fuelStations.length > 0 && (
-          <Text style={styles.stationCountText}>
-            {fuelStations.length} stations found along route
-          </Text>
-        )}
-      </View>
-
-      {destinationDistanceToStation && (
-        <View style={styles.distanceComparisonCard}>
-          <Text style={styles.distanceComparisonTitle}>Distance Comparison</Text>
-          <View style={styles.comparisonRow}>
-            <Text style={styles.comparisonLabel}>To station</Text>
-            <Text style={styles.comparisonValue}>
-              {destinationDistanceToStation.station.toFixed(1)} km
-            </Text>
-          </View>
-          <View style={styles.comparisonRow}>
-            <Text style={styles.comparisonLabel}>To destination</Text>
-            <Text style={styles.comparisonValue}>
-              {destinationDistanceToStation.destination.toFixed(1)} km
-            </Text>
-          </View>
-          <Text style={styles.comparisonResult}>
-            {destinationDistanceToStation.stationCloser
-              ? "Station is closer than destination"
-              : "Destination is closer than station"}
-          </Text>
-        </View>
-      )}
-
-      {routeInfo && (
+      {hasTrip && (
         <>
-          <Text style={styles.routeSheetSectionTitle}>Route Information</Text>
+          <Text style={styles.routeSheetSectionTitle}>Fuel Status</Text>
 
-          <View style={styles.routeInformationCard}>
-            <View style={styles.routeInfoHeader}>
-              <Ionicons name="map-outline" size={22} color="#007bff" />
-              <Text style={styles.routeInfoTitle}>Route Information</Text>
-            </View>
-
-            <View style={styles.routeInfoRow}>
-              <Ionicons name="navigate-circle-outline" size={20} color="#007bff" />
+          <View style={[styles.fuelStatusCard, fuelWarning ? styles.fuelStatusWarning : null]}>
+            <View style={styles.fuelStatusHeader}>
+              <View style={styles.fuelStatusIcon}>
+                <Ionicons name="flame" size={22} color="#fff" />
+              </View>
               <View>
-                <Text style={styles.routeInfoSmallLabel}>Total Distance</Text>
-                <Text style={styles.routeInfoText}>{formatDistance(routeInfo.distance)}</Text>
+                <Text style={styles.fuelStatusTitle}>Fuel Level</Text>
+                <Text style={styles.fuelPercentage}>{fuelPercent.toFixed(1)}%</Text>
               </View>
             </View>
 
-            <View style={styles.routeInfoRow}>
-              <Ionicons name="time-outline" size={20} color="#007bff" />
-              <View>
-                <Text style={styles.routeInfoSmallLabel}>Estimated Time</Text>
-                <Text style={styles.routeInfoText}>{Math.round(routeInfo.duration)} min</Text>
-              </View>
+            <View style={styles.fuelProgressBackground}>
+              <View
+                style={[
+                  styles.fuelProgress,
+                  { width: `${Math.max(0, Math.min(100, fuelPercent))}%` },
+                ]}
+              />
             </View>
+
+            <View style={styles.fuelRangeRow}>
+              <View>
+                <Text style={styles.fuelRangeLabel}>Estimated Range</Text>
+                <Text style={styles.fuelRangeValue}>{calculateRemainingRange().toFixed(1)} km</Text>
+              </View>
+              <Ionicons name="speedometer-outline" size={24} color="#007bff" />
+            </View>
+
+            {fuelWarning && (
+              <View style={styles.lowFuelWarning}>
+                <Ionicons name="warning-outline" size={18} color="#fff" />
+                <Text style={styles.lowFuelWarningText}>Low Fuel - Please refuel soon.</Text>
+              </View>
+            )}
+
+            {recommendedStation && (
+              <View style={styles.nearestStation}>
+                <Ionicons name="location" size={18} color="#007bff" />
+                <Text style={styles.nearestStationText}>
+                  Nearest: {recommendedStation.name} ({formatDistance(
+                    recommendedStation.distanceToRoute || haversineKm(
+                      location?.latitude || 0,
+                      location?.longitude || 0,
+                      recommendedStation.latitude,
+                      recommendedStation.longitude
+                    )
+                  )} from route)
+                </Text>
+              </View>
+            )}
 
             {fuelStations.length > 0 && (
-              <View style={styles.routeInfoRow}>
-                <Ionicons name="flame-outline" size={20} color="#f44336" />
-                <View>
-                  <Text style={styles.routeInfoSmallLabel}>Fuel Stations</Text>
-                  <Text style={styles.routeInfoText}>
-                    {fuelStations.length} fuel stations along route
+              <Text style={styles.stationCountText}>
+                {fuelStations.length} stations found along route
+              </Text>
+            )}
+          </View>
+
+          {destinationDistanceToStation && (
+            <View style={styles.distanceComparisonCard}>
+              <Text style={styles.distanceComparisonTitle}>Distance Comparison</Text>
+              <View style={styles.comparisonRow}>
+                <Text style={styles.comparisonLabel}>To station</Text>
+                <Text style={styles.comparisonValue}>
+                  {destinationDistanceToStation.station.toFixed(1)} km
+                </Text>
+              </View>
+              <View style={styles.comparisonRow}>
+                <Text style={styles.comparisonLabel}>To destination</Text>
+                <Text style={styles.comparisonValue}>
+                  {destinationDistanceToStation.destination.toFixed(1)} km
+                </Text>
+              </View>
+              <Text style={styles.comparisonResult}>
+                {destinationDistanceToStation.stationCloser
+                  ? "Station is closer than destination"
+                  : "Destination is closer than station"}
+              </Text>
+            </View>
+          )}
+
+          {routeInfo && (
+            <>
+              <Text style={styles.routeSheetSectionTitle}>Route Information</Text>
+
+              <View style={styles.routeInformationCard}>
+                <View style={styles.routeInfoHeader}>
+                  <Ionicons name="map-outline" size={22} color="#007bff" />
+                  <Text style={styles.routeInfoTitle}>Route Information</Text>
+                </View>
+
+                <View style={styles.routeInfoRow}>
+                  <Ionicons name="navigate-circle-outline" size={20} color="#007bff" />
+                  <View>
+                    <Text style={styles.routeInfoSmallLabel}>Total Distance</Text>
+                    <Text style={styles.routeInfoText}>{formatDistance(routeInfo.distance)}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.routeInfoRow}>
+                  <Ionicons name="time-outline" size={20} color="#007bff" />
+                  <View>
+                    <Text style={styles.routeInfoSmallLabel}>Estimated Time</Text>
+                    <Text style={styles.routeInfoText}>{Math.round(routeInfo.duration)} min</Text>
+                  </View>
+                </View>
+              </View>
+            </>
+          )}
+
+          <Text style={styles.routeSheetSectionTitle}>Fuel Stations Along Route</Text>
+
+          {searchingStations ? (
+            <View style={styles.routeInfoWhiteCard}>
+              <ActivityIndicator size="small" color="#007bff" />
+              <Text style={[styles.infoCardValue, { marginLeft: 12 }]}>Searching for stations...</Text>
+            </View>
+          ) : fuelStations.length > 0 ? (
+            fuelStations.slice(0, 5).map((station, i) => (
+              <View key={station.id || i} style={styles.stationCard}>
+                <View style={styles.stationIcon}>
+                  <Ionicons name="flame" size={20} color="#f44336" />
+                </View>
+                <View style={styles.stationInfo}>
+                  <Text style={styles.stationName}>{station.name}</Text>
+                  <Text style={styles.stationDistance}>
+                    {recommendedStation?.id === station.id
+                      ? "Best match"
+                      : formatDistance(
+                          station.distanceToRoute || haversineKm(
+                            location?.latitude || 0,
+                            location?.longitude || 0,
+                            station.latitude,
+                            station.longitude
+                          )
+                        )}
                   </Text>
                 </View>
               </View>
-            )}
-          </View>
+            ))
+          ) : (
+            <Text style={styles.noDataText}>No stations found along route</Text>
+          )}
         </>
-      )}
-
-      <Text style={styles.routeSheetSectionTitle}>Fuel Stations Along Route</Text>
-
-      {searchingStations ? (
-        <View style={styles.routeInfoWhiteCard}>
-          <ActivityIndicator size="small" color="#007bff" />
-          <Text style={[styles.infoCardValue, { marginLeft: 12 }]}>Searching for stations...</Text>
-        </View>
-      ) : fuelStations.length > 0 ? (
-        fuelStations.slice(0, 5).map((station, i) => (
-          <View key={station.id || i} style={styles.stationCard}>
-            <View style={styles.stationIcon}>
-              <Ionicons name="flame" size={20} color="#f44336" />
-            </View>
-            <View style={styles.stationInfo}>
-              <Text style={styles.stationName}>{station.name}</Text>
-              <Text style={styles.stationDistance}>
-                {recommendedStation?.id === station.id
-                  ? "Best match"
-                  : formatDistance(
-                      station.distanceToRoute || haversineKm(
-                        location?.latitude || 0,
-                        location?.longitude || 0,
-                        station.latitude,
-                        station.longitude
-                      )
-                    )}
-              </Text>
-            </View>
-          </View>
-        ))
-      ) : (
-        <Text style={styles.noDataText}>No stations found along route</Text>
       )}
 
       <View style={{ height: 140 }} />
     </ScrollView>
   );
 
-  if (!screenReady) {
-    return renderLoading();
-  }
-
   return (
     <SafeAreaView style={styles.container}>
       {renderMap()}
+      {renderPauseTimerOverlay()}
       {!fullMap && (
         <View
           style={styles.infoAreaContainer}
@@ -2002,8 +2247,6 @@ export default function LocationScreen({ route }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 10, color: "#666" },
 
   mapContainer: {
     width: "100%",
@@ -2091,20 +2334,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
   },
-  fuelSearchButton: {
-    position: "absolute",
-    bottom: 200,
-    right: 20,
-    backgroundColor: "#f44336",
-    padding: 12,
-    borderRadius: 30,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 5,
-  },
   distanceInfo: {
     position: "absolute",
     bottom: 80,
@@ -2175,6 +2404,76 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   fuelWarningText: { color: "#fff", fontWeight: "bold", marginLeft: 8 },
+
+  pauseTimerPill: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 22,
+    minWidth: 150,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 6,
+    zIndex: 50,
+  },
+  pauseTimerPillUrgent: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  pauseTimerPillResumed: {
+    backgroundColor: '#e8f5e9',
+    borderColor: '#a5d6a7',
+  },
+  pauseTimerIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ffedd5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  pauseTimerIconWrapUrgent: {
+    backgroundColor: '#dc2626',
+  },
+  pauseTimerIconWrapResumed: {
+    backgroundColor: '#2e7d32',
+  },
+  pauseTimerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9a3412',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  pauseTimerLabelUrgent: {
+    color: '#7f1d1d',
+  },
+  pauseTimerLabelResumed: {
+    color: '#1b5e20',
+  },
+  pauseTimerValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0A1F44',
+    marginTop: 1,
+    fontVariant: ['tabular-nums'],
+  },
+  pauseTimerValueUrgent: {
+    color: '#7f1d1d',
+  },
+  pauseTimerValueResumed: {
+    color: '#1b5e20',
+  },
 
   currentLocationMarker: { alignItems: "center", justifyContent: "center" },
   currentLocationDot: {
@@ -2333,128 +2632,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 16,
   },
-  receiptModalSectionTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#171717",
-    marginTop: 4,
-    marginBottom: 12,
-  },
-
-  receiptPreviewCard: {
-    width: "100%",
-    height: 220,
-    borderRadius: 16,
-    overflow: "hidden",
-    marginBottom: 16,
-    position: "relative",
-    backgroundColor: "#fff",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  receiptPreviewImage: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "contain",
-  },
-  receiptSubmittedBadge: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#2e7d32",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  receiptSubmittedBadgeText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 12,
-    marginLeft: 4,
-  },
-
-  receiptEmptyCard: {
-    width: "100%",
-    minHeight: 180,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingVertical: 30,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 5,
-    elevation: 2,
-  },
-  receiptEmptyTitle: {
-    marginTop: 12,
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0A1F44",
-  },
-  receiptEmptySubtitle: {
-    marginTop: 4,
-    fontSize: 12,
-    color: "#7a8699",
-    textAlign: "center",
-    paddingHorizontal: 24,
-  },
-
-  receiptLoadingCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 24,
-    alignItems: "center",
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 5,
-    elevation: 2,
-  },
-  receiptLoadingText: {
-    marginTop: 12,
-    fontSize: 13,
-    color: "#0A1F44",
-    fontWeight: "600",
-  },
-
-  receiptSuccessCard: {
-    backgroundColor: "#e8f5e9",
-    borderRadius: 16,
-    padding: 18,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#c8e6c9",
-  },
-  receiptSuccessTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#2e7d32",
-    marginBottom: 12,
-  },
-  receiptSuccessRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 6,
-  },
-  receiptSuccessLabel: {
-    fontSize: 13,
-    color: "#4b5563",
-    fontWeight: "600",
-  },
-  receiptSuccessValue: {
-    fontSize: 14,
-    color: "#1b5e20",
-    fontWeight: "800",
-  },
 
   receiptInputCard: {
     backgroundColor: "#fff",
@@ -2472,29 +2649,6 @@ const styles = StyleSheet.create({
     color: "#777",
     fontWeight: "700",
     marginBottom: 8,
-  },
-  receiptInputWrapper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f3f6fc",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: "#e0e7f3",
-  },
-  receiptInputPrefix: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#0A1F44",
-    marginRight: 6,
-  },
-  receiptInput: {
-    flex: 1,
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#0A1F44",
-    padding: 0,
   },
 
   receiptModalActions: {
@@ -2518,11 +2672,6 @@ const styles = StyleSheet.create({
   receiptModalBtnPrimary: {
     backgroundColor: "#0A1F44",
   },
-  receiptModalBtnSecondary: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#0A1F44",
-  },
   receiptModalBtnCancel: {
     backgroundColor: "#fff",
     borderWidth: 1,
@@ -2539,16 +2688,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontSize: 15,
     marginLeft: 8,
-  },
-  receiptSkipBtn: {
-    alignItems: "center",
-    paddingVertical: 14,
-    marginTop: 4,
-  },
-  receiptSkipBtnText: {
-    color: "#7a8699",
-    fontSize: 13,
-    fontWeight: "600",
   },
 
   pauseCategoryCard: {
@@ -2624,12 +2763,54 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 12,
   },
+  pausedBannerExpired: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
   pausedBannerText: {
     flex: 1,
     marginLeft: 8,
     color: '#9a3412',
     fontWeight: '700',
     fontSize: 13,
+  },
+
+  skeletonLine: {
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: "#e5e9f0",
+    marginTop: 4,
+    width: "70%",
+  },
+  emptyTripCard: {
+    backgroundColor: "#fff",
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e5e9f0",
+  },
+  emptyTripIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#eef6ff",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  emptyTripTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0A1F44",
+    marginBottom: 4,
+  },
+  emptyTripSubtitle: {
+    fontSize: 12,
+    color: "#7a8699",
+    textAlign: "center",
+    lineHeight: 18,
   },
 
   infoAreaContainer: {
@@ -2706,12 +2887,6 @@ const styles = StyleSheet.create({
     color: "#171717",
     marginTop: 14,
     marginBottom: 10,
-  },
-  sheetDivider: {
-    height: 1,
-    backgroundColor: "#e5e5e5",
-    marginTop: 20,
-    marginBottom: 6,
   },
 
   routeInfoWhiteCard: {
@@ -2883,20 +3058,6 @@ const styles = StyleSheet.create({
     color: "#1b5e20",
     marginTop: 8,
   },
-
-  receiptStatusCard: {
-    backgroundColor: "#e8f5e9",
-    padding: 16,
-    borderRadius: 15,
-    marginTop: 10,
-  },
-  receiptStatusTitle: {
-    color: "#2e7d32",
-    fontWeight: "800",
-    fontSize: 16,
-    marginBottom: 8,
-  },
-  receiptStatusText: { color: "#333", marginTop: 3 },
 
   stationCard: {
     flexDirection: "row",

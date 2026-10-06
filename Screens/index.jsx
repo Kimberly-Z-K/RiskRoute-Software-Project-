@@ -92,30 +92,75 @@ const RiskRouteScreen = ({ navigation, route }) => {
   const [vehicle, setVehicle] = useState(null);
   const [vehicleLoading, setVehicleLoading] = useState(true);
 
+  // ---------- User location (fallback map center when no trip) ----------
+  const [userLocation, setUserLocation] = useState(null);
+
   const updateTrip = useCallback((updates) => {
     setTrip((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  // ---------- Load trip (same source as LocationScreen) ----------
+  // ---------- Load trip via vehicle assignment (same logic as LocationScreen) ----------
   const loadTrip = useCallback(async () => {
     try {
       updateTrip({ loading: true, error: "" });
 
-      let query = supabase
-        .from("optimized_routes")
-        .select("id, start_point, stops");
+      // 1. Current auth user
+      const {
+        data: { user: authUser },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-      if (tripId) {
-        query = query.eq("id", tripId).maybeSingle();
-      } else {
-        query = query.order("created_at", { ascending: false }).limit(1);
+      if (userError || !authUser) {
+        updateTrip({ loading: false });
+        return;
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
+      // 2. Find the vehicle assigned to this driver WITH an active route.
+      //    vehicles.driver_id matches auth.uid() directly.
+      const { data: veh, error: vehErr } = await supabase
+        .from("vehicles")
+        .select("vehicle_id, route_id, status")
+        .eq("driver_id", authUser.id)
+        .not("route_id", "is", null)
+        .maybeSingle();
 
-      const loadedTrip = tripId ? data : data?.[0];
-      if (!loadedTrip) throw new Error("No trip data found");
+      if (vehErr) throw vehErr;
+
+      if (!veh?.route_id) {
+        // No active trip → clear the trip state and stop the spinner.
+        updateTrip({
+          loading: false,
+          start: null,
+          stops: [],
+          startAddress: "",
+          stopAddresses: [],
+          routeCoords: [],
+          routeInfo: null,
+          routeLoading: false,
+        });
+        return;
+      }
+
+      // 3. Load the trip the vehicle points at.
+      const { data: loadedTrip, error: tripErr } = await supabase
+        .from("optimized_routes")
+        .select("id, start_point, stops")
+        .eq("id", veh.route_id)
+        .maybeSingle();
+
+      if (tripErr) throw tripErr;
+
+      if (!loadedTrip) {
+        updateTrip({
+          loading: false,
+          start: null,
+          stops: [],
+          routeCoords: [],
+          routeInfo: null,
+          routeLoading: false,
+        });
+        return;
+      }
 
       const startCoord = toCoord(loadedTrip.start_point);
       const stopCoords = Array.isArray(loadedTrip.stops)
@@ -219,7 +264,7 @@ const RiskRouteScreen = ({ navigation, route }) => {
         routeLoading: false,
       });
     }
-  }, [tripId, updateTrip]);
+  }, [updateTrip]);
 
   // ---------- Load driver + vehicle (exactly like ProfileScreen) ----------
   const loadDriverAndVehicle = useCallback(async () => {
@@ -299,6 +344,33 @@ const RiskRouteScreen = ({ navigation, route }) => {
     loadDriverAndVehicle();
     loadTrip();
   }, [loadDriverAndVehicle, loadTrip]);
+
+  // Fetch user location once, for the fallback map center when there's no trip
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status } =
+          await ExpoLocation.requestForegroundPermissionsAsync();
+        if (status !== "granted") return;
+
+        const loc = await ExpoLocation.getCurrentPositionAsync({
+          accuracy: ExpoLocation.Accuracy.Balanced,
+        });
+        if (!cancelled) {
+          setUserLocation({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+          });
+        }
+      } catch (e) {
+        console.warn("[RiskRoute] user location failed:", e?.message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Fit map to route whenever routeCoords change
   useEffect(() => {
@@ -516,6 +588,13 @@ const RiskRouteScreen = ({ navigation, route }) => {
               <ActivityIndicator size="small" color="#0A1F44" />
               <Text style={styles.tripLoadingText}>Loading trip...</Text>
             </View>
+          ) : !trip.start ? (
+            <View style={styles.tripLoadingRow}>
+              <Ionicons name="car-outline" size={22} color="#9CA3AF" />
+              <Text style={styles.tripLoadingText}>
+                No active trip assigned to your vehicle.
+              </Text>
+            </View>
           ) : (
             <>
               <View style={styles.tripSummaryHeader}>
@@ -635,22 +714,47 @@ const RiskRouteScreen = ({ navigation, route }) => {
                 />
               ))}
             </MapView>
-          ) : (
+          ) : trip.loading ? (
             <View style={[styles.miniMap, styles.mapLoading]}>
               <ActivityIndicator size="small" color="#0A1F44" />
-              <Text style={styles.mapLoadingText}>
-                {trip.error ? "No route data" : "Loading map..."}
-              </Text>
+              <Text style={styles.mapLoadingText}>Loading map...</Text>
             </View>
+          ) : (
+            // No active trip → show a plain map centered on the user (fallback to JHB)
+            <MapView
+              style={styles.miniMap}
+              initialRegion={{
+                latitude: userLocation?.latitude ?? -26.2041,
+                longitude: userLocation?.longitude ?? 28.0473,
+                latitudeDelta: 0.5,
+                longitudeDelta: 0.5,
+              }}
+              showsUserLocation={!!userLocation}
+              scrollEnabled={false}
+              zoomEnabled={false}
+              rotateEnabled={false}
+              pitchEnabled={false}
+              pointerEvents="none"
+            >
+              {userLocation && (
+                <Marker
+                  coordinate={userLocation}
+                  pinColor="#0A1F44"
+                  title="You"
+                />
+              )}
+            </MapView>
           )}
 
-          <TouchableOpacity
-            style={styles.mapOverlayBtn}
-            onPress={() => navigation.navigate("Location", { tripId })}
-          >
-            <Ionicons name="expand-outline" size={16} color="#0A1F44" />
-            <Text style={styles.mapOverlayBtnText}>Open Full Map</Text>
-          </TouchableOpacity>
+          {trip.start && (
+            <TouchableOpacity
+              style={styles.mapOverlayBtn}
+              onPress={() => navigation.navigate("Location", { tripId })}
+            >
+              <Ionicons name="expand-outline" size={16} color="#0A1F44" />
+              <Text style={styles.mapOverlayBtnText}>Open Full Map</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Driver Details */}
