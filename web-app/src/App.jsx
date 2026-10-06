@@ -51,6 +51,7 @@ import { supabase } from '../lib/supabase';
 import Settings from './components/settings/Settings';
 import DriverReports from './components/DriverReports/driverReports';
 import FuelAllocation from './components/FuelAllocation';
+import PanicAlert from "./components/dashboard/PanicAlert";
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -342,6 +343,9 @@ const DashboardContent = React.memo(
               {/* Dashboard */}
               {activeTab === 'dashboard' && (
                 <div className="space-y-6">
+
+                    {/* 🚨 PANIC ALERT */}
+                      <PanicAlert />
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
 

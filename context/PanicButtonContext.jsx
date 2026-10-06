@@ -104,6 +104,9 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
   async (type) => {
     const timestamp = new Date().toISOString();
 
+    // --------------------------------------------------
+    // 1. Capture the driver's current location
+    // --------------------------------------------------
     const location = await captureLocation();
 
     const logEntry = {
@@ -119,7 +122,9 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
       JSON.stringify(logEntry)
     );
 
-    // Save the existing panic event
+    // --------------------------------------------------
+    // 2. Save the existing mobile panic log
+    // --------------------------------------------------
     if (user?.id) {
       const { error } = await supabase
         .from("panic_logs")
@@ -127,7 +132,6 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
           user_id: user.id,
           event: type,
           timestamp,
-
           location: location
             ? {
                 latitude: location.latitude,
@@ -146,7 +150,93 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
       }
     }
 
-    // Save the event in the mobile audit table
+    // --------------------------------------------------
+    // 3. Get the logged-in driver's name
+    // --------------------------------------------------
+    let driverName = "Unknown Driver";
+    let vehicleId = null;
+    let vehicleRegistration = "Unknown Vehicle";
+
+    if (user?.id) {
+      const { data: driver, error: driverError } =
+        await supabase
+          .from("drivers")
+          .select("driver_username")
+          .eq("driver_id", user.id)
+          .single();
+
+      if (driverError) {
+        console.error(
+          "Error getting driver details:",
+          driverError
+        );
+      } else if (driver?.driver_username) {
+        driverName = driver.driver_username.trim();
+      }
+
+      // ------------------------------------------------
+      // 4. Find the vehicle assigned to this driver
+      // ------------------------------------------------
+      const { data: vehicle, error: vehicleError } =
+        await supabase
+          .from("vehicles")
+          .select("vehicle_id, registration_number")
+          .eq("driver_id", user.id)
+          .maybeSingle();
+
+      if (vehicleError) {
+        console.error(
+          "Error getting assigned vehicle:",
+          vehicleError
+        );
+      } else if (vehicle) {
+        vehicleId = vehicle.vehicle_id;
+
+        if (vehicle.registration_number) {
+          vehicleRegistration =
+            vehicle.registration_number.trim();
+        }
+      }
+    }
+
+    // --------------------------------------------------
+    // 5. Send the panic alert to the web dashboard
+    // --------------------------------------------------
+    const { error: alertError } = await supabase
+      .from("panic_alerts")
+      .insert({
+        driver_id: user?.id ?? null,
+        driver_name: driverName,
+
+        vehicle_id: vehicleId,
+        vehicle_name: vehicleRegistration,
+
+        latitude: location?.latitude ?? null,
+        longitude: location?.longitude ?? null,
+
+        message:
+          type === "PANIC_TRIGGERED_MANUAL"
+            ? "🚨 EMERGENCY: Driver has pressed the PANIC button."
+            : "🚨 EMERGENCY: Automatic panic alert triggered.",
+
+        status: "ACTIVE",
+        triggered_at: timestamp,
+      });
+
+    if (alertError) {
+      console.error(
+        "🚨 PANIC ALERT ERROR:",
+        alertError
+      );
+    } else {
+      console.log(
+        `🚨 PANIC ALERT SENT: ${driverName} | Vehicle: ${vehicleRegistration}`
+      );
+    }
+
+    // --------------------------------------------------
+    // 6. Save the existing audit log
+    // --------------------------------------------------
     await auditLog({
       action: type,
 
@@ -157,6 +247,15 @@ export function PanicProvider({ children, config = DEFAULT_CONFIG }) {
 
       details: {
         panic_event: type,
+
+        driver_id: user?.id ?? null,
+
+        driver_name: driverName,
+
+        vehicle_id: vehicleId,
+
+        vehicle_registration:
+          vehicleRegistration,
 
         location: location
           ? {

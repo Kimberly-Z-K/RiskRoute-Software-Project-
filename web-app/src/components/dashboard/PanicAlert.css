@@ -1,0 +1,321 @@
+.panic-alert-container {
+  width: 100%;
+  margin-bottom: 20px;
+}
+
+.panic-alert-card {
+  width: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+
+  background: #ffffff;
+
+  border: 3px solid #dc2626;
+
+  box-shadow:
+    0 0 0 4px rgba(220, 38, 38, 0.12),
+    0 12px 30px rgba(0, 0, 0, 0.15);
+
+  animation: panicCardPulse 1.2s infinite;
+}
+
+@keyframes panicCardPulse {
+  0% {
+    box-shadow:
+      0 0 0 4px rgba(220, 38, 38, 0.12),
+      0 12px 30px rgba(0, 0, 0, 0.15);
+  }
+
+  50% {
+    box-shadow:
+      0 0 0 9px rgba(220, 38, 38, 0.25),
+      0 15px 40px rgba(220, 38, 38, 0.25);
+  }
+
+  100% {
+    box-shadow:
+      0 0 0 4px rgba(220, 38, 38, 0.12),
+      0 12px 30px rgba(0, 0, 0, 0.15);
+  }
+}
+
+/* ---------------------------------------------------------
+   HEADER
+--------------------------------------------------------- */
+
+.panic-alert-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  padding: 18px 22px;
+
+  background: #dc2626;
+  color: white;
+}
+
+.panic-alert-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.panic-alert-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 48px;
+  height: 48px;
+
+  border-radius: 50%;
+
+  background: white;
+  color: #dc2626;
+
+  animation: panicIconPulse 0.8s infinite;
+}
+
+@keyframes panicIconPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.12);
+  }
+}
+
+.panic-alert-title h2 {
+  margin: 0;
+
+  font-size: 21px;
+  font-weight: 800;
+}
+
+.panic-alert-title span {
+  display: block;
+
+  margin-top: 3px;
+
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+
+  opacity: 0.9;
+}
+
+/* ---------------------------------------------------------
+   ACTIVE INDICATOR
+--------------------------------------------------------- */
+
+.panic-live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 8px 13px;
+
+  border-radius: 20px;
+
+  background: rgba(255, 255, 255, 0.18);
+
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.panic-live-dot {
+  width: 10px;
+  height: 10px;
+
+  border-radius: 50%;
+
+  background: white;
+
+  animation: panicDotFlash 0.8s infinite;
+}
+
+@keyframes panicDotFlash {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.2;
+  }
+}
+
+/* ---------------------------------------------------------
+   BODY
+--------------------------------------------------------- */
+
+.panic-alert-body {
+  padding: 20px;
+}
+
+.panic-information {
+  display: grid;
+
+  grid-template-columns:
+    repeat(3, 1fr);
+
+  gap: 15px;
+
+  margin-bottom: 16px;
+}
+
+.panic-info-item {
+  display: flex;
+  align-items: center;
+
+  gap: 12px;
+
+  padding: 14px;
+
+  border-radius: 10px;
+
+  background: #f8fafc;
+}
+
+.panic-info-item svg {
+  color: #dc2626;
+  flex-shrink: 0;
+}
+
+.panic-info-item small {
+  display: block;
+
+  font-size: 10px;
+  font-weight: 700;
+
+  color: #64748b;
+
+  letter-spacing: 0.7px;
+}
+
+.panic-info-item strong {
+  display: block;
+
+  margin-top: 3px;
+
+  font-size: 14px;
+
+  color: #0f172a;
+}
+
+/* ---------------------------------------------------------
+   MESSAGE
+--------------------------------------------------------- */
+
+.panic-message {
+  display: flex;
+  align-items: center;
+
+  gap: 10px;
+
+  padding: 14px;
+
+  margin-bottom: 18px;
+
+  border-radius: 10px;
+
+  background: #fef2f2;
+
+  color: #991b1b;
+
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.panic-message svg {
+  flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------
+   ACTIONS
+--------------------------------------------------------- */
+
+.panic-actions {
+  display: flex;
+
+  justify-content: flex-end;
+
+  gap: 10px;
+
+  flex-wrap: wrap;
+}
+
+.panic-actions button {
+  display: inline-flex;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 7px;
+
+  padding: 10px 15px;
+
+  border: none;
+
+  border-radius: 8px;
+
+  font-size: 12px;
+  font-weight: 800;
+
+  cursor: pointer;
+
+  transition:
+    transform 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.panic-actions button:hover {
+  transform: translateY(-1px);
+}
+
+.panic-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.panic-location-button {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.panic-acknowledge-button {
+  background: #f59e0b;
+  color: white;
+}
+
+.panic-resolve-button {
+  background: #16a34a;
+  color: white;
+}
+
+/* ---------------------------------------------------------
+   RESPONSIVE
+--------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .panic-alert-header {
+    align-items: flex-start;
+    gap: 15px;
+    flex-direction: column;
+  }
+
+  .panic-information {
+    grid-template-columns: 1fr;
+  }
+
+  .panic-actions {
+    justify-content: stretch;
+  }
+
+  .panic-actions button {
+    width: 100%;
+  }
+}
