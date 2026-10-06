@@ -15,7 +15,7 @@ const {
   deleteSimulation
 } = require("./simulationStore");
 
-const aiRoutes = require("./aiRoutes");
+const aiRoutes = require("./airoutes");
 
 const app = express();
 
