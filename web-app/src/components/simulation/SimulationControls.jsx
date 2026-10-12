@@ -40,6 +40,16 @@ import {
 } from "lucide-react";
 
 
+// Main RiskRoute backend
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  "http://localhost:5000";
+
+// Separate AI backend
+const AI_API_BASE_URL =
+  import.meta.env.VITE_AI_API_BASE_URL ||
+  "http://localhost:5050";
+
 /* ============================================================
    DEFAULT ROUTES (Fallback if API fails)
 ============================================================ */
@@ -1398,7 +1408,7 @@ const SaveModal = ({
 ============================================================ */
 
 const SimulationControls = ({
-  apiUrl = 'http://localhost:5000/api/routes',
+  apiUrl = 'https://riskroute-server2.onrender.com',
   onSimulationComplete,
   onSaveSimulation,
   savedSimulations = [],
@@ -1482,7 +1492,7 @@ const SimulationControls = ({
     setWeatherError(null);
     
     try {
-      const weatherUrl = `http://localhost:5000/api/weather/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`;
+      const weatherUrl = `${API_BASE_URL}/api/weather/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`;
       console.log(`📡 Calling weather API: ${weatherUrl}`);
       
       const response = await fetch(weatherUrl);
@@ -1566,7 +1576,7 @@ const SimulationControls = ({
   const fetchSavedSimulations = useCallback(async () => {
     try {
       console.log('📋 Fetching saved simulations from database...');
-      const response = await fetch('http://localhost:5000/api/simulations');
+      const response = await fetch('${API_BASE_URL}/api/simulations');
       if (response.ok) {
         const data = await response.json();
         console.log(`📋 Loaded ${data.length} saved simulations`);
@@ -1992,7 +2002,7 @@ const SimulationControls = ({
       if (!weatherData || weatherData.is_mock) {
         console.log('🌤️ Fetching fresh weather data for simulation...');
         const weatherResponse = await fetch(
-          `http://localhost:5000/api/weather/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`
+          `${API_BASE_URL}/api/weather/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`
         );
         if (weatherResponse.ok) {
           weatherData = await weatherResponse.json();
@@ -2003,7 +2013,7 @@ const SimulationControls = ({
       let trafficData = null;
       try {
         const trafficResponse = await fetch(
-          `http://localhost:5000/api/traffic/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`
+          `${API_BASE_URL}/api/traffic/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`
         );
         if (trafficResponse.ok) {
           trafficData = await trafficResponse.json();
@@ -2058,7 +2068,7 @@ const SimulationControls = ({
       let alternatives = [];
       try {
         const altResponse = await fetch(
-          `http://localhost:5000/api/routes/alternatives?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}&origin_name=${encodeURIComponent(selectedRoute.origin_name || 'Origin')}&destination_name=${encodeURIComponent(selectedRoute.destination_name || 'Destination')}&has_accident=${hasAccident}&has_road_closure=${hasRoadClosure}`
+          `${API_BASE_URL}/api/routes/alternatives?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}&origin_name=${encodeURIComponent(selectedRoute.origin_name || 'Origin')}&destination_name=${encodeURIComponent(selectedRoute.destination_name || 'Destination')}&has_accident=${hasAccident}&has_road_closure=${hasRoadClosure}`
         );
         if (altResponse.ok) {
           const altData = await altResponse.json();
@@ -2282,7 +2292,7 @@ const SimulationControls = ({
     console.log('🔵 4. Clean data size:', JSON.stringify(simulationData).length, 'bytes');
     console.log('🔵 5. Sending clean data:', simulationData);
 
-    const response = await fetch('http://localhost:5000/api/simulations', {
+    const response = await fetch('${API_BASE_URL}/api/simulations', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2324,7 +2334,7 @@ const SimulationControls = ({
       
       let fullData = simulation;
       if (simulation.id && !simulation.current_route) {
-        const response = await fetch(`http://localhost:5000/api/simulations/${simulation.id}`);
+        const response = await fetch(`${API_BASE_URL}/api/simulations/${simulation.id}`);
         if (response.ok) {
           fullData = await response.json();
           console.log('📂 Fetched full simulation data:', fullData);
@@ -2378,7 +2388,7 @@ const SimulationControls = ({
       try {
         console.log('🗑️ Deleting simulation:', id);
         
-        const response = await fetch(`http://localhost:5000/api/simulations/${id}`, {
+        const response = await fetch(`${API_BASE_URL}/api/simulations/${id}`, {
           method: 'DELETE',
         });
 

@@ -626,11 +626,9 @@ app.get('/api/routes', async (req, res) => {
     }
 
     if (!data || data.length === 0) {
-      console.log('⚠️ No routes found');
-      return res.status(404).json({ 
-        error: 'No routes found'
-      });
-    }
+  console.log('⚠️ No routes found');
+  return res.json([]);
+}
 
     console.log(`✅ Found ${data.length} routes in database`);
 
