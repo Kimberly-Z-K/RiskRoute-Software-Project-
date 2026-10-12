@@ -10,6 +10,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: "RiskRoute backend is running",
+    api: "/api",
+  });
+});
+
 app.use((req, res, next) => {
   console.log("=== Incoming Request ===");
   console.log("Method:", req.method);
