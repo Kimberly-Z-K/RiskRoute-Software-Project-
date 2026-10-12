@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Navigation, MapPin, Loader2 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 
-const API_BASE_URL = "http://localhost:5000/api";
+const API_BASE_URL = "https://riskroute-server2.onrender.com/api";
 
 const RouteOptimisationForm = ({ onGenerateRoutes }) => {
   const [originPlace, setOriginPlace] = useState("");

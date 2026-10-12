@@ -43,12 +43,12 @@ import {
 // Main RiskRoute backend
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
-  "http://localhost:5000";
+  "https://riskroute-server2.onrender.com";
 
 // Separate AI backend
 const AI_API_BASE_URL =
   import.meta.env.VITE_AI_API_BASE_URL ||
-  "http://localhost:5050";
+  "https://riskroute-server2.onrender.com";
 
 /* ============================================================
    DEFAULT ROUTES (Fallback if API fails)
