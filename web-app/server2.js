@@ -618,141 +618,125 @@ const getFallbackRoutes = (originLat, originLng, destLat, destLng, hasAccident, 
 
 /* ============================================================
    ROUTES ENDPOINT
+   Returns saved routes without waiting for external APIs.
 ============================================================ */
 
 app.get('/api/routes', async (req, res) => {
   try {
-    console.log('🔄 Fetching routes from optimized_routes...');
-    
+    console.log('Fetching saved routes from optimized_routes...');
+
     const { data, error } = await supabase
       .from('optimized_routes')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .abortSignal(AbortSignal.timeout(10000));
 
     if (error) {
-      console.error('❌ Supabase error:', error);
-      return res.status(500).json({ 
-        error: 'Database error', 
-        details: error.message 
+      console.error('Supabase routes query failed:', error.message);
+
+      return res.status(500).json({
+        error: 'Database error',
+        details: error.message
       });
     }
 
-    if (!data || data.length === 0) {
-  console.log('⚠️ No routes found');
-  return res.json([]);
-}
-
-    console.log(`✅ Found ${data.length} routes in database`);
-
-    const convertedRoutes = [];
-    
-    for (let index = 0; index < data.length; index++) {
-      const route = data[index];
-      try {
-        console.log(`🔄 Processing route ${index + 1}/${data.length} (ID: ${route.id})...`);
-        
-        let originName = "Unknown Origin";
-        let originLat = 0, originLng = 0;
-        let destName = "Unknown Destination";
-        let destLat = 0, destLng = 0;
-        
-        if (route.start_point && typeof route.start_point === 'object') {
-          originLat = route.start_point.lat || 0;
-          originLng = route.start_point.lng || 0;
-          
-          if (originLat && originLng) {
-            originName = await reverseGeocode(originLat, originLng);
-            console.log(`📍 Origin: ${originName} (${originLat}, ${originLng})`);
-          }
-        }
-
-        const stops = route.stops || [];
-        if (stops.length > 0) {
-          const lastStop = stops[stops.length - 1];
-          if (lastStop && typeof lastStop === 'object') {
-            destLat = lastStop.lat || 0;
-            destLng = lastStop.lng || 0;
-            
-            if (destLat && destLng) {
-              destName = await reverseGeocode(destLat, destLng);
-              console.log(`📍 Destination: ${destName} (${destLat}, ${destLng})`);
-            }
-          }
-        }
-
-        const result = route.result || {};
-
-        let alternatives = [];
-        try {
-          if (originLat && originLng && destLat && destLng) {
-            alternatives = await getAlternativeRoutes(originLat, originLng, destLat, destLng, false, false, destName, originName);
-          }
-        } catch (err) {
-          console.warn('⚠️ Could not fetch alternatives:', err.message);
-          alternatives = getFallbackRoutes(originLat, originLng, destLat, destLng, false, false, destName);
-        }
-
-        const convertedRoute = {
-          id: String(route.id),
-          display_name: `${originName} → ${destName}`,
-          origin_name: originName,
-          destination_name: destName,
-          origin_lat: originLat,
-          origin_lng: originLng,
-          dest_lat: destLat,
-          dest_lng: destLng,
-          distance_km: result.distanceKm || result.distance_km || 0,
-          duration_min: result.durationMin || result.duration_min || 60,
-          estimated_cost: result.estimated_cost || 0,
-          traffic_delay: result.trafficDelayMin || result.traffic_delay || 0,
-          alternatives: alternatives,
-          start_point: route.start_point,
-          stops: route.stops,
-          constraints: route.constraints,
-          result: route.result,
-          created_at: route.created_at
-        };
-
-        console.log(`✅ Route ${route.id}: ${convertedRoute.display_name}`);
-        convertedRoutes.push(convertedRoute);
-
-      } catch (err) {
-        console.error(`❌ Error processing route ${route.id}:`, err.message);
-        const result = route.result || {};
-        convertedRoutes.push({
-          id: String(route.id),
-          display_name: `Route ${route.id}`,
-          origin_name: 'Unknown',
-          destination_name: 'Unknown',
-          origin_lat: route.start_point?.lat || 0,
-          origin_lng: route.start_point?.lng || 0,
-          dest_lat: route.stops?.[route.stops.length - 1]?.lat || 0,
-          dest_lng: route.stops?.[route.stops.length - 1]?.lng || 0,
-          distance_km: result.distanceKm || result.distance_km || 0,
-          duration_min: result.durationMin || result.duration_min || 60,
-          estimated_cost: result.estimated_cost || 0,
-          traffic_delay: result.trafficDelayMin || result.traffic_delay || 0,
-          alternatives: [],
-          start_point: route.start_point,
-          stops: route.stops,
-          constraints: route.constraints,
-          result: route.result,
-          created_at: route.created_at
-        });
-      }
+    if (!Array.isArray(data) || data.length === 0) {
+      console.log('No saved routes found.');
+      return res.json([]);
     }
 
-    console.log(`✅ Successfully converted ${convertedRoutes.length} routes`);
-    res.json(convertedRoutes);
-    
+    const convertedRoutes = data.map((route) => {
+      const startPoint =
+        route.start_point &&
+        typeof route.start_point === 'object'
+          ? route.start_point
+          : {};
+
+      const stops = Array.isArray(route.stops)
+        ? route.stops
+        : [];
+
+      const lastStop = stops.length > 0
+        ? stops[stops.length - 1]
+        : {};
+
+      const result =
+        route.result &&
+        typeof route.result === 'object'
+          ? route.result
+          : {};
+
+      const originLat = Number(startPoint.lat) || 0;
+      const originLng = Number(startPoint.lng) || 0;
+      const destLat = Number(lastStop?.lat) || 0;
+      const destLng = Number(lastStop?.lng) || 0;
+
+      const originName =
+        route.origin_name ||
+        startPoint.name ||
+        startPoint.label ||
+        'Unknown Origin';
+
+      const destinationName =
+        route.destination_name ||
+        lastStop?.name ||
+        lastStop?.label ||
+        'Unknown Destination';
+
+      return {
+        id: String(route.id),
+        display_name: `${originName} → ${destinationName}`,
+        origin_name: originName,
+        destination_name: destinationName,
+        origin_lat: originLat,
+        origin_lng: originLng,
+        dest_lat: destLat,
+        dest_lng: destLng,
+        distance_km:
+          result.distanceKm ??
+          result.distance_km ??
+          0,
+        duration_min:
+          result.durationMin ??
+          result.duration_min ??
+          60,
+        estimated_cost: result.estimated_cost ?? 0,
+        traffic_delay:
+          result.trafficDelayMin ??
+          result.traffic_delay ??
+          0,
+
+        // Alternatives are loaded separately when requested.
+        alternatives: [],
+
+        start_point: route.start_point,
+        stops: route.stops,
+        constraints: route.constraints,
+        result: route.result,
+        created_at: route.created_at
+      };
+    });
+
+    console.log(
+      `Successfully returned ${convertedRoutes.length} saved routes.`
+    );
+
+    return res.json(convertedRoutes);
+
   } catch (error) {
-    console.error('❌ Error in /api/routes:', error);
-    res.status(500).json({ 
+    console.error('Error in GET /api/routes:', error);
+
+    if (res.headersSent) {
+      return;
+    }
+
+    return res.status(500).json({
       error: 'Failed to load routes',
-      details: error.message 
+      details: error.message
     });
   }
 });
+
 
 /* ============================================================
    ALTERNATIVE ROUTES ENDPOINT
