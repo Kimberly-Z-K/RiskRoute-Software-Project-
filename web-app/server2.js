@@ -16,13 +16,25 @@ console.log('🚀 Server starting...');
 console.log('📡 PORT:', PORT);
 
 // Initialize Supabase
-const supabase = createClient(
-  process.env.SUPABASE_URL || 'https://pyqftjxfbjecjdhdzyor.supabase.co',
-  process.env.SUPABASE_ANON_KEY || 'sb_publishable_iFcMrb7-9eJ86p0KU2PWyg_UZ77LRFF'
-);
+const supabaseUrl =
+  process.env.SUPABASE_URL ||
+  'https://pyqftjxfbjecjdhdzyor.supabase.co';
 
-console.log('✅ Supabase initialized');
+const supabaseKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_ANON_KEY;
 
+if (!supabaseKey) {
+  throw new Error('Missing Supabase API key in environment variables');
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});
 /* ============================================================
    REVERSE GEOCODE FUNCTION
 ============================================================ */
