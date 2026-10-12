@@ -1644,63 +1644,7 @@ const SimulationControls = ({
     return found || WEATHER_OPTIONS[0];
   }, [weather]);
 
-  /* ==========================================================
-     AUTO-LEARN FROM DATABASE ON LOAD
-  ========================================================== */
-
-  // Automatically learn from database when component mounts
-  // useEffect(() => {
-  //   const autoLearn = async () => {
-  //     try {
-  //       console.log('🧠 AI: Auto-learning from database...');
-  //       const response = await fetch('http://localhost:5000/api/simulations');
-  //       if (response.ok) {
-  //         const simulations = await response.json();
-  //         if (simulations && simulations.length > 0) {
-  //           if (typeof aiService !== 'undefined' && aiService.learnFromHistory) {
-  //             await aiService.learnFromHistory(simulations);
-  //             console.log(`🧠 AI: Learned from ${simulations.length} simulations`);
-  //             setStatusMessage(`🧠 AI learned from ${simulations.length} historical simulations`);
-  //             setAiInitialized(true);
-  //           }
-  //         } else {
-  //           console.log('🧠 AI: No simulations found to learn from');
-  //           setAiInitialized(true);
-  //         }
-  //       }
-  //     } catch (error) {
-  //       console.error('AI auto-learn error:', error);
-  //       setAiInitialized(true);
-  //     }
-  //   };
-
-  //   autoLearn();
-  // }, []);
-
-  // // Auto-learn after saving a new simulation
-  // useEffect(() => {
-  //   const learnAfterSave = async () => {
-  //     if (localSavedSimulations.length > 0 && aiInitialized) {
-  //       try {
-  //         console.log('🧠 AI: Auto-learning from updated database...');
-  //         const response = await fetch('http://localhost:5000/api/simulations');
-  //         if (response.ok) {
-  //           const simulations = await response.json();
-  //           if (typeof aiService !== 'undefined' && aiService.learnFromHistory) {
-  //             await aiService.learnFromHistory(simulations);
-  //             console.log(`🧠 AI: Re-learned from ${simulations.length} simulations`);
-  //           }
-  //         }
-  //       } catch (error) {
-  //         console.error('AI re-learn error:', error);
-  //       }
-  //     }
-  //   };
-
-  //   if (localSavedSimulations.length > 0) {
-  //     learnAfterSave();
-  //   }
-  // }, [localSavedSimulations, aiInitialized]);
+  
 
   /* ==========================================================
      GENERATE AI ANALYSIS
