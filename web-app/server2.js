@@ -3,6 +3,14 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
+process.on('uncaughtException', (err) => {
+  console.error('💥 UNCAUGHT EXCEPTION:', err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('💥 UNHANDLED REJECTION:', err);
+});
+
+dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 const app = express();
@@ -1212,6 +1220,175 @@ app.get('/health', (req, res) => {
       traffic: '/api/traffic/route'
     }
   });
+});
+
+
+/* ============================================================
+   AI ENDPOINTS (NEW - ADD THESE)
+============================================================ */
+
+app.post('/api/ai/analyze', async (req, res) => {
+  try {
+    const { route, simulation, weather, traffic } = req.body;
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: 'OpenAI API key not configured'
+      });
+    }
+
+    const prompt = `You are a route risk analysis expert. Analyze this route simulation and return ONLY valid JSON.
+
+Route: ${JSON.stringify(route || {})}
+Simulation: ${JSON.stringify(simulation || {})}
+Weather: ${JSON.stringify(weather?.summary || {})}
+Traffic: ${JSON.stringify(traffic || {})}
+
+Return JSON with this EXACT structure:
+{
+  "summary": "Brief 2-sentence analysis",
+  "confidence": 85,
+  "insights": [
+    {"icon": "⏱️", "label": "Time Impact", "value": "12 min delay"},
+    {"icon": "🌦️", "label": "Weather Risk", "value": "Moderate"},
+    {"icon": "🚗", "label": "Traffic Risk", "value": "Low"},
+    {"icon": "💰", "label": "Cost Impact", "value": "R150 extra"}
+  ],
+  "recommendations": [
+    "Recommendation 1",
+    "Recommendation 2",
+    "Recommendation 3"
+  ],
+  "riskFactors": [
+    {"label": "Heavy rain", "level": "high"},
+    {"label": "Peak hour traffic", "level": "medium"}
+  ],
+  "historicalEvidence": "Based on 5 similar simulations"
+}
+
+Return ONLY JSON, no markdown, no explanation.`;
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You are a route analysis AI. Return ONLY valid JSON.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.7,
+        response_format: { type: 'json_object' }
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('OpenAI error:', response.status, errorText);
+      return res.status(response.status).json({
+        success: false,
+        error: `OpenAI API error: ${response.status}`,
+        details: errorText
+      });
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+
+    if (!content) {
+      return res.status(500).json({ success: false, error: 'Empty AI response' });
+    }
+
+    const analysis = JSON.parse(content);
+
+    res.json({
+      success: true,
+      analysis,
+      historical: { count: 0 }
+    });
+
+  } catch (error) {
+    console.error('AI analyze error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/ai/ask', async (req, res) => {
+  try {
+    const { question, route, simulation, weather, traffic } = req.body;
+
+    if (!question) {
+      return res.status(400).json({
+        success: false,
+        error: 'Question is required'
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        error: 'OpenAI API key not configured'
+      });
+    }
+
+    const context = `
+Route: ${JSON.stringify(route || {})}
+Simulation: ${JSON.stringify(simulation || {})}
+Weather: ${JSON.stringify(weather?.summary || {})}
+Traffic: ${JSON.stringify(traffic || {})}
+`;
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a helpful route assistant. Answer questions about the user's route based on this context:\n${context}\n\nKeep answers concise (2-4 sentences) and practical.`
+          },
+          { role: 'user', content: question }
+        ],
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('OpenAI error:', response.status, errorText);
+      return res.status(response.status).json({
+        success: false,
+        error: `OpenAI API error: ${response.status}`
+      });
+    }
+
+    const data = await response.json();
+    const answer = data.choices?.[0]?.message?.content;
+
+    if (!answer) {
+      return res.status(500).json({ success: false, error: 'Empty AI response' });
+    }
+
+    res.json({ success: true, answer });
+
+  } catch (error) {
+    console.error('AI ask error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 /* ============================================================

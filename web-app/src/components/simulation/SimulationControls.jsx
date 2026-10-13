@@ -43,12 +43,12 @@ import {
 // Main RiskRoute backend
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
-  "https://riskroute-server2.onrender.com";
+  "http://localhost:5050";
 
 // Separate AI backend
 const AI_API_BASE_URL =
   import.meta.env.VITE_AI_API_BASE_URL ||
-  "https://riskroute-server2.onrender.com";
+ "http://localhost:5050";
 
 /* ============================================================
    DEFAULT ROUTES (Fallback if API fails)
@@ -1525,14 +1525,15 @@ const SimulationControls = ({
      FETCH ROUTES FROM BACKEND
   ========================================================== */
 
-  useEffect(() => {
-    const fetchRoutes = async () => {
-      try {
-        setRoutesLoading(true);
-        setStatusMessage("🔄 Loading routes...");
-        
-        console.log('📡 Fetching routes from:', apiUrl);
-        const response = await fetch(apiUrl);
+useEffect(() => {
+  const fetchRoutes = async () => {
+    try {
+      setRoutesLoading(true);
+      setStatusMessage("🔄 Loading routes...");
+      
+      const routesUrl = `${API_BASE_URL}/api/routes`;   // ✅ hits your real endpoint
+      console.log('📡 Fetching routes from:', routesUrl);
+      const response = await fetch(routesUrl);
         
         if (!response.ok) {
           throw new Error(`Failed to fetch routes: ${response.status}`);
@@ -1576,7 +1577,7 @@ const SimulationControls = ({
   const fetchSavedSimulations = useCallback(async () => {
     try {
       console.log('📋 Fetching saved simulations from database...');
-      const response = await fetch('${API_BASE_URL}/api/simulations');
+      const response = await fetch(`${API_BASE_URL}/api/simulations`);
       if (response.ok) {
         const data = await response.json();
         console.log(`📋 Loaded ${data.length} saved simulations`);
@@ -1703,8 +1704,8 @@ const SimulationControls = ({
     };
 
     const response = await fetch(
-      "http://localhost:5050/api/ai/analyze",
-      {
+  `${AI_API_BASE_URL}/api/ai/analyze`,
+  {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1844,8 +1845,8 @@ const SimulationControls = ({
       : null;
 
     const response = await fetch(
-      "http://localhost:5050/api/ai/ask",
-      {
+  `${AI_API_BASE_URL}/api/ai/ask`,
+  {
         method: "POST",
 
         headers: {
@@ -2236,13 +2237,13 @@ const SimulationControls = ({
     console.log('🔵 4. Clean data size:', JSON.stringify(simulationData).length, 'bytes');
     console.log('🔵 5. Sending clean data:', simulationData);
 
-    const response = await fetch('${API_BASE_URL}/api/simulations', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(simulationData),
-    });
+    const response = await fetch(`${API_BASE_URL}/api/simulations`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify(simulationData),
+});
 
     console.log('🔵 6. Response status:', response.status);
 
