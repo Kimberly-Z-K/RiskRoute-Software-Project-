@@ -535,60 +535,6 @@ export default function Notifications() {
     return () => clearInterval(interval);
   }, [fetchTrafficUpdates]);
 
-  useEffect(() => {
-    let mockInterval = null;
-
-    const addMockNotification = () => {
-      const mockNotifications = [
-        {
-          category: "DELIVERIES",
-          title: "📦 New delivery assigned",
-          message: "Johannesburg → Pretoria • Expected time: 45 min",
-          icon: "truck-fast",
-          iconColor: "#10B981",
-          bg: "#D1FAE5",
-        },
-        {
-          category: "FUEL ALERTS",
-          title: "⛽ Fuel price update",
-          message: "Price decreased by R0.15 at nearest station",
-          icon: "gas-station",
-          iconColor: "#F59E0B",
-          bg: "#FEF3C7",
-        },
-      ];
-
-      const randomIndex = Math.floor(Math.random() * mockNotifications.length);
-      const mock = mockNotifications[randomIndex];
-
-      const uniqueItem = {
-        ...mock,
-        id: Date.now() + Math.random() * 1000,
-        time: "Just now",
-        unread: true,
-      };
-
-      setNotifications((prev) => [uniqueItem, ...prev]);
-
-      Speech.speak(`${mock.title}. ${mock.message}`, {
-        rate: 0.9,
-        pitch: 1.0,
-      });
-    };
-
-    mockInterval = setInterval(() => {
-      const recentTraffic = notifications.some(
-        (n) => n.category === "ROUTE & TRAFFIC" && n.time === "Just now"
-      );
-
-      if (!recentTraffic) {
-        addMockNotification();
-      }
-    }, 120000);
-
-    return () => clearInterval(mockInterval);
-  }, [notifications]);
-
   const markAllRead = () => {
     setNotifications((prev) =>
       prev.map((n) => ({
