@@ -780,24 +780,87 @@ const FuelScreen = ({ navigation }) => {
   // ============================================
   // Open scan options
   // ============================================
-  const openScanOptions = useCallback(() => {
-    auditLog({
-      action: "SCAN_RECEIPT_OPEN",
-      page: "Mobile Fuel",
-      description: "User opened the receipt scan options",
-      details: { screen: "Fuel & Expenses" },
-    });
+// Open receipt type options first, then camera/gallery options
+const openScanOptions = useCallback(() => {
+  auditLog({
+    action: 'SCAN_RECEIPT_OPEN',
+    page: 'Mobile Fuel',
+    description: 'User opened the receipt type options',
+    details: {
+      screen: 'Fuel Expenses',
+    },
+    user,
+  });
 
-    Alert.alert(
-      'Scan Fuel Receipt',
-      'Choose how you want to add your receipt',
-      [
-        { text: 'Take Photo', onPress: scanReceipt },
-        { text: 'Choose from Gallery', onPress: pickReceiptImage },
-        { text: 'Cancel', style: 'cancel' },
-      ]
-    );
-  }, [scanReceipt, pickReceiptImage]);
+  Alert.alert(
+    'Receipt Type',
+    'What type of receipt do you want to upload?',
+    [
+      {
+        text: 'Fuel Receipt',
+        onPress: () => {
+          Alert.alert(
+            'Add Fuel Receipt',
+            'Choose how you want to add your fuel receipt',
+            [
+              {
+                text: 'Take Photo',
+                onPress: scanReceipt,
+              },
+              {
+                text: 'Choose from Gallery',
+                onPress: pickReceiptImage,
+              },
+              {
+                text: 'Cancel',
+                style: 'cancel',
+              },
+            ],
+          );
+        },
+      },
+      {
+        text: 'Toll Receipt',
+        onPress: () => {
+          Alert.alert(
+            'Add Toll Receipt',
+            'Choose how you want to add your toll receipt',
+            [
+              {
+                text: 'Take Photo',
+                onPress: () => {
+                  // Add toll receipt handling here later
+                  Alert.alert(
+                    'Coming Soon',
+                    'Toll receipt processing is not available yet.',
+                  );
+                },
+              },
+              {
+                text: 'Choose from Gallery',
+                onPress: () => {
+                  // Add toll receipt handling here later
+                  Alert.alert(
+                    'Coming Soon',
+                    'Toll receipt processing is not available yet.',
+                  );
+                },
+              },
+              {
+                text: 'Cancel',
+                style: 'cancel',
+              },
+            ],
+          );
+        },
+      },
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+    ],
+  );
+}, [scanReceipt, pickReceiptImage, user]);
 
   // ---- Computed values ----
   const totalSpend = receipts.reduce(
@@ -935,7 +998,7 @@ const FuelScreen = ({ navigation }) => {
             ) : (
               <>
                 <Ionicons name="scan-outline" size={22} color="#fff" />
-                <Text style={styles.scanReceiptButtonText}>Scan Fuel Receipt</Text>
+                <Text style={styles.scanReceiptButtonText}>Scan Receipt</Text>
               </>
             )}
           </TouchableOpacity>

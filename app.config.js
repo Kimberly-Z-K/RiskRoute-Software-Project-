@@ -1,32 +1,25 @@
 import "dotenv/config";
 
-export default {
-  expo: {
-    name: "Risk_Route",
-    slug: "Risk_Route",
-    version: "1.0.0",
+// Receives the values from app.json as `config`, so icon, splash,
+// permissions, etc. are kept instead of being thrown away.
+export default ({ config }) => ({
+  ...config,
 
-    plugins: [
-      "@livekit/react-native-expo-plugin",
-      "@config-plugins/react-native-webrtc",
-    ],
+  ios: {
+    ...config.ios,
+    bundleIdentifier: "com.thapsolpsps.RiskRoute",
+  },
 
-    ios: {
-      bundleIdentifier: "com.thapsolpsps.RiskRoute",
-    },
-
-    android: {
-      package: "com.thapsolpsps.Risk_Route",
-    },
-
-    extra: {
-      googleMapsApiKey:
-        process.env.GOOGLE_MAPS_API_KEY,
-
-      eas: {
-        projectId:
-          "f8aa6f5a-2b1b-4781-9da1-78f504824249",
-      },
+  android: {
+    ...config.android,
+    package: "com.thapsolpsps.Risk_Route",
+    config: {
+      // react-native-maps needs the key in the native manifest on Android
+      googleMaps: { apiKey: process.env.GOOGLE_MAPS_API_KEY },
     },
   },
-};
+
+  extra: {
+    ...config.extra,
+  },
+});

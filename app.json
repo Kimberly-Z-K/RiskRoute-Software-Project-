@@ -6,13 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -20,27 +13,37 @@
         "NSMicrophoneUsageDescription": "RiskRoute needs access to your microphone for driver voice calls."
       }
     },
-
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "RECORD_AUDIO"
       ]
     },
-
     "plugins": [
       "@livekit/react-native-expo-plugin",
-      "@config-plugins/react-native-webrtc"
+      "@config-plugins/react-native-webrtc",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ]
     ],
-
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "aa0038d3-33ac-4f69-bc59-99cab94a2e78"
+      }
+    },
+    "owner": "mnikelo1"
   }
 }

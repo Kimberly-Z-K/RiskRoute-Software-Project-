@@ -15,6 +15,7 @@ import {
   PanResponder,
   TextInput,
   Vibration,
+  Linking,
 } from "react-native";
 import MapView, { Marker, Polyline, Callout } from "react-native-maps";
 import * as ExpoLocation from "expo-location";
@@ -22,6 +23,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from '../context/AuthContext';
 import { supabase } from "../lib/supabase";
 import { auditLog } from "../utils/auditlogger";
+import { findStationsAlongRoute, findStationsNearPoint } from "../utils/fuelStations";
 
 const { width, height } = Dimensions.get("window");
 const INFO_AREA_HEIGHT_PX = height * 0.65;
@@ -30,23 +32,17 @@ const CONFIG = {
   TANK_CAPACITY: 70,
   FUEL_CONSUMPTION: 8,
   MAP_DELTA: 0.05,
-  FUEL_STATION_RADIUS: 5000,
   DESTINATION_COUNTRY: "South Africa",
   STATION_SENSE_INTERVAL: 60000,
   FUEL_WARNING_THRESHOLD: 15,
   DRIVING_DISTANCE_CANDIDATES: 5,
   OSRM_BASE_URL: "https://router.project-osrm.org",
-  OVERPASS_API_URL: "https://overpass-api.de/api/interpreter",
   STATIONS_ALONG_ROUTE: 10,
+  STATION_CORRIDOR_KM: 3,
+  NEARBY_RADIUS_KM: 5,
+  NEARBY_MAX_RADIUS_KM: 20,
+  NEARBY_REFRESH_KM: 3,
 };
-
-const MOCK_FUEL_STATIONS = [
-  { id: 1, name: "Shell Garage", latitude: -26.1076, longitude: 28.0567 },
-  { id: 2, name: "BP Service Station", latitude: -26.11, longitude: 28.06 },
-  { id: 3, name: "Engen Fuel Stop", latitude: -26.105, longitude: 28.053 },
-  { id: 4, name: "Caltex Refuel", latitude: -26.112, longitude: 28.058 },
-  { id: 5, name: "Total Energies", latitude: -26.108, longitude: 28.062 },
-];
 
 const PAUSE_CATEGORIES = [
   {
@@ -446,6 +442,15 @@ export default function LocationScreen({ route }) {
     if (error) console.error("[resolveReport] FAILED:", error);
   }, []);
 
+  const locationSubRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      locationSubRef.current?.remove?.();
+      locationSubRef.current = null;
+    };
+  }, []);
+
   const getLocation = useCallback(async () => {
     try {
       const { status } =
@@ -484,6 +489,23 @@ export default function LocationScreen({ route }) {
         },
         locationReady: true,
       });
+
+      if (!locationSubRef.current) {
+        locationSubRef.current = await ExpoLocation.watchPositionAsync(
+          {
+            accuracy: ExpoLocation.Accuracy.Balanced,
+            distanceInterval: 25,
+            timeInterval: 5000,
+          },
+          (pos) =>
+            updateState({
+              location: {
+                latitude: pos.coords.latitude,
+                longitude: pos.coords.longitude,
+              },
+            })
+        );
+      }
     } catch (error) {
       console.error("Location error:", error);
       updateState({ locationReady: true });
@@ -553,135 +575,26 @@ export default function LocationScreen({ route }) {
     }
   }, [fetchOSRMRoute, updateState]);
 
-  const fetchNearbyStations = useCallback(async (lat, lon) => {
-    try {
-      const query = `
-        [out:json][5];
-        (
-          node["amenity"="fuel"](around:${CONFIG.FUEL_STATION_RADIUS},${lat},${lon});
-        );
-        out body 5;
-        `;
-      const response = await fetch(CONFIG.OVERPASS_API_URL, {
-        method: "POST",
-        body: query,
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      });
-
-      const text = await response.text();
-      if (text.startsWith('<')) return getMockStations(lat, lon);
-
-      const data = JSON.parse(text);
-      if (!data.elements || data.elements.length === 0) {
-        return getMockStations(lat, lon);
-      }
-
-      const stations = data.elements.map(station => ({
-        id: station.id,
-        name: station.tags.name || station.tags.brand || "Fuel Station",
-        latitude: station.lat,
-        longitude: station.lon,
-        address: station.tags?.['addr:street'] || station.tags?.['addr:city'] || '',
-        brand: station.tags?.brand || null,
-        openingHours: station.tags?.opening_hours || null,
-      }));
-
-      return [...stations].sort((a, b) => {
-        const distA = haversineKm(lat, lon, a.latitude, a.longitude);
-        const distB = haversineKm(lat, lon, b.latitude, b.longitude);
-        return distA - distB;
-      });
-    } catch (error) {
-      console.error("Fuel station sensing error:", error);
-      return getMockStations(lat, lon);
-    }
-  }, []);
-
-  const getMockStations = useCallback((lat, lon) => {
-    const mockStations = MOCK_FUEL_STATIONS.map((station, index) => ({
-      id: station.id || index + 100,
-      name: station.name,
-      latitude: lat + (station.latitude - MOCK_FUEL_STATIONS[0].latitude) * 0.01,
-      longitude: lon + (station.longitude - MOCK_FUEL_STATIONS[0].longitude) * 0.01,
-      address: 'Mock location',
-      brand: station.name.split(' ')[0] || 'Fuel',
-      openingHours: '24/7',
-    }));
-
-    return [...mockStations].sort((a, b) => {
-      const distA = haversineKm(lat, lon, a.latitude, a.longitude);
-      const distB = haversineKm(lat, lon, b.latitude, b.longitude);
-      return distA - distB;
-    });
-  }, []);
-
   const findFuelStationsAlongRoute = useCallback(async (routePoints) => {
     if (!routePoints || routePoints.length < 2) return [];
 
     try {
       updateState({ searchingStations: true, stationSearchFailed: false });
 
-      const samplePoints = [];
-      const totalDistance = routePoints.reduce((acc, point, i) => {
-        if (i === 0) return 0;
-        return acc + haversineKm(
-          routePoints[i - 1].latitude, routePoints[i - 1].longitude,
-          point.latitude, point.longitude
-        );
-      }, 0);
-
-      const numSamples = Math.max(5, Math.min(20, Math.ceil(totalDistance / 5)));
-      const step = Math.max(1, Math.floor(routePoints.length / numSamples));
-
-      for (let i = 0; i < routePoints.length; i += step) {
-        samplePoints.push(routePoints[i]);
-      }
-
-      if (samplePoints[samplePoints.length - 1] !== routePoints[routePoints.length - 1]) {
-        samplePoints.push(routePoints[routePoints.length - 1]);
-      }
-
-      const allStations = [];
-      const seenStationIds = new Set();
-
-      for (const point of samplePoints) {
-        const stations = await fetchNearbyStations(point.latitude, point.longitude);
-
-        if (stations && stations.length > 0) {
-          for (const station of stations) {
-            if (!seenStationIds.has(station.id)) {
-              seenStationIds.add(station.id);
-
-              let minDistToRoute = Infinity;
-              for (const routePoint of routePoints) {
-                const dist = haversineKm(
-                  station.latitude, station.longitude,
-                  routePoint.latitude, routePoint.longitude
-                );
-                if (dist < minDistToRoute) minDistToRoute = dist;
-              }
-              station.distanceToRoute = minDistToRoute;
-              allStations.push(station);
-            }
-          }
-        }
-      }
-
-      const sortedStations = allStations
-        .sort((a, b) => a.distanceToRoute - b.distanceToRoute)
-        .slice(0, CONFIG.STATIONS_ALONG_ROUTE);
+      const sortedStations = await findStationsAlongRoute(routePoints, {
+        corridorKm: CONFIG.STATION_CORRIDOR_KM,
+        maxResults: CONFIG.STATIONS_ALONG_ROUTE,
+        driverLocation: stateRef.current.location,
+      });
 
       updateState({
         fuelStations: sortedStations,
-        searchingStations: false
+        searchingStations: false,
+        recommendedStation: sortedStations[0] || null,
       });
 
       if (sortedStations.length > 0) {
         const bestStation = sortedStations[0];
-        updateState({ recommendedStation: bestStation });
-
         const current = stateRef.current;
         if (current.location && current.destination) {
           const distToStation = haversineKm(
@@ -706,10 +619,105 @@ export default function LocationScreen({ route }) {
       return sortedStations;
     } catch (error) {
       console.error("Error finding stations along route:", error);
-      updateState({ searchingStations: false, stationSearchFailed: true });
+      updateState({
+        fuelStations: [],
+        recommendedStation: null,
+        searchingStations: false,
+        stationSearchFailed: true,
+      });
       return [];
     }
-  }, [fetchNearbyStations, updateState]);
+  }, [updateState]);
+
+  useEffect(() => {
+    if (routeCoords.length > 1) {
+      findFuelStationsAlongRoute(routeCoords);
+    }
+  }, [routeCoords, findFuelStationsAlongRoute]);
+
+  const findFuelStationsNearMe = useCallback(async () => {
+    const loc = stateRef.current.location;
+    if (!loc) return [];
+
+    try {
+      updateState({ searchingStations: true, stationSearchFailed: false });
+
+      const stations = await findStationsNearPoint(loc, {
+        radiusKm: CONFIG.NEARBY_RADIUS_KM,
+        maxRadiusKm: CONFIG.NEARBY_MAX_RADIUS_KM,
+        maxResults: CONFIG.STATIONS_ALONG_ROUTE,
+      });
+
+      if (stateRef.current.routeCoords.length > 1) return stations;
+
+      updateState({
+        fuelStations: stations,
+        searchingStations: false,
+        recommendedStation: stations[0] || null,
+      });
+      return stations;
+    } catch (error) {
+      console.error("Error finding nearby stations:", error);
+      updateState({
+        fuelStations: [],
+        recommendedStation: null,
+        searchingStations: false,
+        stationSearchFailed: true,
+      });
+      return [];
+    }
+  }, [updateState]);
+
+  const loadFuelStations = useCallback(() => {
+    const current = stateRef.current;
+    if (current.routeCoords.length > 1) {
+      return findFuelStationsAlongRoute(current.routeCoords);
+    }
+    return findFuelStationsNearMe();
+  }, [findFuelStationsAlongRoute, findFuelStationsNearMe]);
+
+  const nearSearchRef = useRef(null);
+  useEffect(() => {
+    if (routeCoords.length > 1) {
+      nearSearchRef.current = null;
+      return;
+    }
+    if (!location || !tripResolved || routeLoading) return;
+
+    const last = nearSearchRef.current;
+    if (
+      last &&
+      haversineKm(last.latitude, last.longitude, location.latitude, location.longitude) <
+        CONFIG.NEARBY_REFRESH_KM
+    ) {
+      return;
+    }
+    nearSearchRef.current = {
+      latitude: location.latitude,
+      longitude: location.longitude,
+    };
+    findFuelStationsNearMe();
+  }, [routeCoords, location, tripResolved, routeLoading, findFuelStationsNearMe]);
+
+  const centeredOnUserRef = useRef(false);
+  useEffect(() => {
+    if (
+      !location ||
+      centeredOnUserRef.current ||
+      routeCoords.length > 1 ||
+      !tripResolved ||
+      routeLoading
+    ) {
+      return;
+    }
+    centeredOnUserRef.current = true;
+    mapRef.current?.animateToRegion({
+      latitude: location.latitude,
+      longitude: location.longitude,
+      latitudeDelta: 0.03,
+      longitudeDelta: 0.03,
+    });
+  }, [location, routeCoords, tripResolved, routeLoading]);
 
   const endTrip = useCallback(() => {
     Alert.alert(
@@ -1151,8 +1159,11 @@ export default function LocationScreen({ route }) {
       updateState({ fuelWarning: true });
       showNotification('warning', `Fuel at ${current.fuelPercent.toFixed(0)}% - Please find a fuel station.`, 5000);
       updateState({ showFuelModal: true });
+      if (current.fuelStations.length === 0 && !current.searchingStations) {
+        loadFuelStations();
+      }
     }
-  }, [updateState, showNotification]);
+  }, [updateState, showNotification, loadFuelStations]);
 
   const BUTTON_SHEET_HANDLE_HEIGHT = 96;
 
@@ -1319,6 +1330,30 @@ export default function LocationScreen({ route }) {
     );
   };
 
+  const stationEmptyMessage = () => {
+    const hasRoute = routeCoords.length > 1;
+    if (!hasRoute && permissionDenied) {
+      return "Location permission is off. Turn it on in your phone settings to find fuel stations near you.";
+    }
+    if (!hasRoute && !location) return "Waiting for your location...";
+    if (stationSearchFailed) {
+      return "Couldn't load fuel stations. Check your connection and try again.";
+    }
+    return hasRoute
+      ? "No fuel stations found along this route"
+      : "No fuel stations found near you";
+  };
+
+  const focusStation = (item) => {
+    updateState({ selectedFuelStation: item, showFuelModal: false });
+    mapRef.current?.animateToRegion({
+      latitude: item.latitude,
+      longitude: item.longitude,
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    });
+  };
+
   const renderFuelStationItem = ({ item }) => (
     <TouchableOpacity
       style={styles.fuelItem}
@@ -1347,6 +1382,8 @@ export default function LocationScreen({ route }) {
           <Text style={styles.fuelItemDistance}>
             {item.distanceToRoute !== undefined ?
               `${formatDistance(item.distanceToRoute)} from route` :
+              item.distanceKm !== undefined ?
+              `${formatDistance(item.distanceKm)} away` :
               formatDistance(haversineKm(
                 location?.latitude || 0,
                 location?.longitude || 0,
@@ -1521,7 +1558,9 @@ export default function LocationScreen({ route }) {
       <View style={styles.modalContainer}>
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Fuel Stations Along Route</Text>
+            <Text style={styles.modalTitle}>
+              {routeCoords.length > 1 ? "Fuel Stations Along Route" : "Fuel Stations Near You"}
+            </Text>
             <TouchableOpacity
               onPress={() => updateState({ showFuelModal: false })}
               style={styles.modalCloseButton}
@@ -1533,7 +1572,7 @@ export default function LocationScreen({ route }) {
           {searchingStations && (
             <View style={styles.loadingModalContent}>
               <ActivityIndicator size="large" color="#007bff" />
-              <Text style={styles.loadingModalText}>Searching for stations along route...</Text>
+              <Text style={styles.loadingModalText}>Searching for fuel stations...</Text>
             </View>
           )}
 
@@ -1545,7 +1584,7 @@ export default function LocationScreen({ route }) {
             ListHeaderComponent={
               fuelStations.length > 0 && !searchingStations ? (
                 <Text style={styles.fuelCountText}>
-                  Found {fuelStations.length} stations along your route
+                  Found {fuelStations.length} stations {routeCoords.length > 1 ? "along your route" : "near you"}
                 </Text>
               ) : null
             }
@@ -1553,16 +1592,20 @@ export default function LocationScreen({ route }) {
               fuelStations.length === 0 && !searchingStations ? (
                 <View style={styles.emptyState}>
                   <Ionicons name="alert-circle-outline" size={48} color="#ccc" />
-                  <Text style={styles.emptyStateText}>No fuel stations found along route</Text>
+                  <Text style={styles.emptyStateText}>
+                    {stationEmptyMessage()}
+                  </Text>
                   <TouchableOpacity
                     style={styles.retryButton}
-                    onPress={() => {
-                      if (routeCoords.length > 0) {
-                        findFuelStationsAlongRoute(routeCoords);
-                      }
-                    }}
+                    onPress={() =>
+                      permissionDenied && routeCoords.length < 2
+                        ? Linking.openSettings()
+                        : loadFuelStations()
+                    }
                   >
-                    <Text style={styles.retryButtonText}>Search Again</Text>
+                    <Text style={styles.retryButtonText}>
+                      {permissionDenied && routeCoords.length < 2 ? "Open Settings" : "Search Again"}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               ) : null
@@ -1679,7 +1722,8 @@ export default function LocationScreen({ route }) {
           latitudeDelta: 0.05,
           longitudeDelta: 0.05,
         }}
-        showsUserLocation={false}
+        showsUserLocation
+        showsMyLocationButton={false}
         showsCompass
       >
         {start && (
@@ -1717,6 +1761,23 @@ export default function LocationScreen({ route }) {
             strokeColor="#ff2d2d"
           />
         )}
+
+        {fuelStations.map((station) => (
+          <Marker
+            key={`fuel-${station.id}`}
+            coordinate={{
+              latitude: Number(station.latitude),
+              longitude: Number(station.longitude),
+            }}
+            title={station.name}
+            description={
+              station.distanceKm !== undefined
+                ? `${formatDistance(station.distanceKm)} away`
+                : station.address || ""
+            }
+            pinColor={selectedFuelStation?.id === station.id ? "blue" : "red"}
+          />
+        ))}
       </MapView>
 
       {routeLoading && (
@@ -1730,7 +1791,9 @@ export default function LocationScreen({ route }) {
         <View style={styles.mapOverlay}>
           <ActivityIndicator size="small" color="#007bff" />
           <Text style={styles.overlayText}>
-            Finding fuel stations along route...
+            {routeCoords.length > 1
+              ? "Finding fuel stations along route..."
+              : "Finding fuel stations near you..."}
           </Text>
         </View>
       )}
@@ -1882,14 +1945,16 @@ export default function LocationScreen({ route }) {
               showFuelModal: true,
             });
 
-            if (fuelStations.length === 0 && routeCoords.length > 0) {
-              findFuelStationsAlongRoute(routeCoords);
+            if (fuelStations.length === 0 && !searchingStations) {
+              loadFuelStations();
             }
           }}
         >
           <Ionicons name="flame-outline" size={18} color="#f3a089" />
           <Text style={styles.buttonText}>
-            View Fuel Stations Along Route
+            {routeCoords.length > 1
+              ? "View Fuel Stations Along Route"
+              : "Find Fuel Stations Near Me"}
           </Text>
         </TouchableOpacity>
 
@@ -2026,6 +2091,49 @@ export default function LocationScreen({ route }) {
             It will appear here as soon as dispatch assigns one.
           </Text>
         </View>
+      ) : null}
+
+      {tripResolved && !hasTrip && !error ? (
+        <>
+          <Text style={styles.routeSheetSectionTitle}>Fuel Stations Near You</Text>
+
+          {searchingStations ? (
+            <View style={styles.routeInfoWhiteCard}>
+              <ActivityIndicator size="small" color="#007bff" />
+              <Text style={[styles.infoCardValue, { marginLeft: 12 }]}>Searching for stations...</Text>
+            </View>
+          ) : fuelStations.length > 0 ? (
+            fuelStations.slice(0, 5).map((station) => (
+              <TouchableOpacity
+                key={station.id}
+                style={styles.stationCard}
+                onPress={() => focusStation(station)}
+              >
+                <View style={styles.stationIcon}>
+                  <Ionicons name="flame" size={20} color="#f44336" />
+                </View>
+                <View style={styles.stationInfo}>
+                  <Text style={styles.stationName}>{station.name}</Text>
+                  <Text style={styles.stationDistance}>
+                    {formatDistance(station.distanceKm ?? 0)} away
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <View>
+              <Text style={styles.noDataText}>{stationEmptyMessage()}</Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={() => (permissionDenied ? Linking.openSettings() : loadFuelStations())}
+              >
+                <Text style={styles.retryButtonText}>
+                  {permissionDenied ? "Open Settings" : "Search Again"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </>
       ) : null}
 
       {(hasTrip || tripLoading) && (
