@@ -52,6 +52,7 @@ import Settings from './components/settings/Settings';
 import DriverReports from './components/DriverReports/driverReports';
 import FuelAllocation from './components/FuelAllocation';
 import PanicAlert from "./components/dashboard/PanicAlert";
+import useAnalyticsKPIs from './components/analytics/useAnalyticsKPIs';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Activity },
@@ -283,7 +284,12 @@ const DashboardContent = React.memo(
     setIsRealTimeActive,
     runSimulation,
     acknowledgeAlert,
-    statsCards
+    statsCards,
+    refreshAnalytics,
+    analytics,
+    analyticsLoading,
+    analyticsError,
+
   }) => {
     console.log('📋 DashboardContent rendering');
 
@@ -580,107 +586,106 @@ const DashboardContent = React.memo(
                 </div>
               )}
 
-              {/* Analytics */}
-              {activeTab === 'analytics' &&
-                performanceData && (
-                  <div className="space-y-6">
+              
+{/* Analytics */}
+{activeTab === 'analytics' && (
+  <div className="space-y-6">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900">
+          Fleet Analytics
+        </h2>
+        <p className="text-sm text-gray-500">
+          Live metrics from your RiskRoute database
+        </p>
+      </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <button
+        type="button"
+        onClick={refreshAnalytics}
+        disabled={analyticsLoading}
+        className="px-4 py-2 rounded-md border border-gray-300 text-sm hover:bg-gray-50 disabled:opacity-50"
+      >
+        {analyticsLoading ? 'Loading...' : 'Refresh analytics'}
+      </button>
+    </div>
 
-                      <KPICard
-                        label="Avg Delivery Time"
-                        value={
-                          performanceData.avgDeliveryTime ||
-                          45
-                        }
-                        unit=" min"
-                        change={-5.2}
-                        icon={ClockIcon}
-                        color="bg-blue-500"
-                        subtitle="Target: 42 min"
-                        target="42"
-                      />
+    {analyticsError && (
+      <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+        Could not load all Analytics data: {analyticsError}
+      </div>
+    )}
 
-                      <KPICard
-                        label="Route Efficiency"
-                        value={
-                          performanceData.routeEfficiency ||
-                          85
-                        }
-                        unit="%"
-                        change={4}
-                        icon={Navigation}
-                        color="bg-green-500"
-                        subtitle="Above industry average"
-                        target="90"
-                      />
+    {analyticsLoading ? (
+      <div className="p-6 bg-white border rounded-xl text-gray-500">
+        Loading analytics from Supabase...
+      </div>
+    ) : (
+      <>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <KPICard
+            label="Route Simulations"
+            value={analytics.simulations}
+            icon={Navigation}
+          />
 
-                      <KPICard
-                        label="Driver Safety Score"
-                        value={
-                          performanceData.driverSafetyScore ||
-                          88
-                        }
-                        change={2}
-                        icon={Shield}
-                        color="bg-purple-500"
-                        subtitle="Fleet average"
-                        target="85"
-                      />
+          <KPICard
+            label="Avg Current Duration"
+            value={analytics.avgCurrentDuration === null
+              ? '—'
+              : analytics.avgCurrentDuration.toFixed(1)}
+            unit={analytics.avgCurrentDuration === null ? '' : ' min'}
+            icon={ClockIcon}
+          />
 
-                      <KPICard
-                        label="Fuel Usage Trend"
-                        value={
-                          Math.abs(
-                            performanceData.fuelUsageTrend
-                          ) || 5
-                        }
-                        unit="%"
-                        change={
-                          performanceData.fuelUsageTrend || 0
-                        }
-                        icon={Fuel}
-                        color="bg-yellow-500"
-                        subtitle="vs last month"
-                      />
+          <KPICard
+            label="Avg Optimized Duration"
+            value={analytics.avgOptimizedDuration === null
+              ? '—'
+              : analytics.avgOptimizedDuration.toFixed(1)}
+            unit={analytics.avgOptimizedDuration === null ? '' : ' min'}
+            icon={Navigation}
+          />
 
-                      <KPICard
-                        label="Risk Incidents"
-                        value={
-                          performanceData.riskIncidentFrequency ||
-                          12
-                        }
-                        change={-21}
-                        icon={AlertTriangle}
-                        color="bg-red-500"
-                        subtitle="30-day rolling"
-                        target="10"
-                      />
+          <KPICard
+            label="Current Route Risk"
+            value={analytics.avgRiskScore === null
+              ? '—'
+              : analytics.avgRiskScore.toFixed(1)}
+            unit={analytics.avgRiskScore === null ? '' : ' / 100'}
+            icon={Shield}
+            higherIsBetter={false}
+          />
 
-                      <KPICard
-                        label="Customer Satisfaction"
-                        value={
-                          performanceData.customerSatisfaction ||
-                          4.2
-                        }
-                        change={0.3}
-                        icon={Star}
-                        color="bg-pink-500"
-                        subtitle="Out of 5"
-                        target="4.5"
-                      />
+          <KPICard
+            label="User Reports"
+            value={analytics.reports}
+            icon={AlertTriangle}
+          />
 
-                    </div>
+          <KPICard
+            label="Panic Alerts"
+            value={analytics.panicAlerts}
+            icon={AlertTriangle}
+            higherIsBetter={false}
+          />
+        </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <PerformanceCharts />
+          <DriverPerformanceTable />
+        </div>
 
-                      <PerformanceCharts />
-                      <DriverPerformanceTable />
+        <div className="text-xs text-gray-500">
+          Registered drivers: {analytics.drivers}. Delivery times, on-time
+          rates and customer satisfaction are not shown because there are
+          currently no recorded trips to support those metrics.
+        </div>
+      </>
+    )}
+  </div>
+)}
 
-                    </div>
-
-                  </div>
-                )}
 
               {/* Settings */}
               {activeTab === 'settings' && (
@@ -753,6 +758,13 @@ function App() {
   const [simulationResults, setSimulationResults] =
     useState(null);
 
+   const {
+  metrics: analytics,
+  loading: analyticsLoading,
+  error: analyticsError,
+  refresh: refreshAnalytics,
+} = useAnalyticsKPIs();
+
   // Hooks
   const {
     updateSignal,
@@ -765,6 +777,8 @@ function App() {
     loading: routesLoading,
     error: routesError
   } = useRoutes();
+
+ 
 
   // Refs
   const updateCounter = useRef(0);
@@ -2005,6 +2019,11 @@ function App() {
                 statsCards={
                   statsCards
                 }
+
+                analytics={analytics}
+                analyticsLoading={analyticsLoading}
+                analyticsError={analyticsError}
+                refreshAnalytics={refreshAnalytics}
               />
             ) : (
               <Navigate

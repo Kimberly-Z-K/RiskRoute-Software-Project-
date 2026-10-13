@@ -1,204 +1,350 @@
-import React, { useState } from 'react';
-import { Users, Star, TrendingUp, TrendingDown, Award, CheckCircle, AlertTriangle, Search, ChevronUp, ChevronDown } from 'lucide-react';
 
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  Users,
+  Search,
+  ChevronUp,
+  ChevronDown,
+  AlertTriangle,
+  FileText,
+  RefreshCw,
+} from 'lucide-react';
+import { supabase } from '../../../lib/supabase';
 
 const DriverPerformanceTable = () => {
+  const [drivers, setDrivers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortBy, setSortBy] = useState('score');
-  const [sortOrder, setSortOrder] = useState('desc');
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
 
-  const driverPerformanceData = [
-    { name: 'Thabo Nkosi', score: 94, deliveries: 156, onTime: 148, rating: 4.8, trend: '+5%', incidents: 2 },
-    { name: 'Sarah van der Merwe', score: 88, deliveries: 142, onTime: 125, rating: 4.5, trend: '+3%', incidents: 3 },
-    { name: 'David Naidoo', score: 76, deliveries: 128, onTime: 97, rating: 4.1, trend: '-2%', incidents: 7 },
-    { name: 'Lisa Patel', score: 92, deliveries: 149, onTime: 137, rating: 4.7, trend: '+4%', incidents: 2 },
-    { name: 'James Botha', score: 81, deliveries: 135, onTime: 109, rating: 4.3, trend: '+1%', incidents: 5 },
-    { name: 'Robert Dlamini', score: 69, deliveries: 118, onTime: 81, rating: 3.8, trend: '-5%', incidents: 9 },
-    { name: 'Emma Khumalo', score: 95, deliveries: 162, onTime: 154, rating: 4.9, trend: '+6%', incidents: 1 },
-    { name: 'Chris Pretorius', score: 84, deliveries: 138, onTime: 116, rating: 4.4, trend: '+2%', incidents: 4 }
-  ];
+  const loadDrivers = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
 
-  const filteredDrivers = driverPerformanceData.filter(driver =>
-    driver.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+    setError('');
 
-  const sortedDrivers = [...filteredDrivers].sort((a, b) => {
-    let comparison = 0;
-    if (sortBy === 'score') comparison = a.score - b.score;
-    if (sortBy === 'name') comparison = a.name.localeCompare(b.name);
-    if (sortBy === 'deliveries') comparison = a.deliveries - b.deliveries;
-    if (sortBy === 'rating') comparison = a.rating - b.rating;
-    return sortOrder === 'asc' ? comparison : -comparison;
-  });
+    try {
+      const [driverResult, reportResult, panicResult] = await Promise.all([
+        supabase
+          .from('drivers')
+          .select('driver_id, driver_username, email')
+          .order('driver_username', { ascending: true }),
+
+        supabase
+          .from('user_reports')
+          .select('driver_id, created_at, title, status'),
+
+        supabase
+          .from('panic_alerts')
+          .select('driver_id, triggered_at, status'),
+      ]);
+
+      if (driverResult.error) throw driverResult.error;
+      if (reportResult.error) throw reportResult.error;
+      if (panicResult.error) throw panicResult.error;
+
+      const reportsByDriver = new Map();
+      const panicsByDriver = new Map();
+      const latestActivityByDriver = new Map();
+
+      (reportResult.data || []).forEach((report) => {
+        if (!report.driver_id) return;
+
+        const key = report.driver_id;
+        reportsByDriver.set(key, (reportsByDriver.get(key) || 0) + 1);
+
+        const previous = latestActivityByDriver.get(key);
+        if (
+          report.created_at &&
+          (!previous || new Date(report.created_at) > new Date(previous))
+        ) {
+          latestActivityByDriver.set(key, report.created_at);
+        }
+      });
+
+      (panicResult.data || []).forEach((alert) => {
+        if (!alert.driver_id) return;
+
+        const key = alert.driver_id;
+        panicsByDriver.set(key, (panicsByDriver.get(key) || 0) + 1);
+
+        const previous = latestActivityByDriver.get(key);
+        if (
+          alert.triggered_at &&
+          (!previous || new Date(alert.triggered_at) > new Date(previous))
+        ) {
+          latestActivityByDriver.set(key, alert.triggered_at);
+        }
+      });
+
+      const rows = (driverResult.data || []).map((driver) => ({
+        id: driver.driver_id,
+        name: driver.driver_username || driver.email || 'Unnamed driver',
+        email: driver.email || '',
+        reports: reportsByDriver.get(driver.driver_id) || 0,
+        panicAlerts: panicsByDriver.get(driver.driver_id) || 0,
+        latestActivity: latestActivityByDriver.get(driver.driver_id) || null,
+      }));
+
+      setDrivers(rows);
+    } catch (err) {
+      console.error('Failed to load driver activity:', err);
+      setError(
+        err.message ||
+          'Unable to load driver data. Check your Supabase permissions and table names.'
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDrivers();
+
+    const channel = supabase
+      .channel('analytics-driver-activity')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_reports' },
+        () => loadDrivers(true)
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'panic_alerts' },
+        () => loadDrivers(true)
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'drivers' },
+        () => loadDrivers(true)
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadDrivers]);
 
   const handleSort = (field) => {
     if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+      setSortOrder((order) => (order === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortBy(field);
-      setSortOrder('desc');
+      setSortOrder(field === 'name' ? 'asc' : 'desc');
     }
   };
 
-  const getScoreColor = (score) => {
-    if (score >= 90) return 'bg-green-600';
-    if (score >= 80) return 'bg-blue-600';
-    if (score >= 70) return 'bg-yellow-600';
-    return 'bg-red-600';
+  const filteredDrivers = drivers
+    .filter((driver) =>
+      `${driver.name} ${driver.email}`
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase())
+    )
+    .sort((a, b) => {
+      let result = 0;
+
+      if (sortBy === 'name') result = a.name.localeCompare(b.name);
+      if (sortBy === 'reports') result = a.reports - b.reports;
+      if (sortBy === 'panicAlerts') result = a.panicAlerts - b.panicAlerts;
+
+      return sortOrder === 'asc' ? result : -result;
+    });
+
+  const formatDateTime = (date) => {
+    if (!date) return 'No recorded activity';
+
+    return new Date(date).toLocaleString(undefined, {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
-  const getScoreText = (score) => {
-    if (score >= 90) return 'text-green-700';
-    if (score >= 80) return 'text-blue-700';
-    if (score >= 70) return 'text-yellow-700';
-    return 'text-red-700';
-  };
-
-  const summary = {
-    totalDrivers: driverPerformanceData.length,
-    avgScore: (driverPerformanceData.reduce((sum, d) => sum + d.score, 0) / driverPerformanceData.length).toFixed(1)
-  };
+  if (loading) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <p className="text-sm text-gray-500">Loading driver activity from Supabase…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="p-4 border-b border-gray-200">
-        <div className="flex justify-between items-center mb-3">
+        <div className="flex flex-wrap justify-between items-center gap-3 mb-3">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
             <Users className="w-5 h-5" />
-            Driver Performance
+            Driver Activity
           </h3>
-          <div className="flex gap-2">
+
+          <div className="flex items-center gap-3">
             <div className="px-3 py-1 bg-gray-100 rounded-md text-center">
-              <p className="text-xs text-gray-500">Avg</p>
-              <p className="text-lg font-bold text-gray-900">{summary.avgScore}</p>
+              <p className="text-xs text-gray-500">Registered drivers</p>
+              <p className="text-lg font-bold text-gray-900">{drivers.length}</p>
             </div>
+
+            <button
+              type="button"
+              onClick={() => loadDrivers(true)}
+              disabled={refreshing}
+              aria-label="Refresh driver activity"
+              className="p-2 border border-gray-200 rounded-md hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
 
         <div className="relative">
           <input
             type="text"
-            placeholder="Search drivers..."
+            placeholder="Search driver name or email..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(event) => setSearchTerm(event.target.value)}
             className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
         </div>
+
+        <p className="text-xs text-gray-500 mt-2">
+          Report and panic-alert totals are counts of records linked to each driver.
+          They are not driver performance scores.
+        </p>
       </div>
 
-      <div className="grid grid-cols-12 gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600">
-        <div className="col-span-3 cursor-pointer hover:text-gray-900" onClick={() => handleSort('name')}>
-          <div className="flex items-center gap-1">
-            Driver
-            {sortBy === 'name' && (sortOrder === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-          </div>
+      {error && (
+        <div className="p-4 bg-red-50 text-red-700 text-sm">
+          {error}
+          <button
+            type="button"
+            onClick={() => loadDrivers(true)}
+            className="ml-2 underline font-semibold"
+          >
+            Retry
+          </button>
         </div>
-        <div className="col-span-2 text-center cursor-pointer hover:text-gray-900" onClick={() => handleSort('score')}>
-          <div className="flex items-center justify-center gap-1">
-            Score
-            {sortBy === 'score' && (sortOrder === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
-          </div>
-        </div>
-        <div className="col-span-2 text-center cursor-pointer hover:text-gray-900" onClick={() => handleSort('deliveries')}>
-          Deliveries
-        </div>
-        <div className="col-span-2 text-center cursor-pointer hover:text-gray-900" onClick={() => handleSort('rating')}>
-          Rating
-        </div>
-        <div className="col-span-2 text-center">Trend</div>
-        <div className="col-span-1 text-center">Issues</div>
-      </div>
+      )}
 
-      <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
-        {sortedDrivers.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            <p className="text-sm">No drivers found</p>
-          </div>
-        ) : (
-          sortedDrivers.map((driver, idx) => {
-            const scoreColor = getScoreColor(driver.score);
-            const scoreText = getScoreText(driver.score);
-            return (
-              <div key={idx} className="grid grid-cols-12 gap-2 px-4 py-3 hover:bg-gray-50">
-                <div className="col-span-3">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-8 h-8 rounded-full ${scoreColor} flex items-center justify-center`}>
-                      <span className="text-xs font-bold text-white">
-                        {driver.name.split(' ')[0][0]}
-                      </span>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[680px] text-sm">
+          <thead className="bg-gray-50 text-xs text-gray-600">
+            <tr>
+              <th className="text-left px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => handleSort('name')}
+                  className="flex items-center gap-1 font-semibold"
+                >
+                  Driver
+                  {sortBy === 'name' &&
+                    (sortOrder === 'asc' ? (
+                      <ChevronUp className="w-3 h-3" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3" />
+                    ))}
+                </button>
+              </th>
+
+              <th className="text-center px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => handleSort('reports')}
+                  className="inline-flex items-center gap-1 font-semibold"
+                >
+                  Reports
+                  {sortBy === 'reports' &&
+                    (sortOrder === 'asc' ? (
+                      <ChevronUp className="w-3 h-3" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3" />
+                    ))}
+                </button>
+              </th>
+
+              <th className="text-center px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => handleSort('panicAlerts')}
+                  className="inline-flex items-center gap-1 font-semibold"
+                >
+                  Panic alerts
+                  {sortBy === 'panicAlerts' &&
+                    (sortOrder === 'asc' ? (
+                      <ChevronUp className="w-3 h-3" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3" />
+                    ))}
+                </button>
+              </th>
+
+              <th className="text-left px-4 py-3">Latest recorded activity</th>
+            </tr>
+          </thead>
+
+          <tbody className="divide-y divide-gray-100">
+            {filteredDrivers.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="p-8 text-center text-gray-500">
+                  {drivers.length === 0
+                    ? 'No driver records are available.'
+                    : 'No drivers match your search.'}
+                </td>
+              </tr>
+            ) : (
+              filteredDrivers.map((driver) => (
+                <tr key={driver.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-800 flex items-center justify-center font-bold">
+                        {driver.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">{driver.name}</p>
+                        <p className="text-xs text-gray-500">{driver.email || 'No email recorded'}</p>
+                      </div>
                     </div>
-                    <p className="text-sm font-medium text-gray-900">{driver.name}</p>
-                  </div>
-                </div>
+                  </td>
 
-                <div className="col-span-2">
-                  <div className="text-center">
-                    <div className={`inline-flex items-center gap-1 px-2 py-1 rounded-full ${scoreColor} bg-opacity-10`}>
-                      <Award className={`w-3 h-3 ${scoreText}`} />
-                      <span className={`text-sm font-bold ${scoreText}`}>{driver.score}</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-1 mt-1">
-                      <div 
-                        className={`${scoreColor} h-1 rounded-full`}
-                        style={{ width: `${driver.score}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="col-span-2">
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-gray-900">{driver.deliveries}</p>
-                    <p className="text-xs text-gray-500">{driver.onTime} on-time</p>
-                  </div>
-                </div>
-
-                <div className="col-span-2">
-                  <div className="text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <Star className="w-3 h-3 text-yellow-500 fill-yellow-500" />
-                      <span className="text-sm font-semibold text-gray-900">{driver.rating}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="col-span-2">
-                  <div className="text-center">
-                    <span className={`inline-flex items-center gap-1 text-xs font-medium ${
-                      driver.trend.startsWith('+') ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {driver.trend.startsWith('+') ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                      {driver.trend}
+                  <td className="px-4 py-3 text-center">
+                    <span className="inline-flex items-center gap-1 text-gray-700">
+                      <FileText className="w-4 h-4 text-gray-400" />
+                      {driver.reports}
                     </span>
-                  </div>
-                </div>
+                  </td>
 
-                <div className="col-span-1">
-                  <div className="text-center">
-                    <span className={`inline-flex items-center gap-1 text-xs font-medium ${
-                      driver.incidents === 0 ? 'text-green-600' : driver.incidents <= 3 ? 'text-yellow-600' : 'text-red-600'
-                    }`}>
-                      <AlertTriangle className="w-3 h-3" />
-                      {driver.incidents}
+                  <td className="px-4 py-3 text-center">
+                    <span
+                      className={`inline-flex items-center gap-1 ${
+                        driver.panicAlerts > 0 ? 'text-red-700' : 'text-green-700'
+                      }`}
+                    >
+                      <AlertTriangle className="w-4 h-4" />
+                      {driver.panicAlerts}
                     </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })
-        )}
+                  </td>
+
+                  <td className="px-4 py-3 text-gray-600 text-xs">
+                    {formatDateTime(driver.latestActivity)}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
-      <div className="p-3 bg-gray-50 border-t border-gray-200 text-center">
-        <div className="flex justify-between items-center text-xs text-gray-600">
-          <span>{sortedDrivers.length} drivers</span>
-          <span>{new Date().toLocaleTimeString()}</span>
-        </div>
+      <div className="p-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-600 flex justify-between">
+        <span>Showing {filteredDrivers.length} of {drivers.length} drivers</span>
+        <span>Data from Supabase</span>
       </div>
     </div>
   );
 };
-
 
 export default DriverPerformanceTable;
