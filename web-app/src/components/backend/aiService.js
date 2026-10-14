@@ -1,11 +1,12 @@
 const OpenAI = require("openai");
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.GROQ_API_KEY,
+  baseURL: "https://api.groq.com/openai/v1"
 });
 
 const MODEL =
-  process.env.OPENAI_MODEL || "gpt-5.6-luna";
+  process.env.AI_MODEL || "openai/gpt-oss-120b";
 
 const analysisSchema = {
   type: "object",
@@ -385,7 +386,7 @@ async function analyzeRoute({
         }))
   };
 
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.GROQ_API_KEY) {
     return fallbackAnalysis(
       route,
       simulation,
@@ -459,7 +460,7 @@ ${JSON.stringify(
 
     if (!response.output_text) {
       throw new Error(
-        "OpenAI returned no output."
+        "Groq returned no output."
       );
     }
 
@@ -493,7 +494,7 @@ ${JSON.stringify(
     return analysis;
   } catch (error) {
     console.error(
-      "OpenAI analysis failed:",
+      "Groq analysis failed:",
       error
     );
 
@@ -513,10 +514,10 @@ async function askRouteQuestion({
   traffic,
   historicalSimulations
 }) {
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.GROQ_API_KEY) {
     return {
       answer:
-        "The OpenAI service is not configured. Please check OPENAI_API_KEY in backend/.env."
+        "The Groq service is not configured. Please check GROQ_API_KEY in the backend environment."
     };
   }
 
@@ -569,11 +570,12 @@ ${JSON.stringify(
       instructions:
         "You are RiskRoute AI, an evidence-based logistics route assistant.",
 
-      input: prompt,
+      input: prompt
 
-      text: {
-        verbosity: "low"
-      }
+      // NOTE: 'text: { verbosity: "low" }' was removed.
+      // It is NOT confirmed supported on Groq and can cause
+      // an "unknown field" 400 error. If you want to test it,
+      // re-add it and watch the backend logs.
     });
 
   return {

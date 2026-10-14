@@ -28,9 +28,32 @@ const PORT =
 |--------------------------------------------------------------------------
 */
 
+// Explicit allow-list. Update with your deployed frontend URL when you
+// push to production, e.g. "https://riskroute.vercel.app".
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:3000",
+  "http://127.0.0.1:5173"
+];
+
 app.use(
   cors({
-    origin: true,
+    origin(origin, callback) {
+      // Allow server-to-server / curl (no Origin header)
+      if (!origin) return callback(null, true);
+
+      if (
+        ALLOWED_ORIGINS.includes(origin) ||
+        process.env.NODE_ENV !== "production"
+      ) {
+        return callback(null, true);
+      }
+
+      return callback(
+        new Error(`CORS blocked for origin: ${origin}`)
+      );
+    },
     credentials: true
   })
 );
@@ -54,13 +77,17 @@ app.get(
       success: true,
       message:
         "RiskRoute backend is running.",
+
       aiConfigured:
         Boolean(
-          process.env.OPENAI_API_KEY
+          process.env.GROQ_API_KEY
         ),
+
+      aiProvider: "groq",
+
       model:
-        process.env.OPENAI_MODEL ||
-        "gpt-5.6-luna"
+        process.env.AI_MODEL ||
+        "openai/gpt-oss-120b"
     });
   }
 );
@@ -284,15 +311,19 @@ app.listen(
     );
 
     console.log(
+      `🧠 AI Provider: Groq`
+    );
+
+    console.log(
       `🧠 AI Model: ${
-        process.env.OPENAI_MODEL ||
-        "gpt-5.6-luna"
+        process.env.AI_MODEL ||
+        "openai/gpt-oss-120b"
       }`
     );
 
     console.log(
-      `🔑 OpenAI configured: ${
-        process.env.OPENAI_API_KEY
+      `🔑 Groq configured: ${
+        process.env.GROQ_API_KEY
           ? "YES"
           : "NO"
       }`

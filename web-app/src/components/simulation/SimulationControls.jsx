@@ -39,16 +39,18 @@ import {
   Bot
 } from "lucide-react";
 
+/* ============================================================
+   BACKEND URLS
+   - API_BASE_URL   → main backend (routes, weather, traffic, sims)
+   - AI_API_BASE_URL → AI backend (usually same server)
+   Both default to localhost in dev; set VITE_* in .env to override.
+============================================================ */
 
-// Main RiskRoute backend
 const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL ||
-  "http://localhost:5000";
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:5000";
 
-// Separate AI backend
 const AI_API_BASE_URL =
-  import.meta.env.VITE_AI_API_BASE_URL ||
- "http://localhost:5000";
+  import.meta.env.VITE_AI_API_BASE_URL || API_BASE_URL;
 
 /* ============================================================
    DEFAULT ROUTES (Fallback if API fails)
@@ -90,115 +92,47 @@ const DEFAULT_ROUTES = [
 ============================================================ */
 
 const WEATHER_OPTIONS = [
-  {
-    value: "sunny",
-    label: "☀️ Sunny / Clear",
-    multiplier: 1,
-    risk: 5,
-  },
-  {
-    value: "partly_cloudy",
-    label: "🌤️ Partly Cloudy",
-    multiplier: 1.02,
-    risk: 8,
-  },
-  {
-    value: "cloudy",
-    label: "☁️ Cloudy",
-    multiplier: 1.05,
-    risk: 10,
-  },
-  {
-    value: "light_rain",
-    label: "🌦️ Light Rain",
-    multiplier: 1.1,
-    risk: 15,
-  },
-  {
-    value: "moderate_rain",
-    label: "🌧️ Moderate Rain",
-    multiplier: 1.18,
-    risk: 25,
-  },
-  {
-    value: "heavy_rain",
-    label: "⛈️ Heavy Rain",
-    multiplier: 1.3,
-    risk: 40,
-  },
-  {
-    value: "fog",
-    label: "🌫️ Fog / Mist",
-    multiplier: 1.2,
-    risk: 30,
-  },
-  {
-    value: "windy",
-    label: "💨 Strong Winds",
-    multiplier: 1.1,
-    risk: 20,
-  },
+  { value: "sunny", label: "☀️ Sunny / Clear", multiplier: 1, risk: 5 },
+  { value: "partly_cloudy", label: "🌤️ Partly Cloudy", multiplier: 1.02, risk: 8 },
+  { value: "cloudy", label: "☁️ Cloudy", multiplier: 1.05, risk: 10 },
+  { value: "light_rain", label: "🌦️ Light Rain", multiplier: 1.1, risk: 15 },
+  { value: "moderate_rain", label: "🌧️ Moderate Rain", multiplier: 1.18, risk: 25 },
+  { value: "heavy_rain", label: "⛈️ Heavy Rain", multiplier: 1.3, risk: 40 },
+  { value: "fog", label: "🌫️ Fog / Mist", multiplier: 1.2, risk: 30 },
+  { value: "windy", label: "💨 Strong Winds", multiplier: 1.1, risk: 20 },
 ];
 
 /* ============================================================
    HELPERS
 ============================================================ */
 
-const getRouteId = (route) =>
-  route?.id || route?.route_id || "";
+const getRouteId = (route) => route?.id || route?.route_id || "";
 
 const getRouteName = (route) => {
   if (!route) return "Unknown Route";
-
   return (
     route.display_name ||
     route.name ||
-    `${route.origin_name || "Origin"} → ${
-      route.destination_name || "Destination"
-    }`
+    `${route.origin_name || "Origin"} → ${route.destination_name || "Destination"}`
   );
 };
 
 const getDuration = (route) => {
-  const value =
-    route?.duration_min ??
-    route?.estimated_time ??
-    route?.duration ??
-    60;
-
+  const value = route?.duration_min ?? route?.estimated_time ?? route?.duration ?? 60;
   const number = Number(value);
-
-  return Number.isFinite(number) && number > 0
-    ? number
-    : 60;
+  return Number.isFinite(number) && number > 0 ? number : 60;
 };
 
 const getDistance = (route) => {
-  const value =
-    route?.distance_km ??
-    route?.distance ??
-    0;
-
+  const value = route?.distance_km ?? route?.distance ?? 0;
   const number = Number(value);
-
-  return Number.isFinite(number)
-    ? number
-    : 0;
+  return Number.isFinite(number) ? number : 0;
 };
 
 const getCost = (route) => {
-  const value =
-    route?.estimated_cost ??
-    route?.cost ??
-    0;
-
-  const number = parseFloat(
-    String(value).replace(/[^0-9.]/g, "")
-  );
-
-  return Number.isFinite(number)
-    ? number
-    : 0;
+  const value = route?.estimated_cost ?? route?.cost ?? 0;
+  const number = parseFloat(String(value).replace(/[^0-9.]/g, ""));
+  return Number.isFinite(number) ? number : 0;
 };
 
 const getRiskLabel = (score) => {
@@ -208,19 +142,77 @@ const getRiskLabel = (score) => {
 };
 
 const getRiskClasses = (score) => {
-  if (score >= 70) {
-    return "bg-red-100 text-red-700 border-red-200";
-  }
-
-  if (score >= 40) {
-    return "bg-orange-100 text-orange-700 border-orange-200";
-  }
-
+  if (score >= 70) return "bg-red-100 text-red-700 border-red-200";
+  if (score >= 40) return "bg-orange-100 text-orange-700 border-orange-200";
   return "bg-green-100 text-green-700 border-green-200";
 };
 
+/* Robust JSON parser — Groq's gpt-oss-120b sometimes wraps JSON in ```json fences. */
+const safeParseJSON = (raw) => {
+  if (!raw || typeof raw !== "string") return null;
+  let text = raw.trim();
+
+  // Strip ```json ... ``` or ``` ... ``` fences
+  if (text.startsWith("```")) {
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Last-ditch: try to extract the first {...} block
+    const first = text.indexOf("{");
+    const last = text.lastIndexOf("}");
+    if (first !== -1 && last > first) {
+      try {
+        return JSON.parse(text.slice(first, last + 1));
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+};
+
+/* Local fallback analysis when the AI call fails (rate limit, network, etc.) */
+const buildFallbackAnalysis = (simulation, reason = "AI service unavailable") => {
+  const risk = simulation?.riskScore ?? 0;
+  const delay = simulation?.delayMinutes ?? 0;
+  const weatherLabel = simulation?.weatherLabel || simulation?.weather || "unknown";
+  const accident = simulation?.accident ? "Accident reported." : "";
+  const closure = simulation?.roadClosure ? "Road closure reported." : "";
+
+  return {
+    summary:
+      `Heuristic analysis (${reason}). Current risk is ${risk}/100 with roughly ` +
+      `${delay} min of delay under "${weatherLabel}" conditions. ${accident} ${closure}`.trim(),
+    confidence: 55,
+    insights: [
+      { icon: "⏱️", label: "Time Impact", value: `${delay} min delay` },
+      { icon: "🌦️", label: "Weather Risk", value: risk >= 60 ? "High" : risk >= 40 ? "Moderate" : "Low" },
+      { icon: "🚗", label: "Traffic Risk", value: simulation?.accident ? "High" : "Moderate" },
+      { icon: "💰", label: "Cost Impact", value: `~R${Math.round(delay * 1.2)} extra` },
+    ],
+    recommendations: [
+      delay > 15 ? "Consider leaving earlier to absorb the predicted delay." : "Departure time looks reasonable.",
+      simulation?.accident || simulation?.roadClosure
+        ? "Check alternative routes before departure."
+        : "Keep monitoring traffic for last-minute changes.",
+      risk >= 60 ? "High risk detected — allow extra buffer time." : "Risk level is manageable.",
+    ],
+    riskFactors: [
+      ...(delay > 15 ? [{ label: "Significant delay", level: "high" }] : []),
+      ...(simulation?.accident ? [{ label: "Accident on route", level: "high" }] : []),
+      ...(simulation?.roadClosure ? [{ label: "Road closure", level: "high" }] : []),
+      { label: `Weather: ${weatherLabel}`, level: risk >= 60 ? "high" : risk >= 40 ? "medium" : "low" },
+    ],
+    historicalEvidence: "Heuristic fallback (AI unavailable)",
+    isFallback: true,
+  };
+};
+
 /* ============================================================
-   WEATHER DISPLAY COMPONENT - UPDATED
+   WEATHER DISPLAY COMPONENT
 ============================================================ */
 
 const WeatherDisplay = ({ weather, loading, onRefresh, originName, destinationName }) => {
@@ -254,34 +246,28 @@ const WeatherDisplay = ({ weather, loading, onRefresh, originName, destinationNa
   }
 
   const getWeatherIcon = (condition) => {
-    const text = condition?.toLowerCase() || '';
-    if (text.includes('sunny') || text.includes('clear')) return <Sun className="w-5 h-5 text-yellow-500" />;
-    if (text.includes('rain') || text.includes('drizzle')) return <CloudRain className="w-5 h-5 text-blue-500" />;
-    if (text.includes('cloud')) return <Cloud className="w-5 h-5 text-gray-500" />;
-    if (text.includes('wind')) return <Wind className="w-5 h-5 text-gray-400" />;
-    if (text.includes('fog') || text.includes('mist')) return <Cloud className="w-5 h-5 text-gray-400" />;
-    if (text.includes('snow')) return <Cloud className="w-5 h-5 text-blue-300" />;
+    const text = condition?.toLowerCase() || "";
+    if (text.includes("sunny") || text.includes("clear")) return <Sun className="w-5 h-5 text-yellow-500" />;
+    if (text.includes("rain") || text.includes("drizzle")) return <CloudRain className="w-5 h-5 text-blue-500" />;
+    if (text.includes("cloud")) return <Cloud className="w-5 h-5 text-gray-500" />;
+    if (text.includes("wind")) return <Wind className="w-5 h-5 text-gray-400" />;
+    if (text.includes("fog") || text.includes("mist")) return <Cloud className="w-5 h-5 text-gray-400" />;
+    if (text.includes("snow")) return <Cloud className="w-5 h-5 text-blue-300" />;
     return <Cloud className="w-5 h-5 text-gray-400" />;
   };
 
   const formatTime = (dateString) => {
-    if (!dateString) return 'Unknown';
+    if (!dateString) return "Unknown";
     const date = new Date(dateString);
-    return date.toLocaleTimeString('en-ZA', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    });
+    return date.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit", hour12: false });
   };
 
-  // Use the route names passed from parent
-  const originDisplayName = originName || 'Origin';
-  const destDisplayName = destinationName || 'Destination';
-  
-  // Get location names from weather data (if available)
+  const originDisplayName = originName || "Origin";
+  const destDisplayName = destinationName || "Destination";
+
   const originLocation = weather.origin?.location?.name || originDisplayName;
   const destLocation = weather.destination?.location?.name || destDisplayName;
-  const midLocation = weather.midpoint?.location?.name || 'Midpoint';
+  const midLocation = weather.midpoint?.location?.name || "Midpoint";
 
   return (
     <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
@@ -303,7 +289,7 @@ const WeatherDisplay = ({ weather, loading, onRefresh, originName, destinationNa
           </button>
         </div>
       </div>
-      
+
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-white/80 rounded-lg p-3 text-center">
           <p className="text-xs text-gray-500 font-medium">Origin</p>
@@ -312,13 +298,13 @@ const WeatherDisplay = ({ weather, loading, onRefresh, originName, destinationNa
             {getWeatherIcon(weather.origin?.current?.condition?.text)}
             <span className="text-xl font-bold">{Math.round(weather.origin?.current?.temp_c || 0)}°C</span>
           </div>
-          <p className="text-xs text-gray-600 truncate">{weather.origin?.current?.condition?.text || 'Unknown'}</p>
+          <p className="text-xs text-gray-600 truncate">{weather.origin?.current?.condition?.text || "Unknown"}</p>
           <div className="flex justify-center gap-3 mt-1 text-xs text-gray-500">
             <span>💧 {weather.origin?.current?.humidity || 0}%</span>
             <span>💨 {Math.round(weather.origin?.current?.wind_kph || 0)} km/h</span>
           </div>
         </div>
-        
+
         <div className="bg-white/80 rounded-lg p-3 text-center">
           <p className="text-xs text-gray-500 font-medium">Midpoint</p>
           <p className="text-xs text-gray-700 truncate">{midLocation}</p>
@@ -326,13 +312,13 @@ const WeatherDisplay = ({ weather, loading, onRefresh, originName, destinationNa
             {getWeatherIcon(weather.midpoint?.current?.condition?.text)}
             <span className="text-xl font-bold">{Math.round(weather.midpoint?.current?.temp_c || 0)}°C</span>
           </div>
-          <p className="text-xs text-gray-600 truncate">{weather.midpoint?.current?.condition?.text || 'Unknown'}</p>
+          <p className="text-xs text-gray-600 truncate">{weather.midpoint?.current?.condition?.text || "Unknown"}</p>
           <div className="flex justify-center gap-3 mt-1 text-xs text-gray-500">
             <span>💧 {weather.midpoint?.current?.humidity || 0}%</span>
             <span>💨 {Math.round(weather.midpoint?.current?.wind_kph || 0)} km/h</span>
           </div>
         </div>
-        
+
         <div className="bg-white/80 rounded-lg p-3 text-center">
           <p className="text-xs text-gray-500 font-medium">Destination</p>
           <p className="text-xs text-gray-700 truncate font-semibold">{destLocation}</p>
@@ -340,29 +326,34 @@ const WeatherDisplay = ({ weather, loading, onRefresh, originName, destinationNa
             {getWeatherIcon(weather.destination?.current?.condition?.text)}
             <span className="text-xl font-bold">{Math.round(weather.destination?.current?.temp_c || 0)}°C</span>
           </div>
-          <p className="text-xs text-gray-600 truncate">{weather.destination?.current?.condition?.text || 'Unknown'}</p>
+          <p className="text-xs text-gray-600 truncate">{weather.destination?.current?.condition?.text || "Unknown"}</p>
           <div className="flex justify-center gap-3 mt-1 text-xs text-gray-500">
             <span>💧 {weather.destination?.current?.humidity || 0}%</span>
             <span>💨 {Math.round(weather.destination?.current?.wind_kph || 0)} km/h</span>
           </div>
         </div>
       </div>
-      
+
       {weather.summary?.recommendation && (
         <div className="mt-3 pt-3 border-t border-blue-200">
-          <p className={`text-sm flex items-start gap-2 ${
-            weather.summary.recommendation.includes('Adverse') ? 'text-red-600' :
-            weather.summary.recommendation.includes('Partly') ? 'text-yellow-600' :
-            'text-blue-700'
-          }`}>
+          <p
+            className={`text-sm flex items-start gap-2 ${
+              weather.summary.recommendation.includes("Adverse")
+                ? "text-red-600"
+                : weather.summary.recommendation.includes("Partly")
+                ? "text-yellow-600"
+                : "text-blue-700"
+            }`}
+          >
             <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
             {weather.summary.recommendation}
           </p>
           <div className="flex gap-4 mt-2 text-xs text-gray-600">
             <span>🌡️ Avg: {weather.summary.average_temp || 0}°C</span>
-            <span>☁️ {weather.summary.conditions || 'Unknown'}</span>
+            <span>☁️ {weather.summary.conditions || "Unknown"}</span>
             <span className="flex gap-1">
-              {weather.summary.weather_icons?.origin} {weather.summary.weather_icons?.midpoint} {weather.summary.weather_icons?.destination}
+              {weather.summary.weather_icons?.origin} {weather.summary.weather_icons?.midpoint}{" "}
+              {weather.summary.weather_icons?.destination}
             </span>
           </div>
         </div>
@@ -372,51 +363,56 @@ const WeatherDisplay = ({ weather, loading, onRefresh, originName, destinationNa
 };
 
 /* ============================================================
-   TRAFFIC DISPLAY COMPONENT
+   TRAFFIC DISPLAY
 ============================================================ */
 
 const TrafficDisplay = ({ traffic }) => {
   if (!traffic) return null;
-  
+
   return (
-    <div className={`rounded-lg p-4 border ${
-      traffic.hasAccident || traffic.hasRoadClosure ? 'bg-red-50 border-red-200' :
-      traffic.hasTraffic ? 'bg-orange-50 border-orange-200' :
-      'bg-green-50 border-green-200'
-    }`}>
+    <div
+      className={`rounded-lg p-4 border ${
+        traffic.hasAccident || traffic.hasRoadClosure
+          ? "bg-red-50 border-red-200"
+          : traffic.hasTraffic
+          ? "bg-orange-50 border-orange-200"
+          : "bg-green-50 border-green-200"
+      }`}
+    >
       <div className="flex items-center justify-between mb-2">
         <h4 className="font-semibold text-sm flex items-center gap-2">
           <AlertCircle className="w-4 h-4" />
           Traffic Conditions
         </h4>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-          traffic.hasAccident || traffic.hasRoadClosure ? 'bg-red-200 text-red-700' :
-          traffic.hasTraffic ? 'bg-orange-200 text-orange-700' :
-          'bg-green-200 text-green-700'
-        }`}>
-          {traffic.hasAccident ? 'Accident' :
-           traffic.hasRoadClosure ? 'Road Closure' :
-           traffic.hasTraffic ? 'Heavy Traffic' :
-           'Clear'}
+        <span
+          className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+            traffic.hasAccident || traffic.hasRoadClosure
+              ? "bg-red-200 text-red-700"
+              : traffic.hasTraffic
+              ? "bg-orange-200 text-orange-700"
+              : "bg-green-200 text-green-700"
+          }`}
+        >
+          {traffic.hasAccident
+            ? "Accident"
+            : traffic.hasRoadClosure
+            ? "Road Closure"
+            : traffic.hasTraffic
+            ? "Heavy Traffic"
+            : "Clear"}
         </span>
       </div>
-      
+
       {traffic.trafficDelayMinutes > 0 && (
-        <p className="text-sm text-gray-600">
-          ⏱️ {traffic.trafficDelayMinutes} min delay expected
-        </p>
+        <p className="text-sm text-gray-600">⏱️ {traffic.trafficDelayMinutes} min delay expected</p>
       )}
-      
+
       {traffic.totalTimeMinutes > 0 && (
-        <p className="text-sm text-gray-600">
-          🕐 Total travel time: {traffic.totalTimeMinutes} min
-        </p>
+        <p className="text-sm text-gray-600">🕐 Total travel time: {traffic.totalTimeMinutes} min</p>
       )}
-      
+
       {traffic.recommendation && (
-        <p className="text-sm mt-2 font-medium text-gray-700">
-          {traffic.recommendation}
-        </p>
+        <p className="text-sm mt-2 font-medium text-gray-700">{traffic.recommendation}</p>
       )}
     </div>
   );
@@ -428,19 +424,19 @@ const TrafficDisplay = ({ traffic }) => {
 
 const AlternativeRoutesDisplay = ({ alternatives, onSelect }) => {
   if (!alternatives || alternatives.length === 0) return null;
-  
+
   return (
     <div className="space-y-3">
       <h4 className="font-semibold text-sm flex items-center gap-2">
         <Compass className="w-4 h-4" />
         Alternative Routes
       </h4>
-      
+
       {alternatives.map((alt, index) => (
         <div
           key={alt.id || index}
           className={`p-4 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md ${
-            alt.isRecommended || index === 0 ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-gray-50'
+            alt.isRecommended || index === 0 ? "border-green-300 bg-green-50" : "border-gray-200 bg-gray-50"
           }`}
           onClick={() => onSelect?.(alt)}
         >
@@ -451,17 +447,19 @@ const AlternativeRoutesDisplay = ({ alternatives, onSelect }) => {
                 {(alt.isRecommended || index === 0) && (
                   <span className="text-xs bg-green-200 text-green-700 px-2 py-0.5 rounded-full">Recommended</span>
                 )}
-                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  alt.risk_level === 'low' ? 'bg-green-100 text-green-700' :
-                  alt.risk_level === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                  'bg-red-100 text-red-700'
-                }`}>
-                  {alt.risk_level || 'Medium'} risk
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full ${
+                    alt.risk_level === "low"
+                      ? "bg-green-100 text-green-700"
+                      : alt.risk_level === "medium"
+                      ? "bg-yellow-100 text-yellow-700"
+                      : "bg-red-100 text-red-700"
+                  }`}
+                >
+                  {alt.risk_level || "Medium"} risk
                 </span>
               </div>
-              {alt.description && (
-                <p className="text-xs text-gray-500 mt-1">{alt.description}</p>
-              )}
+              {alt.description && <p className="text-xs text-gray-500 mt-1">{alt.description}</p>}
             </div>
             <div className="text-right">
               <p className="text-sm font-medium">{alt.duration || 0} min</p>
@@ -485,10 +483,7 @@ const AlternativeRoutesDisplay = ({ alternatives, onSelect }) => {
 ============================================================ */
 
 const RiskGauge = ({ score }) => {
-  const safeScore = Math.min(
-    Math.max(Math.round(score || 0), 0),
-    100
-  );
+  const safeScore = Math.min(Math.max(Math.round(score || 0), 0), 100);
 
   return (
     <div className="flex flex-col items-center">
@@ -501,16 +496,10 @@ const RiskGauge = ({ score }) => {
             : "border-green-400 bg-green-50"
         }`}
       >
-        <span className="font-bold text-2xl">
-          {safeScore}
-        </span>
+        <span className="font-bold text-2xl">{safeScore}</span>
       </div>
 
-      <span
-        className={`mt-1 px-3 py-0.5 rounded-full border text-xs font-medium ${getRiskClasses(
-          safeScore
-        )}`}
-      >
+      <span className={`mt-1 px-3 py-0.5 rounded-full border text-xs font-medium ${getRiskClasses(safeScore)}`}>
         {getRiskLabel(safeScore)}
       </span>
     </div>
@@ -521,53 +510,27 @@ const RiskGauge = ({ score }) => {
    COMPARISON BAR
 ============================================================ */
 
-const CompareBar = ({
-  label,
-  currentVal,
-  optimalVal,
-  currentLabel,
-  optimalLabel,
-}) => {
+const CompareBar = ({ label, currentVal, optimalVal, currentLabel, optimalLabel }) => {
   const current = Number(currentVal) || 0;
   const optimal = Number(optimalVal) || 0;
-
   const max = Math.max(current, optimal, 1);
 
   return (
     <div>
       <div className="flex justify-between text-sm mb-1">
-        <span className="font-semibold text-gray-700">
-          {label}
-        </span>
-
+        <span className="font-semibold text-gray-700">{label}</span>
         <div className="flex gap-4">
-          <span className="text-red-600 text-sm font-medium">
-            Current: {currentLabel}
-          </span>
-
-          <span className="text-green-600 text-sm font-medium">
-            Recommended: {optimalLabel}
-          </span>
+          <span className="text-red-600 text-sm font-medium">Current: {currentLabel}</span>
+          <span className="text-green-600 text-sm font-medium">Recommended: {optimalLabel}</span>
         </div>
       </div>
 
       <div className="space-y-1.5">
         <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-red-400 rounded-full"
-            style={{
-              width: `${(current / max) * 100}%`,
-            }}
-          />
+          <div className="h-full bg-red-400 rounded-full" style={{ width: `${(current / max) * 100}%` }} />
         </div>
-
         <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-green-500 rounded-full"
-            style={{
-              width: `${(optimal / max) * 100}%`,
-            }}
-          />
+          <div className="h-full bg-green-500 rounded-full" style={{ width: `${(optimal / max) * 100}%` }} />
         </div>
       </div>
     </div>
@@ -575,7 +538,7 @@ const CompareBar = ({
 };
 
 /* ============================================================
-   AI RESULTS DISPLAY COMPONENT
+   AI RESULTS DISPLAY
 ============================================================ */
 
 const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
@@ -613,29 +576,32 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
     );
   }
 
-  // Calculate confidence level display
   const getConfidenceColor = (confidence) => {
-    if (confidence >= 80) return 'text-green-600 bg-green-100';
-    if (confidence >= 60) return 'text-yellow-600 bg-yellow-100';
-    return 'text-orange-600 bg-orange-100';
+    if (confidence >= 80) return "text-green-600 bg-green-100";
+    if (confidence >= 60) return "text-yellow-600 bg-yellow-100";
+    return "text-orange-600 bg-orange-100";
   };
 
   const getConfidenceLabel = (confidence) => {
-    if (confidence >= 80) return 'High Confidence';
-    if (confidence >= 60) return 'Medium Confidence';
-    return 'Low Confidence';
+    if (confidence >= 80) return "High Confidence";
+    if (confidence >= 60) return "Medium Confidence";
+    return "Low Confidence";
   };
 
   return (
     <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl p-6 border border-purple-200">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Brain className="w-5 h-5 text-purple-600" />
           <h4 className="font-semibold text-gray-900">AI Route Analysis</h4>
           {analysis.confidence && (
             <span className={`text-xs px-2 py-0.5 rounded-full ${getConfidenceColor(analysis.confidence)}`}>
               {getConfidenceLabel(analysis.confidence)} • {analysis.confidence}%
+            </span>
+          )}
+          {analysis.isFallback && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
+              Heuristic fallback
             </span>
           )}
         </div>
@@ -647,12 +613,10 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
         )}
       </div>
 
-      {/* Summary */}
       <div className="bg-white/80 rounded-lg p-4 mb-4">
         <p className="text-sm text-gray-700">{analysis.summary}</p>
       </div>
 
-      {/* Key Insights */}
       {analysis.insights && analysis.insights.length > 0 && (
         <div className="mb-4">
           <h5 className="font-medium text-sm text-gray-700 mb-2 flex items-center gap-2">
@@ -663,7 +627,7 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
             {analysis.insights.map((insight, idx) => (
               <div key={idx} className="bg-white/80 rounded-lg p-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-lg">{insight.icon || '📊'}</span>
+                  <span className="text-lg">{insight.icon || "📊"}</span>
                   <span className="font-medium text-xs text-gray-600">{insight.label}</span>
                 </div>
                 <p className="text-sm font-semibold text-gray-800 mt-1">{insight.value}</p>
@@ -673,7 +637,6 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
         </div>
       )}
 
-      {/* Recommendations */}
       {analysis.recommendations && analysis.recommendations.length > 0 && (
         <div className="mb-4">
           <h5 className="font-medium text-sm text-gray-700 mb-2 flex items-center gap-2">
@@ -691,7 +654,6 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
         </div>
       )}
 
-      {/* Risk Factors */}
       {analysis.riskFactors && analysis.riskFactors.length > 0 && (
         <div>
           <h5 className="font-medium text-sm text-gray-700 mb-2 flex items-center gap-2">
@@ -703,9 +665,11 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
               <span
                 key={idx}
                 className={`text-xs px-3 py-1 rounded-full ${
-                  factor.level === 'high' ? 'bg-red-100 text-red-700 border border-red-200' :
-                  factor.level === 'medium' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
-                  'bg-green-100 text-green-700 border border-green-200'
+                  factor.level === "high"
+                    ? "bg-red-100 text-red-700 border border-red-200"
+                    : factor.level === "medium"
+                    ? "bg-orange-100 text-orange-700 border border-orange-200"
+                    : "bg-green-100 text-green-700 border border-green-200"
                 }`}
               >
                 {factor.label}
@@ -715,7 +679,6 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
         </div>
       )}
 
-      {/* Confidence Bar */}
       {analysis.confidence && (
         <div className="mt-4 pt-3 border-t border-purple-200">
           <div className="flex justify-between items-center text-xs text-gray-500 mb-1">
@@ -723,17 +686,15 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
             <span>{analysis.confidence}%</span>
           </div>
           <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-            <div 
+            <div
               className={`h-full rounded-full transition-all duration-1000 ${
-                analysis.confidence >= 80 ? 'bg-green-500' :
-                analysis.confidence >= 60 ? 'bg-yellow-500' :
-                'bg-orange-500'
+                analysis.confidence >= 80 ? "bg-green-500" : analysis.confidence >= 60 ? "bg-yellow-500" : "bg-orange-500"
               }`}
               style={{ width: `${analysis.confidence}%` }}
             />
           </div>
           <p className="text-xs text-gray-400 mt-1">
-            Based on {analysis.historicalData ? 'historical data and ' : ''}current route analysis
+            Based on {analysis.historicalData ? "historical data and " : ""}current route analysis
           </p>
         </div>
       )}
@@ -742,7 +703,7 @@ const AIResultsDisplay = ({ analysis, loading, onRefresh }) => {
 };
 
 /* ============================================================
-   AI CHAT MODAL COMPONENT
+   AI CHAT MODAL
 ============================================================ */
 
 const AIChatModal = ({ isOpen, onClose, onSendMessage, messages, isLoading, context }) => {
@@ -782,13 +743,12 @@ const AIChatModal = ({ isOpen, onClose, onSendMessage, messages, isLoading, cont
     "What are the risk factors?",
     "Optimize for time",
     "Should I take the alternative route?",
-    "What's the safest route?"
+    "What's the safest route?",
   ];
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div className="bg-white rounded-2xl w-full max-w-2xl h-[600px] flex flex-col">
-        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
@@ -799,15 +759,11 @@ const AIChatModal = ({ isOpen, onClose, onSendMessage, messages, isLoading, cont
               <p className="text-xs text-gray-500">Ask about your route, weather, traffic, or risk</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
-          >
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.length === 0 && (
             <div className="text-center py-8">
@@ -839,10 +795,7 @@ const AIChatModal = ({ isOpen, onClose, onSendMessage, messages, isLoading, cont
           )}
 
           {messages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-            >
+            <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
               <div
                 className={`max-w-[80%] rounded-xl px-4 py-2.5 ${
                   msg.role === "user"
@@ -872,25 +825,15 @@ const AIChatModal = ({ isOpen, onClose, onSendMessage, messages, isLoading, cont
           {isLoading && (
             <div className="flex justify-start">
               <div className="bg-gray-100 rounded-xl px-4 py-3 flex items-center gap-2">
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "0ms" }}
-                />
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "150ms" }}
-                />
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "300ms" }}
-                />
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
               </div>
             </div>
           )}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
         <div className="p-4 border-t">
           <div className="flex gap-2">
             <input
@@ -926,16 +869,13 @@ const ResultsPanel = ({ results, history, onSave, isSaving, aiAnalysis, aiLoadin
 
   return (
     <div className="space-y-5 overflow-y-auto max-h-[700px] pr-4">
-      {/* RESULT HEADER */}
       <div className="flex justify-between items-center">
         <div>
           <h3 className="font-bold text-xl flex items-center gap-2">
             <BarChart3 className="w-6 h-6 text-purple-600" />
             Simulation Results
           </h3>
-          <p className="text-sm text-gray-500 mt-1">
-            {results.routeName}
-          </p>
+          <p className="text-sm text-gray-500 mt-1">{results.routeName}</p>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -962,7 +902,6 @@ const ResultsPanel = ({ results, history, onSave, isSaving, aiAnalysis, aiLoadin
         </div>
       </div>
 
-      {/* DISRUPTION SUMMARY */}
       <div className="flex flex-wrap gap-2">
         {results.params.delay > 0 && (
           <span className="px-3 py-1 rounded-full bg-orange-100 text-orange-700 text-sm font-medium">
@@ -970,40 +909,23 @@ const ResultsPanel = ({ results, history, onSave, isSaving, aiAnalysis, aiLoadin
           </span>
         )}
         {results.params.accident && (
-          <span className="px-3 py-1 rounded-full bg-red-100 text-red-700 text-sm font-medium">
-            🚗 Accident
-          </span>
+          <span className="px-3 py-1 rounded-full bg-red-100 text-red-700 text-sm font-medium">🚗 Accident</span>
         )}
         {results.params.roadClosure && (
-          <span className="px-3 py-1 rounded-full bg-red-100 text-red-700 text-sm font-medium">
-            🚧 Road Closure
-          </span>
+          <span className="px-3 py-1 rounded-full bg-red-100 text-red-700 text-sm font-medium">🚧 Road Closure</span>
         )}
         <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-700 text-sm font-medium">
-          🌦️ {results.params.weather?.replace("_", " ") || 'Unknown'}
+          🌦️ {results.params.weather?.replace("_", " ") || "Unknown"}
         </span>
       </div>
 
-      {/* WEATHER DISPLAY */}
-      {results.params?.realWeather && (
-        <WeatherDisplay weather={results.params.realWeather} />
-      )}
+      {results.params?.realWeather && <WeatherDisplay weather={results.params.realWeather} />}
 
-      {/* TRAFFIC DISPLAY */}
-      {results.params?.realTraffic && (
-        <TrafficDisplay traffic={results.params.realTraffic} />
-      )}
+      {results.params?.realTraffic && <TrafficDisplay traffic={results.params.realTraffic} />}
 
-      {/* AI ANALYSIS */}
-      <AIResultsDisplay 
-        analysis={aiAnalysis}
-        loading={aiLoading}
-        onRefresh={onAIAnalyze}
-      />
+      <AIResultsDisplay analysis={aiAnalysis} loading={aiLoading} onRefresh={onAIAnalyze} />
 
-      {/* CARDS */}
       <div className="grid grid-cols-2 gap-4">
-        {/* CURRENT */}
         <div className="rounded-xl p-5 border-2 border-red-200 bg-red-50">
           <div className="flex justify-between items-start">
             <div className="flex-1">
@@ -1030,7 +952,6 @@ const ResultsPanel = ({ results, history, onSave, isSaving, aiAnalysis, aiLoadin
           </div>
         </div>
 
-        {/* RECOMMENDED */}
         <div className="rounded-xl p-5 border-2 border-green-300 bg-green-50">
           <div className="flex justify-between items-start">
             <div className="flex-1">
@@ -1054,17 +975,13 @@ const ResultsPanel = ({ results, history, onSave, isSaving, aiAnalysis, aiLoadin
         </div>
       </div>
 
-      {/* ALTERNATIVE ROUTES */}
       {results.alternatives && results.alternatives.length > 0 && (
-        <AlternativeRoutesDisplay 
+        <AlternativeRoutesDisplay
           alternatives={results.alternatives}
-          onSelect={(alt) => {
-            console.log('Selected alternative:', alt);
-          }}
+          onSelect={(alt) => console.log("Selected alternative:", alt)}
         />
       )}
 
-      {/* COMPARISON */}
       <div className="border-2 border-gray-200 rounded-xl p-5 space-y-4">
         <CompareBar
           label="Delivery Time"
@@ -1082,7 +999,6 @@ const ResultsPanel = ({ results, history, onSave, isSaving, aiAnalysis, aiLoadin
         />
       </div>
 
-      {/* SUMMARY */}
       <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-5">
         <h4 className="font-bold text-base flex items-center gap-2">
           <CheckCircle className="w-5 h-5 text-blue-600" />
@@ -1096,27 +1012,20 @@ const ResultsPanel = ({ results, history, onSave, isSaving, aiAnalysis, aiLoadin
           and reduce the estimated risk by{" "}
           <strong className="text-xl text-purple-700">
             {Math.max(results.current.riskScore - results.optimal.riskScore, 0)}%
-          </strong>.
+          </strong>
+          .
         </p>
         {results.recommendation && (
-          <p className="text-sm mt-3 text-blue-700 bg-blue-100 p-3 rounded-lg">
-            💡 {results.recommendation}
-          </p>
+          <p className="text-sm mt-3 text-blue-700 bg-blue-100 p-3 rounded-lg">💡 {results.recommendation}</p>
         )}
       </div>
 
-      {/* HISTORY */}
       {history.length > 0 && (
         <div className="border-t-2 pt-4">
-          <p className="text-sm font-bold text-gray-500 mb-3">
-            Simulation History
-          </p>
+          <p className="text-sm font-bold text-gray-500 mb-3">Simulation History</p>
           <div className="space-y-2">
             {history.map((item, index) => (
-              <div
-                key={item.id}
-                className="text-sm bg-gray-50 border-2 rounded-lg p-3 flex justify-between items-center"
-              >
+              <div key={item.id} className="text-sm bg-gray-50 border-2 rounded-lg p-3 flex justify-between items-center">
                 <span className="font-medium">Run #{history.length - index}</span>
                 <span className="font-bold text-lg">{item.current.duration} min</span>
                 <span className="text-red-500 font-bold text-lg">{item.current.riskScore}%</span>
@@ -1148,22 +1057,20 @@ const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
       <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-300">
         <History className="w-16 h-16 mx-auto mb-4 text-gray-400" />
         <p className="text-gray-500 text-lg font-medium">No saved simulations yet</p>
-        <p className="text-gray-400 text-sm mt-2">
-          Run a simulation and click "Save" to store it here
-        </p>
+        <p className="text-gray-400 text-sm mt-2">Run a simulation and click "Save" to store it here</p>
       </div>
     );
   }
 
   const formatDate = (dateString) => {
-    if (!dateString) return 'Unknown date';
+    if (!dateString) return "Unknown date";
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-ZA', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
+    return date.toLocaleDateString("en-ZA", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
@@ -1178,14 +1085,14 @@ const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
           </span>
         </h3>
       </div>
-      
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {simulations.map((sim) => {
           const riskScore = sim.current_route?.riskScore || sim.current?.riskScore || 0;
           const duration = sim.current_route?.duration || sim.current?.duration || 0;
-          const cost = sim.current_route?.cost || sim.current?.cost || 'R0';
-          const routeName = sim.route_name || sim.routeName || 'Unknown Route';
-          const weather = sim.parameters?.weather || 'unknown';
+          const cost = sim.current_route?.cost || sim.current?.cost || "R0";
+          const routeName = sim.route_name || sim.routeName || "Unknown Route";
+          const weather = sim.parameters?.weather || "unknown";
           const delay = sim.parameters?.delay || 0;
           const hasAccident = sim.parameters?.accident || false;
           const hasClosure = sim.parameters?.roadClosure || false;
@@ -1197,9 +1104,7 @@ const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
             >
               <div className="flex justify-between items-start">
                 <div className="flex-1 min-w-0">
-                  <h4 className="font-semibold text-gray-900 text-base truncate">
-                    {sim.name || routeName}
-                  </h4>
+                  <h4 className="font-semibold text-gray-900 text-base truncate">{sim.name || routeName}</h4>
                   <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
                     <Calendar className="w-3 h-3" />
                     {formatDate(sim.created_at || sim.timestamp)}
@@ -1239,11 +1144,11 @@ const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
                 </div>
                 <div className="bg-gray-50 rounded-lg p-2 text-center">
                   <p className="text-xs text-gray-500">Risk</p>
-                  <p className={`font-bold text-sm ${
-                    riskScore >= 70 ? 'text-red-600' :
-                    riskScore >= 40 ? 'text-orange-600' :
-                    'text-green-600'
-                  }`}>
+                  <p
+                    className={`font-bold text-sm ${
+                      riskScore >= 70 ? "text-red-600" : riskScore >= 40 ? "text-orange-600" : "text-green-600"
+                    }`}
+                  >
                     {riskScore}%
                   </p>
                 </div>
@@ -1252,8 +1157,7 @@ const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {delay > 0 && (
                   <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full flex items-center gap-1">
-                    <Clock className="w-3 h-3" />
-                    +{delay}min
+                    <Clock className="w-3 h-3" />+{delay}min
                   </span>
                 )}
                 {hasAccident && (
@@ -1268,9 +1172,9 @@ const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
                     Closure
                   </span>
                 )}
-                {weather && weather !== 'sunny' && weather !== 'unknown' && (
+                {weather && weather !== "sunny" && weather !== "unknown" && (
                   <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">
-                    {weather.replace('_', ' ')}
+                    {weather.replace("_", " ")}
                   </span>
                 )}
                 {riskScore >= 70 && (
@@ -1298,14 +1202,7 @@ const SavedSimulationsList = ({ simulations, onLoad, onDelete, loading }) => {
    SAVE MODAL
 ============================================================ */
 
-const SaveModal = ({ 
-  isOpen, 
-  onClose, 
-  onSave, 
-  results,
-  isSaving,
-  error 
-}) => {
+const SaveModal = ({ isOpen, onClose, onSave, results, isSaving, error }) => {
   const [name, setName] = useState("");
 
   useEffect(() => {
@@ -1326,20 +1223,15 @@ const SaveModal = ({
       <div className="bg-white rounded-2xl p-6 w-full max-w-md">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-xl font-bold">Save Simulation</h3>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
-          >
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
-        
+
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Simulation Name
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Simulation Name</label>
               <input
                 type="text"
                 value={name}
@@ -1365,9 +1257,7 @@ const SaveModal = ({
             )}
 
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm">
-                {error}
-              </div>
+              <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg text-sm">{error}</div>
             )}
 
             <div className="flex gap-3 justify-end pt-4">
@@ -1408,7 +1298,7 @@ const SaveModal = ({
 ============================================================ */
 
 const SimulationControls = ({
-  apiUrl = 'https://riskroute-server2.onrender.com',
+  apiUrl = API_BASE_URL,
   onSimulationComplete,
   onSaveSimulation,
   savedSimulations = [],
@@ -1423,7 +1313,7 @@ const SimulationControls = ({
   const [routes, setRoutes] = useState([]);
   const [routesLoading, setRoutesLoading] = useState(true);
   const [routesError, setRoutesError] = useState(null);
-  
+
   const [selectedRouteId, setSelectedRouteId] = useState("");
   const [delay, setDelay] = useState(30);
   const [weather, setWeather] = useState("moderate_rain");
@@ -1436,8 +1326,7 @@ const SimulationControls = ({
   const [saveError, setSaveError] = useState(null);
   const [showSavedList, setShowSavedList] = useState(false);
   const [localSavedSimulations, setLocalSavedSimulations] = useState([]);
-  
-  // Weather state
+
   const [currentWeather, setCurrentWeather] = useState(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState(null);
@@ -1447,15 +1336,18 @@ const SimulationControls = ({
   const historyRef = useRef([]);
   const [, forceUpdate] = useState({});
 
-  // ===== AI STATE =====
+  // AI state
   const [aiAnalysis, setAIAnalysis] = useState(null);
   const [aiAnalysisLoading, setAIAnalysisLoading] = useState(false);
   const [aiInitialized, setAiInitialized] = useState(false);
 
-  // ===== CHAT STATE =====
+  // Chat state
   const [showChat, setShowChat] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatLoading, setChatLoading] = useState(false);
+
+  // Ref lock so handleChatMessage identity is stable
+  const chatLoadingRef = useRef(false);
 
   /* ==========================================================
      FETCH WEATHER FOR CURRENT ROUTE
@@ -1463,57 +1355,61 @@ const SimulationControls = ({
 
   const fetchWeatherForRoute = useCallback(async (route) => {
     if (!route) {
-      console.warn('⚠️ No route provided for weather fetch');
+      console.warn("⚠️ No route provided for weather fetch");
       return;
     }
-    
-    // Get coordinates
+
     const originLat = route.origin_lat || route.start_point?.lat || 0;
     const originLng = route.origin_lng || route.start_point?.lng || 0;
     const destLat = route.dest_lat || route.stops?.[route.stops.length - 1]?.lat || 0;
     const destLng = route.dest_lng || route.stops?.[route.stops.length - 1]?.lng || 0;
-    
-    // Get the actual names from the route
-    const originName = route.origin_name || 'Origin';
-    const destinationName = route.destination_name || 'Destination';
-    
+
+    const originName = route.origin_name || "Origin";
+    const destinationName = route.destination_name || "Destination";
+
     console.log(`🌤️ Fetching weather for route: ${originName} → ${destinationName}`);
     console.log(`📍 Origin: ${originLat}, ${originLng}`);
     console.log(`📍 Destination: ${destLat}, ${destLng}`);
-    
-    if (!originLat || !originLng || !destLat || !destLng || 
-        originLat === 0 || originLng === 0 || destLat === 0 || destLng === 0) {
-      console.warn('⚠️ Missing coordinates for weather fetch');
+
+    if (
+      !originLat ||
+      !originLng ||
+      !destLat ||
+      !destLng ||
+      originLat === 0 ||
+      originLng === 0 ||
+      destLat === 0 ||
+      destLng === 0
+    ) {
+      console.warn("⚠️ Missing coordinates for weather fetch");
       setCurrentWeather(null);
       return;
     }
-    
+
     setWeatherLoading(true);
     setWeatherError(null);
-    
+
     try {
       const weatherUrl = `${API_BASE_URL}/api/weather/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`;
       console.log(`📡 Calling weather API: ${weatherUrl}`);
-      
+
       const response = await fetch(weatherUrl);
-      
+
       if (!response.ok) {
         throw new Error(`Weather API error: ${response.status}`);
       }
-      
+
       const data = await response.json();
-      
-      // Add the route names to the weather data for display
+
       if (data) {
         data.originName = originName;
         data.destinationName = destinationName;
       }
-      
-      console.log('✅ Weather data received:', data);
+
+      console.log("✅ Weather data received");
       setCurrentWeather(data);
-      
     } catch (error) {
-      console.error('❌ Error fetching weather:', error);
+      console.error("❌ Error fetching weather:", error);
       setWeatherError(error.message);
       setCurrentWeather(null);
     } finally {
@@ -1522,33 +1418,31 @@ const SimulationControls = ({
   }, []);
 
   /* ==========================================================
-     FETCH ROUTES FROM BACKEND
+     FETCH ROUTES
   ========================================================== */
 
-useEffect(() => {
-  const fetchRoutes = async () => {
-    try {
-      setRoutesLoading(true);
-      setStatusMessage("🔄 Loading routes...");
-      
-      const routesUrl = `${API_BASE_URL}/api/routes`;   // ✅ hits your real endpoint
-      console.log('📡 Fetching routes from:', routesUrl);
-      const response = await fetch(routesUrl);
-        
+  useEffect(() => {
+    const fetchRoutes = async () => {
+      try {
+        setRoutesLoading(true);
+        setStatusMessage("🔄 Loading routes...");
+
+        const routesUrl = `${API_BASE_URL}/api/routes`;
+        console.log("📡 Fetching routes from:", routesUrl);
+        const response = await fetch(routesUrl);
+
         if (!response.ok) {
           throw new Error(`Failed to fetch routes: ${response.status}`);
         }
-        
+
         const data = await response.json();
-        console.log('✅ Fetched routes:', data);
-        
+        console.log("✅ Fetched routes:", data);
+
         if (Array.isArray(data) && data.length > 0) {
           setRoutes(data);
           setRoutesError(null);
-          // setStatusMessage(`✅ Loaded ${data.length} routes `);
-          
           if (data.length > 0) {
-            console.log('🌤️ Auto-fetching weather for first route:', data[0].display_name);
+            console.log("🌤️ Auto-fetching weather for first route:", data[0].display_name);
             fetchWeatherForRoute(data[0]);
           }
         } else {
@@ -1557,7 +1451,7 @@ useEffect(() => {
           fetchWeatherForRoute(DEFAULT_ROUTES[0]);
         }
       } catch (err) {
-        console.error('❌ Error fetching routes:', err);
+        console.error("❌ Error fetching routes:", err);
         setRoutesError(err.message);
         setRoutes(DEFAULT_ROUTES);
         setStatusMessage("⚠️ Using default routes (API unavailable)");
@@ -1568,15 +1462,16 @@ useEffect(() => {
     };
 
     fetchRoutes();
-  }, [apiUrl, fetchWeatherForRoute]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiUrl]);
 
   /* ==========================================================
-     FETCH SAVED SIMULATIONS FROM DATABASE
+     FETCH SAVED SIMULATIONS
   ========================================================== */
 
   const fetchSavedSimulations = useCallback(async () => {
     try {
-      console.log('📋 Fetching saved simulations from database...');
+      console.log("📋 Fetching saved simulations from database...");
       const response = await fetch(`${API_BASE_URL}/api/simulations`);
       if (response.ok) {
         const data = await response.json();
@@ -1586,7 +1481,7 @@ useEffect(() => {
       }
       return [];
     } catch (error) {
-      console.error('Error fetching saved simulations:', error);
+      console.error("Error fetching saved simulations:", error);
       return [];
     }
   }, []);
@@ -1606,60 +1501,35 @@ useEffect(() => {
     return DEFAULT_ROUTES;
   }, [routes]);
 
-  /* ----------------------------------------------------------
-     SELECTED ROUTE
-  ---------------------------------------------------------- */
-
   const selectedRoute = useMemo(() => {
-    if (!availableRoutes.length) {
-      return null;
-    }
-
-    if (!selectedRouteId) {
-      return availableRoutes[0];
-    }
-
-    const found = availableRoutes.find(
-      (route) => getRouteId(route) === selectedRouteId
-    );
-    
+    if (!availableRoutes.length) return null;
+    if (!selectedRouteId) return availableRoutes[0];
+    const found = availableRoutes.find((route) => getRouteId(route) === selectedRouteId);
     return found || availableRoutes[0];
   }, [availableRoutes, selectedRouteId]);
 
-  // Fetch weather when selected route changes
   useEffect(() => {
     if (selectedRoute) {
-      console.log('🔄 Route changed, fetching weather for:', selectedRoute.display_name);
+      console.log("🔄 Route changed, fetching weather for:", selectedRoute.display_name);
       fetchWeatherForRoute(selectedRoute);
     }
   }, [selectedRoute, fetchWeatherForRoute]);
 
-  /* ----------------------------------------------------------
-     WEATHER
-  ---------------------------------------------------------- */
-
   const selectedWeather = useMemo(() => {
-    const found = WEATHER_OPTIONS.find(
-      (item) => item.value === weather
-    );
+    const found = WEATHER_OPTIONS.find((item) => item.value === weather);
     return found || WEATHER_OPTIONS[0];
   }, [weather]);
-
-  
 
   /* ==========================================================
      GENERATE AI ANALYSIS
   ========================================================== */
 
   const generateAIAnalysis = useCallback(async () => {
-  if (!resultsRef.current || aiAnalysisLoading) {
-    return;
-  }
+    if (!resultsRef.current || aiAnalysisLoading) return;
 
-  setAIAnalysisLoading(true);
-  setStatusMessage("🧠 AI is analyzing your route...");
+    setAIAnalysisLoading(true);
+    setStatusMessage("🧠 AI is analyzing your route...");
 
-  try {
     const results = resultsRef.current;
 
     const selectedRouteData = selectedRoute
@@ -1684,252 +1554,174 @@ useEffect(() => {
           : results.current?.riskScore >= 40
           ? "MEDIUM"
           : "LOW",
-
       duration: results.current?.duration ?? 0,
       cost: results.current?.cost ?? "R0",
       delayMinutes: results.current?.delay ?? 0,
-
       weather: results.params?.weather ?? weather,
       weatherLabel: results.params?.weather ?? weather,
-
       accident: results.params?.accident ?? false,
       roadClosure: results.params?.roadClosure ?? false,
-
-      recommendation:
-        results.recommendation || "",
-
+      recommendation: results.recommendation || "",
       optimal: results.optimal || null,
-      alternatives:
-        results.alternatives || [],
+      alternatives: results.alternatives || [],
     };
 
-    const response = await fetch(
-  `${AI_API_BASE_URL}/api/ai/analyze`,
-  {
+    try {
+      const response = await fetch(`${AI_API_BASE_URL}/api/ai/analyze`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           route: selectedRouteData,
           simulation: simulationData,
           weather: currentWeather,
           traffic: results.params?.realTraffic || null,
         }),
+      });
+
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
       }
-    );
 
-    const data = await response.json();
+      if (!response.ok) {
+        // Rate limit → fall back to heuristic
+        if (response.status === 429) {
+          throw new Error("AI rate limit reached — using heuristic fallback");
+        }
+        throw new Error(data?.error || data?.message || `AI analysis failed (${response.status})`);
+      }
 
-    if (!response.ok) {
-      throw new Error(
-        data.error ||
-        data.message ||
-        "AI analysis failed."
-      );
+      if (!data?.success || !data?.analysis) {
+        throw new Error("AI returned an invalid response — using heuristic fallback");
+      }
+
+      // Groq sometimes returns the analysis as a JSON string field — normalise it.
+      let analysis = data.analysis;
+      if (typeof analysis === "string") {
+        const parsed = safeParseJSON(analysis);
+        if (parsed) analysis = parsed;
+      }
+
+      console.log("🤖 REAL AI ANALYSIS:", analysis);
+
+      setAIAnalysis({
+        ...analysis,
+        historicalData:
+          analysis.historicalEvidence || `${data.historical?.count || 0} historical simulations analyzed`,
+      });
+      setAiInitialized(true);
+      setStatusMessage("✅ AI analysis complete!");
+    } catch (error) {
+      console.error("❌ AI Analysis Error:", error);
+
+      // Build a heuristic fallback so the panel is never empty
+      const fallback = buildFallbackAnalysis(simulationData, error.message);
+      setAIAnalysis(fallback);
+      setAiInitialized(true);
+      setStatusMessage(`⚠️ ${error.message} — showing heuristic analysis.`);
+    } finally {
+      setAIAnalysisLoading(false);
     }
-
-    if (!data.success || !data.analysis) {
-      throw new Error(
-        "The AI server returned an invalid response."
-      );
-    }
-
-    console.log(
-      "🤖 REAL AI ANALYSIS:",
-      data.analysis
-    );
-
-    setAIAnalysis({
-      ...data.analysis,
-
-      historicalData:
-        data.analysis.historicalEvidence ||
-        `${data.historical?.count || 0} historical simulations analyzed`,
-    });
-
-    setAiInitialized(true);
-
-    setStatusMessage(
-      "✅ AI analysis complete!"
-    );
-
-  } catch (error) {
-    console.error(
-      "❌ AI Analysis Error:",
-      error
-    );
-
-    setStatusMessage(
-      `❌ AI analysis failed: ${error.message}`
-    );
-
-    setAIAnalysis(null);
-
-  } finally {
-    setAIAnalysisLoading(false);
-  }
-}, [
-  aiAnalysisLoading,
-  selectedRoute,
-  weather,
-  currentWeather,
-]);
+  }, [aiAnalysisLoading, selectedRoute, weather, currentWeather]);
 
   /* ==========================================================
      HANDLE CHAT MESSAGE
   ========================================================== */
 
-  const handleChatMessage = useCallback(async (message) => {
-  if (!message?.trim() || chatLoading) {
-    return;
-  }
+  const handleChatMessage = useCallback(
+    async (message) => {
+      if (!message?.trim() || chatLoadingRef.current) return;
 
-  setChatMessages(prev => [
-    ...prev,
-    {
-      role: "user",
-      content: message,
-    },
-  ]);
+      setChatMessages((prev) => [...prev, { role: "user", content: message }]);
+      setChatLoading(true);
+      chatLoadingRef.current = true;
 
-  setChatLoading(true);
+      try {
+        const results = resultsRef.current;
 
-  try {
-    const results = resultsRef.current;
+        const selectedRouteData = selectedRoute
+          ? {
+              id: getRouteId(selectedRoute),
+              name: getRouteName(selectedRoute),
+              origin: selectedRoute.origin_name,
+              destination: selectedRoute.destination_name,
+              distance_km: getDistance(selectedRoute),
+              duration_min: getDuration(selectedRoute),
+              estimated_cost: getCost(selectedRoute),
+            }
+          : null;
 
-    const selectedRouteData = selectedRoute
-      ? {
-          id: getRouteId(selectedRoute),
-          name: getRouteName(selectedRoute),
-          origin: selectedRoute.origin_name,
-          destination: selectedRoute.destination_name,
-          distance_km: getDistance(selectedRoute),
-          duration_min: getDuration(selectedRoute),
-          estimated_cost: getCost(selectedRoute),
+        const simulationData = results
+          ? {
+              riskScore: results.current?.riskScore ?? 0,
+              duration: results.current?.duration ?? 0,
+              cost: results.current?.cost ?? "R0",
+              delayMinutes: results.current?.delay ?? 0,
+              weather: results.params?.weather ?? weather,
+              accident: results.params?.accident ?? false,
+              roadClosure: results.params?.roadClosure ?? false,
+              recommendation: results.recommendation || "",
+              optimal: results.optimal || null,
+              alternatives: results.alternatives || [],
+            }
+          : null;
+
+        const response = await fetch(`${AI_API_BASE_URL}/api/ai/ask`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: message.trim(),
+            route: selectedRouteData,
+            simulation: simulationData,
+            weather: currentWeather,
+            traffic: results?.params?.realTraffic || null,
+          }),
+        });
+
+        let data = null;
+        try {
+          data = await response.json();
+        } catch {
+          data = null;
         }
-      : null;
 
-    const simulationData = results
-      ? {
-          riskScore:
-            results.current?.riskScore ?? 0,
-
-          duration:
-            results.current?.duration ?? 0,
-
-          cost:
-            results.current?.cost ?? "R0",
-
-          delayMinutes:
-            results.current?.delay ?? 0,
-
-          weather:
-            results.params?.weather ?? weather,
-
-          accident:
-            results.params?.accident ?? false,
-
-          roadClosure:
-            results.params?.roadClosure ?? false,
-
-          recommendation:
-            results.recommendation || "",
-
-          optimal:
-            results.optimal || null,
-
-          alternatives:
-            results.alternatives || [],
+        if (!response.ok) {
+          if (response.status === 429) {
+            throw new Error("AI rate limit reached. Please wait a moment and try again.");
+          }
+          throw new Error(data?.error || data?.message || `Ask AI failed (${response.status})`);
         }
-      : null;
 
-    const response = await fetch(
-  `${AI_API_BASE_URL}/api/ai/ask`,
-  {
-        method: "POST",
+        if (!data?.success) {
+          throw new Error(data?.error || "AI did not return a successful response.");
+        }
 
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          question: message.trim(),
-
-          route: selectedRouteData,
-
-          simulation: simulationData,
-
-          weather: currentWeather,
-
-          traffic:
-            results?.params?.realTraffic ||
-            null,
-        }),
+        setChatMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: data.answer || "I could not generate an answer." },
+        ]);
+      } catch (error) {
+        console.error("❌ Ask AI error:", error);
+        setChatMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `❌ AI error: ${error.message}`, isError: true },
+        ]);
+      } finally {
+        setChatLoading(false);
+        chatLoadingRef.current = false;
       }
-    );
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        data.error ||
-        data.message ||
-        "Ask AI failed."
-      );
-    }
-
-    if (!data.success) {
-      throw new Error(
-        data.error ||
-        "AI did not return a successful response."
-      );
-    }
-
-    setChatMessages(prev => [
-      ...prev,
-      {
-        role: "assistant",
-        content:
-          data.answer ||
-          "I could not generate an answer.",
-      },
-    ]);
-
-  } catch (error) {
-    console.error(
-      "❌ Ask AI error:",
-      error
-    );
-
-    setChatMessages(prev => [
-      ...prev,
-      {
-        role: "assistant",
-        content:
-          `❌ AI error: ${error.message}`,
-        isError: true,
-      },
-    ]);
-
-  } finally {
-    setChatLoading(false);
-  }
-}, [
-  selectedRoute,
-  weather,
-  currentWeather,
-  chatLoading,
-]);
+    },
+    [selectedRoute, weather, currentWeather]
+  );
 
   /* ==========================================================
      RUN SIMULATION
   ========================================================== */
 
   const runSimulation = useCallback(async () => {
-    if (!selectedRoute || isRunning) {
-      return;
-    }
+    if (!selectedRoute || isRunning) return;
 
     console.log("SIMULATION STARTED");
 
@@ -1941,11 +1733,11 @@ useEffect(() => {
       const originLng = selectedRoute.origin_lng || 0;
       const destLat = selectedRoute.dest_lat || 0;
       const destLng = selectedRoute.dest_lng || 0;
-      
+
       let weatherData = currentWeather;
-      
+
       if (!weatherData || weatherData.is_mock) {
-        console.log('🌤️ Fetching fresh weather data for simulation...');
+        console.log("🌤️ Fetching fresh weather data for simulation...");
         const weatherResponse = await fetch(
           `${API_BASE_URL}/api/weather/route?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}`
         );
@@ -1962,21 +1754,21 @@ useEffect(() => {
         );
         if (trafficResponse.ok) {
           trafficData = await trafficResponse.json();
-          console.log('✅ Traffic data fetched:', trafficData);
+          console.log("✅ Traffic data fetched:", trafficData);
         }
       } catch (err) {
-        console.warn('⚠️ Could not fetch traffic data:', err.message);
+        console.warn("⚠️ Could not fetch traffic data:", err.message);
       }
 
       const baseDuration = getDuration(selectedRoute);
       const baseDistance = getDistance(selectedRoute);
       const baseCost = getCost(selectedRoute);
-      
+
       let totalDelay = Number(delay) || 0;
       totalDelay += Number(trafficData?.trafficDelayMinutes || 0);
       totalDelay += Number(selectedRoute.traffic_delay) || 0;
       totalDelay += baseDuration * (selectedWeather.multiplier - 1);
-      
+
       if (hasAccident) totalDelay += 20;
       if (hasRoadClosure) totalDelay += 30;
       totalDelay = Math.max(Math.round(totalDelay), 0);
@@ -1993,15 +1785,15 @@ useEffect(() => {
       let riskScore = 15;
       riskScore += totalDelay * 0.35;
       riskScore += selectedWeather.risk || 0;
-      
-      if (weatherData?.summary?.conditions?.includes('Rain')) riskScore += 15;
-      if (weatherData?.summary?.conditions?.includes('Storm')) riskScore += 30;
-      if (weatherData?.summary?.conditions?.includes('Snow')) riskScore += 25;
-      
+
+      if (weatherData?.summary?.conditions?.includes("Rain")) riskScore += 15;
+      if (weatherData?.summary?.conditions?.includes("Storm")) riskScore += 30;
+      if (weatherData?.summary?.conditions?.includes("Snow")) riskScore += 25;
+
       if (trafficData?.hasAccident) riskScore += 25;
       if (trafficData?.hasRoadClosure) riskScore += 30;
       if (trafficData?.hasTraffic) riskScore += 10;
-      
+
       if (hasAccident) riskScore += 20;
       if (hasRoadClosure) riskScore += 20;
       riskScore = Math.min(Math.max(Math.round(riskScore), 0), 100);
@@ -2013,27 +1805,31 @@ useEffect(() => {
       let alternatives = [];
       try {
         const altResponse = await fetch(
-          `${API_BASE_URL}/api/routes/alternatives?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}&origin_name=${encodeURIComponent(selectedRoute.origin_name || 'Origin')}&destination_name=${encodeURIComponent(selectedRoute.destination_name || 'Destination')}&has_accident=${hasAccident}&has_road_closure=${hasRoadClosure}`
+          `${API_BASE_URL}/api/routes/alternatives?origin_lat=${originLat}&origin_lng=${originLng}&dest_lat=${destLat}&dest_lng=${destLng}&origin_name=${encodeURIComponent(
+            selectedRoute.origin_name || "Origin"
+          )}&destination_name=${encodeURIComponent(
+            selectedRoute.destination_name || "Destination"
+          )}&has_accident=${hasAccident}&has_road_closure=${hasRoadClosure}`
         );
         if (altResponse.ok) {
           const altData = await altResponse.json();
           alternatives = altData.alternatives || [];
         }
       } catch (err) {
-        console.warn('⚠️ Could not fetch alternatives:', err.message);
+        console.warn("⚠️ Could not fetch alternatives:", err.message);
       }
 
-      let recommendation = '';
+      let recommendation = "";
       if (trafficData?.hasRoadClosure) {
-        recommendation = '🚧 URGENT: Road closure detected. Use alternative route immediately!';
+        recommendation = "🚧 URGENT: Road closure detected. Use alternative route immediately!";
       } else if (trafficData?.hasAccident) {
-        recommendation = '🚗 Accident detected on route. Consider alternative route to avoid delays.';
-      } else if (weatherData?.summary?.recommendation?.includes('Adverse')) {
+        recommendation = "🚗 Accident detected on route. Consider alternative route to avoid delays.";
+      } else if (weatherData?.summary?.recommendation?.includes("Adverse")) {
         recommendation = `⚠️ ${weatherData.summary.recommendation}`;
       } else if (trafficData?.hasTraffic) {
         recommendation = `⚠️ Traffic delay of ${trafficData.trafficDelayMinutes} minutes expected. Consider alternative route.`;
       } else {
-        recommendation = '✅ All clear! The current route is optimal for travel.';
+        recommendation = "✅ All clear! The current route is optimal for travel.";
       }
 
       const simulationResult = {
@@ -2046,7 +1842,7 @@ useEffect(() => {
           accident: hasAccident,
           roadClosure: hasRoadClosure,
           realWeather: weatherData,
-          realTraffic: trafficData
+          realTraffic: trafficData,
         },
         current: {
           duration: currentDuration,
@@ -2061,7 +1857,7 @@ useEffect(() => {
           delay: 0,
         },
         alternatives,
-        recommendation
+        recommendation,
       };
 
       console.log("SIMULATION RESULT:", simulationResult);
@@ -2081,13 +1877,22 @@ useEffect(() => {
 
       // Auto-trigger AI analysis after simulation
       setTimeout(() => generateAIAnalysis(), 1000);
-
     } catch (error) {
-      console.error('❌ Simulation error:', error);
-      setStatusMessage('❌ Failed to run simulation with real-time data');
+      console.error("❌ Simulation error:", error);
+      setStatusMessage("❌ Failed to run simulation with real-time data");
       setIsRunning(false);
     }
-  }, [selectedRoute, isRunning, delay, hasAccident, hasRoadClosure, selectedWeather, currentWeather, onSimulationComplete, generateAIAnalysis]);
+  }, [
+    selectedRoute,
+    isRunning,
+    delay,
+    hasAccident,
+    hasRoadClosure,
+    selectedWeather,
+    currentWeather,
+    onSimulationComplete,
+    generateAIAnalysis,
+  ]);
 
   /* ==========================================================
      RESET
@@ -2103,7 +1908,7 @@ useEffect(() => {
     setHasAccident(false);
     setHasRoadClosure(false);
     setAIAnalysis(null);
-    
+
     forceUpdate({});
   }, []);
 
@@ -2111,17 +1916,20 @@ useEffect(() => {
      ROUTE CHANGE
   ========================================================== */
 
-  const handleRouteChange = useCallback((event) => {
-    const routeId = event.target.value;
-    setSelectedRouteId(routeId);
-    setStatusMessage("🔄 Loading weather for selected route...");
-    
-    const route = availableRoutes.find(r => getRouteId(r) === routeId);
-    if (route) {
-      console.log('📍 Route changed to:', route.display_name);
-      fetchWeatherForRoute(route);
-    }
-  }, [availableRoutes, fetchWeatherForRoute]);
+  const handleRouteChange = useCallback(
+    (event) => {
+      const routeId = event.target.value;
+      setSelectedRouteId(routeId);
+      setStatusMessage("🔄 Loading weather for selected route...");
+
+      const route = availableRoutes.find((r) => getRouteId(r) === routeId);
+      if (route) {
+        console.log("📍 Route changed to:", route.display_name);
+        fetchWeatherForRoute(route);
+      }
+    },
+    [availableRoutes, fetchWeatherForRoute]
+  );
 
   /* ==========================================================
      REFRESH WEATHER
@@ -2151,220 +1959,209 @@ useEffect(() => {
      SAVE SIMULATION TO DATABASE
   ========================================================== */
 
-  const handleSave = useCallback(async (name) => {
-  console.log('🔵 1. Save function called with name:', name);
-  
-  if (!resultsRef.current) {
-    console.log('🔴 2. No results found');
-    setSaveError("No simulation results to save");
-    return;
-  }
+  const handleSave = useCallback(
+    async (name) => {
+      console.log("🔵 1. Save function called with name:", name);
 
-  console.log('🔵 3. Results:', resultsRef.current);
-  setIsSaving(true);
-  setSaveError(null);
-
-  try {
-    // ============================================
-    // 🔥 FIX: Trim the data to avoid 413 error
-    // ============================================
-    
-    // 1. Clean the params - remove large weather/traffic data
-    const cleanParams = { ...(resultsRef.current.params || {}) };
-    
-    // Remove large weather data (keep only essential info)
-    if (cleanParams.realWeather) {
-      const weather = cleanParams.realWeather;
-      cleanParams.realWeather = {
-        summary: weather.summary || {},
-        origin_weather: weather.origin?.current?.condition?.text || 'Unknown',
-        dest_weather: weather.destination?.current?.condition?.text || 'Unknown',
-        avg_temp: weather.summary?.average_temp || 0,
-        conditions: weather.summary?.conditions || 'Unknown'
-      };
-    }
-    
-    // Remove large traffic data (keep only essential info)
-    if (cleanParams.realTraffic) {
-      const traffic = cleanParams.realTraffic;
-      cleanParams.realTraffic = {
-        hasTraffic: traffic.hasTraffic || false,
-        hasAccident: traffic.hasAccident || false,
-        hasRoadClosure: traffic.hasRoadClosure || false,
-        trafficDelayMinutes: traffic.trafficDelayMinutes || 0,
-        recommendation: traffic.recommendation || ''
-      };
-    }
-
-    // 2. Clean the current route data
-    const cleanCurrent = { ...(resultsRef.current.current || {}) };
-    // Remove any large nested objects
-    delete cleanCurrent.rawData;
-    delete cleanCurrent.fullDetails;
-
-    // 3. Clean the optimal route data
-    const cleanOptimal = { ...(resultsRef.current.optimal || {}) };
-    delete cleanOptimal.rawData;
-    delete cleanOptimal.fullDetails;
-
-    // 4. Limit alternatives to top 3 and keep only essential fields
-    let cleanAlternatives = [];
-    if (Array.isArray(resultsRef.current.alternatives)) {
-      cleanAlternatives = resultsRef.current.alternatives
-        .slice(0, 3) // Only keep top 3
-        .map(alt => ({
-          name: alt.displayName || alt.name || 'Alternative',
-          duration: alt.duration || 0,
-          distance: alt.distance || 0,
-          risk_level: alt.risk_level || 'medium',
-          recommendation: alt.recommendation || ''
-        }));
-    }
-
-    // 5. Build the final clean data
-    const simulationData = {
-      name: name.trim() || resultsRef.current.routeName || 'Unnamed Simulation',
-      routeId: selectedRoute ? getRouteId(selectedRoute) : null,
-      routeName: resultsRef.current.routeName || 'Unknown Route',
-      params: cleanParams,
-      current: cleanCurrent,
-      optimal: cleanOptimal,
-      alternatives: cleanAlternatives,
-      recommendation: (resultsRef.current.recommendation || '').slice(0, 500), // Limit length
-      timestamp: new Date().toISOString()
-    };
-
-    console.log('🔵 4. Clean data size:', JSON.stringify(simulationData).length, 'bytes');
-    console.log('🔵 5. Sending clean data:', simulationData);
-
-    const response = await fetch(`${API_BASE_URL}/api/simulations`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify(simulationData),
-});
-
-    console.log('🔵 6. Response status:', response.status);
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.log('🔴 7. Error response:', errorData);
-      throw new Error(errorData.error || `Failed to save simulation (${response.status})`);
-    }
-
-    const saved = await response.json();
-    console.log('✅ 8. Saved successfully:', saved);
-    
-    setLocalSavedSimulations(prev => [saved, ...prev]);
-    setShowSaveModal(false);
-    setStatusMessage("✅ Simulation saved to database!");
-    
-  } catch (error) {
-    console.error('🔴 9. Save error:', error);
-    setSaveError(error.message || "Failed to save simulation");
-    setStatusMessage(`❌ Save failed: ${error.message}`);
-  } finally {
-    setIsSaving(false);
-  }
-}, [selectedRoute]);
-
-  /* ==========================================================
-     LOAD SIMULATION FROM DATABASE
-  ========================================================== */
-
-  const handleLoadSimulation = useCallback(async (simulation) => {
-    try {
-      console.log('📂 Loading simulation:', simulation);
-      
-      let fullData = simulation;
-      if (simulation.id && !simulation.current_route) {
-        const response = await fetch(`${API_BASE_URL}/api/simulations/${simulation.id}`);
-        if (response.ok) {
-          fullData = await response.json();
-          console.log('📂 Fetched full simulation data:', fullData);
-        }
-      }
-      
-      const loadedResult = {
-        id: fullData.id || `loaded-${Date.now()}`,
-        routeName: fullData.route_name || fullData.routeName || 'Unknown Route',
-        timestamp: fullData.created_at || fullData.timestamp || new Date().toISOString(),
-        params: fullData.parameters || fullData.params || {},
-        current: fullData.current_route || fullData.current || {},
-        optimal: fullData.optimal_route || fullData.optimal || {},
-        alternatives: fullData.alternatives || [],
-        recommendation: fullData.recommendation || ''
-      };
-
-      resultsRef.current = loadedResult;
-      hasRunSimulationRef.current = true;
-      
-      if (loadedResult.params) {
-        if (loadedResult.params.delay) setDelay(loadedResult.params.delay);
-        if (loadedResult.params.weather) setWeather(loadedResult.params.weather);
-        if (loadedResult.params.accident !== undefined) setHasAccident(loadedResult.params.accident);
-        if (loadedResult.params.roadClosure !== undefined) setHasRoadClosure(loadedResult.params.roadClosure);
+      if (!resultsRef.current) {
+        console.log("🔴 2. No results found");
+        setSaveError("No simulation results to save");
+        return;
       }
 
-      setStatusMessage("📂 Simulation loaded from database!");
-      forceUpdate({});
+      console.log("🔵 3. Results:", resultsRef.current);
+      setIsSaving(true);
+      setSaveError(null);
 
-      if (typeof onLoadSimulation === 'function') {
-        onLoadSimulation(loadedResult);
-      }
-
-      // Auto-trigger AI analysis on loaded simulation
-      setTimeout(() => generateAIAnalysis(), 1000);
-    } catch (error) {
-      console.error("❌ Load error:", error);
-      setStatusMessage("❌ Failed to load simulation");
-    }
-  }, [onLoadSimulation, generateAIAnalysis]);
-
-  /* ==========================================================
-     DELETE SIMULATION FROM DATABASE
-  ========================================================== */
-
-  const handleDeleteSimulation = useCallback(async (id) => {
-    if (!id) return;
-    
-    if (window.confirm('Are you sure you want to delete this simulation?')) {
       try {
-        console.log('🗑️ Deleting simulation:', id);
-        
-        const response = await fetch(`${API_BASE_URL}/api/simulations/${id}`, {
-          method: 'DELETE',
+        const cleanParams = { ...(resultsRef.current.params || {}) };
+
+        if (cleanParams.realWeather) {
+          const weather = cleanParams.realWeather;
+          cleanParams.realWeather = {
+            summary: weather.summary || {},
+            origin_weather: weather.origin?.current?.condition?.text || "Unknown",
+            dest_weather: weather.destination?.current?.condition?.text || "Unknown",
+            avg_temp: weather.summary?.average_temp || 0,
+            conditions: weather.summary?.conditions || "Unknown",
+          };
+        }
+
+        if (cleanParams.realTraffic) {
+          const traffic = cleanParams.realTraffic;
+          cleanParams.realTraffic = {
+            hasTraffic: traffic.hasTraffic || false,
+            hasAccident: traffic.hasAccident || false,
+            hasRoadClosure: traffic.hasRoadClosure || false,
+            trafficDelayMinutes: traffic.trafficDelayMinutes || 0,
+            recommendation: traffic.recommendation || "",
+          };
+        }
+
+        const cleanCurrent = { ...(resultsRef.current.current || {}) };
+        delete cleanCurrent.rawData;
+        delete cleanCurrent.fullDetails;
+
+        const cleanOptimal = { ...(resultsRef.current.optimal || {}) };
+        delete cleanOptimal.rawData;
+        delete cleanOptimal.fullDetails;
+
+        let cleanAlternatives = [];
+        if (Array.isArray(resultsRef.current.alternatives)) {
+          cleanAlternatives = resultsRef.current.alternatives.slice(0, 3).map((alt) => ({
+            name: alt.displayName || alt.name || "Alternative",
+            duration: alt.duration || 0,
+            distance: alt.distance || 0,
+            risk_level: alt.risk_level || "medium",
+            recommendation: alt.recommendation || "",
+          }));
+        }
+
+        const simulationData = {
+          name: name.trim() || resultsRef.current.routeName || "Unnamed Simulation",
+          routeId: selectedRoute ? getRouteId(selectedRoute) : null,
+          routeName: resultsRef.current.routeName || "Unknown Route",
+          params: cleanParams,
+          current: cleanCurrent,
+          optimal: cleanOptimal,
+          alternatives: cleanAlternatives,
+          recommendation: (resultsRef.current.recommendation || "").slice(0, 500),
+          timestamp: new Date().toISOString(),
+        };
+
+        console.log("🔵 4. Clean data size:", JSON.stringify(simulationData).length, "bytes");
+
+        const response = await fetch(`${API_BASE_URL}/api/simulations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(simulationData),
         });
+
+        console.log("🔵 6. Response status:", response.status);
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || 'Failed to delete simulation');
+          console.log("🔴 7. Error response:", errorData);
+          throw new Error(errorData.error || `Failed to save simulation (${response.status})`);
         }
 
-        const result = await response.json();
-        console.log('✅ Simulation deleted:', result);
-        
-        setLocalSavedSimulations(prev => prev.filter(sim => sim.id !== id));
-        
-        if (typeof onDeleteSimulation === 'function') {
-          onDeleteSimulation(id);
-        }
-        
-        if (resultsRef.current && resultsRef.current.id === id) {
-          resultsRef.current = null;
-          hasRunSimulationRef.current = false;
-          forceUpdate({});
-        }
-        
-        setStatusMessage("🗑️ Simulation deleted from database!");
-        
+        const saved = await response.json();
+        console.log("✅ 8. Saved successfully:", saved);
+
+        setLocalSavedSimulations((prev) => [saved, ...prev]);
+        setShowSaveModal(false);
+        setStatusMessage("✅ Simulation saved to database!");
       } catch (error) {
-        console.error("❌ Delete error:", error);
-        setStatusMessage(`❌ Failed to delete: ${error.message}`);
+        console.error("🔴 9. Save error:", error);
+        setSaveError(error.message || "Failed to save simulation");
+        setStatusMessage(`❌ Save failed: ${error.message}`);
+      } finally {
+        setIsSaving(false);
       }
-    }
-  }, [onDeleteSimulation]);
+    },
+    [selectedRoute]
+  );
+
+  /* ==========================================================
+     LOAD SIMULATION
+  ========================================================== */
+
+  const handleLoadSimulation = useCallback(
+    async (simulation) => {
+      try {
+        console.log("📂 Loading simulation:", simulation);
+
+        let fullData = simulation;
+        if (simulation.id && !simulation.current_route) {
+          const response = await fetch(`${API_BASE_URL}/api/simulations/${simulation.id}`);
+          if (response.ok) {
+            fullData = await response.json();
+            console.log("📂 Fetched full simulation data:", fullData);
+          }
+        }
+
+        const loadedResult = {
+          id: fullData.id || `loaded-${Date.now()}`,
+          routeName: fullData.route_name || fullData.routeName || "Unknown Route",
+          timestamp: fullData.created_at || fullData.timestamp || new Date().toISOString(),
+          params: fullData.parameters || fullData.params || {},
+          current: fullData.current_route || fullData.current || {},
+          optimal: fullData.optimal_route || fullData.optimal || {},
+          alternatives: fullData.alternatives || [],
+          recommendation: fullData.recommendation || "",
+        };
+
+        resultsRef.current = loadedResult;
+        hasRunSimulationRef.current = true;
+
+        if (loadedResult.params) {
+          if (loadedResult.params.delay) setDelay(loadedResult.params.delay);
+          if (loadedResult.params.weather) setWeather(loadedResult.params.weather);
+          if (loadedResult.params.accident !== undefined) setHasAccident(loadedResult.params.accident);
+          if (loadedResult.params.roadClosure !== undefined) setHasRoadClosure(loadedResult.params.roadClosure);
+        }
+
+        setStatusMessage("📂 Simulation loaded from database!");
+        forceUpdate({});
+
+        if (typeof onLoadSimulation === "function") {
+          onLoadSimulation(loadedResult);
+        }
+
+        setTimeout(() => generateAIAnalysis(), 1000);
+      } catch (error) {
+        console.error("❌ Load error:", error);
+        setStatusMessage("❌ Failed to load simulation");
+      }
+    },
+    [onLoadSimulation, generateAIAnalysis]
+  );
+
+  /* ==========================================================
+     DELETE SIMULATION
+  ========================================================== */
+
+  const handleDeleteSimulation = useCallback(
+    async (id) => {
+      if (!id) return;
+
+      if (window.confirm("Are you sure you want to delete this simulation?")) {
+        try {
+          console.log("🗑️ Deleting simulation:", id);
+
+          const response = await fetch(`${API_BASE_URL}/api/simulations/${id}`, {
+            method: "DELETE",
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || "Failed to delete simulation");
+          }
+
+          const result = await response.json();
+          console.log("✅ Simulation deleted:", result);
+
+          setLocalSavedSimulations((prev) => prev.filter((sim) => sim.id !== id));
+
+          if (typeof onDeleteSimulation === "function") {
+            onDeleteSimulation(id);
+          }
+
+          if (resultsRef.current && resultsRef.current.id === id) {
+            resultsRef.current = null;
+            hasRunSimulationRef.current = false;
+            forceUpdate({});
+          }
+
+          setStatusMessage("🗑️ Simulation deleted from database!");
+        } catch (error) {
+          console.error("❌ Delete error:", error);
+          setStatusMessage(`❌ Failed to delete: ${error.message}`);
+        }
+      }
+    },
+    [onDeleteSimulation]
+  );
 
   /* ==========================================================
      TOGGLE SAVED LIST
@@ -2402,7 +2199,6 @@ useEffect(() => {
 
   return (
     <div className="w-full bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-
       {/* HEADER */}
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
@@ -2427,14 +2223,8 @@ useEffect(() => {
               ⚠️ Using default routes (API unavailable: {routesError})
             </p>
           )}
-          {!routesError && routes.length > 0 && (
-            <p className="text-xs text-green-600 mt-1">
-              {/* ✅ Using {routes.length} routes from optimized_routes table */}
-            </p>
-          )}
         </div>
         <div className="flex gap-3 flex-wrap">
-          {/* CHAT BUTTON */}
           <button
             onClick={() => setShowChat(true)}
             className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white rounded-xl text-sm font-medium transition-colors"
@@ -2450,7 +2240,7 @@ useEffect(() => {
             <History className="w-4 h-4" />
             Saved ({allSavedSimulations?.length || 0})
           </button>
-          
+
           {hasRunSimulation && (
             <span className="text-sm bg-green-100 text-green-700 px-4 py-2 rounded-full font-medium">
               ✅ Simulation complete
@@ -2473,10 +2263,8 @@ useEffect(() => {
 
       {/* TWO-COLUMN LAYOUT */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        
-        {/* LEFT COLUMN - Controls */}
+        {/* LEFT COLUMN */}
         <div className="xl:col-span-4 space-y-5">
-          {/* STATUS */}
           {statusMessage && (
             <div
               className={`p-4 rounded-xl text-sm ${
@@ -2493,9 +2281,7 @@ useEffect(() => {
 
           {/* ROUTE */}
           <div>
-            <label className="text-sm font-semibold text-gray-700 block mb-2">
-              Select Route
-            </label>
+            <label className="text-sm font-semibold text-gray-700 block mb-2">Select Route</label>
             <div className="relative">
               <MapPin className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
               <select
@@ -2519,8 +2305,8 @@ useEffect(() => {
             )}
           </div>
 
-          {/* WEATHER DISPLAY - Pass the route names */}
-          <WeatherDisplay 
+          {/* WEATHER DISPLAY */}
+          <WeatherDisplay
             weather={currentWeather}
             loading={weatherLoading}
             onRefresh={refreshWeather}
@@ -2528,15 +2314,15 @@ useEffect(() => {
             destinationName={selectedRoute?.destination_name}
           />
 
+          {weatherError && (
+            <p className="text-xs text-red-500 -mt-3">⚠️ {weatherError}</p>
+          )}
+
           {/* DELAY */}
           <div>
             <div className="flex justify-between mb-2">
-              <label className="text-sm font-semibold text-gray-700">
-                Additional Delay
-              </label>
-              <span className="text-lg font-bold text-purple-600">
-                {delay} min
-              </span>
+              <label className="text-sm font-semibold text-gray-700">Additional Delay</label>
+              <span className="text-lg font-bold text-purple-600">{delay} min</span>
             </div>
             <input
               type="range"
@@ -2549,11 +2335,9 @@ useEffect(() => {
             />
           </div>
 
-          {/* WEATHER */}
+          {/* WEATHER OVERRIDE */}
           <div>
-            <label className="text-sm font-semibold text-gray-700 block mb-2">
-              Manual Weather Override
-            </label>
+            <label className="text-sm font-semibold text-gray-700 block mb-2">Manual Weather Override</label>
             <div className="relative">
               {weather === "sunny" ? (
                 <Sun className="absolute left-3 top-3 w-5 h-5 text-yellow-500" />
@@ -2577,9 +2361,7 @@ useEffect(() => {
 
           {/* DISRUPTIONS */}
           <div>
-            <label className="text-sm font-semibold text-gray-700 block mb-2">
-              Disruptions
-            </label>
+            <label className="text-sm font-semibold text-gray-700 block mb-2">Disruptions</label>
             <div className="flex gap-6">
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -2635,11 +2417,11 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* RIGHT COLUMN - Results */}
+        {/* RIGHT COLUMN */}
         <div className="xl:col-span-8">
           {hasRunSimulation && results ? (
-            <ResultsPanel 
-              results={results} 
+            <ResultsPanel
+              results={results}
               history={history}
               onSave={handleSaveClick}
               isSaving={isSaving}
@@ -2652,9 +2434,7 @@ useEffect(() => {
               <div className="text-center">
                 <BarChart3 className="w-20 h-20 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-500 text-xl font-medium">No simulation results yet</p>
-                <p className="text-gray-400 text-sm mt-2">
-                  Adjust the parameters and click "Run Simulation"
-                </p>
+                <p className="text-gray-400 text-sm mt-2">Adjust the parameters and click "Run Simulation"</p>
                 {aiInitialized && localSavedSimulations.length > 0 && (
                   <p className="text-xs text-purple-500 mt-3">
                     🧠 AI has learned from {localSavedSimulations.length} previous simulations
@@ -2664,7 +2444,6 @@ useEffect(() => {
             </div>
           )}
         </div>
-
       </div>
 
       {/* SAVE MODAL */}
@@ -2687,7 +2466,7 @@ useEffect(() => {
         context={{
           routeName: selectedRoute ? getRouteName(selectedRoute) : "No route selected",
           simulationCount: localSavedSimulations.length,
-          hasResults: !!resultsRef.current
+          hasResults: !!resultsRef.current,
         }}
       />
     </div>
