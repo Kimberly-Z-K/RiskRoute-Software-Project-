@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import { Navigation, MapPin, Loader2 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 
-const API_BASE_URL = "https://riskroute-server2.onrender.com/api";
+// 🔧 Change this if your backend uses a prefix like /api
+const API_BASE_URL = "http://localhost:5000/api";
 
 const RouteOptimisationForm = ({ onGenerateRoutes }) => {
   const [originPlace, setOriginPlace] = useState("");
@@ -12,7 +13,7 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [assigningLoading, setAssigningLoading] = useState(false);
-  const [resolvingLoading, setResolvingLoading] = useState(false); // 🔥 NEW
+  const [resolvingLoading, setResolvingLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [latestResult, setLatestResult] = useState(null);
   const [savedRoutes, setSavedRoutes] = useState([]);
@@ -21,9 +22,45 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
   const [resolvedRouteLabels, setResolvedRouteLabels] = useState({});
   const [vehicles, setVehicles] = useState([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
-  const [resolvingProgress, setResolvingProgress] = useState({ current: 0, total: 0 }); // 🔥 NEW
+  const [resolvingProgress, setResolvingProgress] = useState({ current: 0, total: 0 });
 
   const log = (...args) => console.log("[RouteOptimisationForm]", ...args);
+
+  // ---------------------------------------------------------------
+  // 🔍 DIAGNOSTIC: ping the backend on mount to see what it exposes
+  // ---------------------------------------------------------------
+  useEffect(() => {
+    const runDiagnostics = async () => {
+      const endpoints = [
+        "/",
+        "/geocode?query=Sandton",
+        "/reverse-geocode?lat=-26.1076&lng=28.0567",
+        "/optimize",
+        "/optimized-routes",
+      ];
+
+      console.group("🔍 Backend diagnostics against", API_BASE_URL);
+      for (const path of endpoints) {
+        try {
+          const res = await fetch(`${API_BASE_URL}${path}`, {
+            method: path === "/optimize" ? "POST" : "GET",
+            headers: { "Content-Type": "application/json" },
+            body: path === "/optimize" ? JSON.stringify({}) : undefined,
+          });
+          const text = await res.text();
+          console.log(
+            `${res.status} ${path}`,
+            text.slice(0, 200)
+          );
+        } catch (err) {
+          console.warn(`FAILED ${path}`, err.message);
+        }
+      }
+      console.groupEnd();
+    };
+
+    runDiagnostics();
+  }, []);
 
   const formatConstraints = (constraints) => {
     if (!constraints) return "No constraints set.";
@@ -60,7 +97,9 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
     try {
       data = JSON.parse(text);
     } catch {
-      throw new Error(`${context} returned HTML instead of JSON. Check API URL and route.`);
+      throw new Error(
+        `${context} returned HTML instead of JSON. Check API URL and route. URL was: ${response.url}`
+      );
     }
 
     log(`${context} parsed JSON:`, data);
@@ -97,11 +136,14 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
 
     try {
       const url = `${API_BASE_URL}/optimized-routes`;
+      log("GET", url);
       const response = await fetch(url);
       const data = await parseResponse(response, "GET /optimized-routes");
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to load saved routes");
+        throw new Error(
+          `${data.error || "Failed to load saved routes"} (status ${response.status} at ${url})`
+        );
       }
 
       setSavedRoutes(Array.isArray(data.data) ? data.data : []);
@@ -118,11 +160,15 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
     log("Geocoding place:", query);
 
     const url = `${API_BASE_URL}/geocode?query=${encodeURIComponent(query)}`;
+    log("GET", url);
+
     const response = await fetch(url);
     const data = await parseResponse(response, "GET /geocode");
 
     if (!response.ok) {
-      throw new Error(data.error || `Failed to geocode ${query}`);
+      throw new Error(
+        `${data.error || `Failed to geocode ${query}`} (status ${response.status} at ${url})`
+      );
     }
 
     return data.data;
@@ -136,12 +182,16 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
       const response = await fetch(url);
 
       if (!response.ok) {
-        console.warn(`Reverse geocoding failed for (${lat}, ${lng}):`, response.status);
+        console.warn(
+          `Reverse geocoding failed for (${lat}, ${lng}):`,
+          response.status,
+          response.url
+        );
         return null;
       }
 
       const data = await parseResponse(response, "GET /reverse-geocode");
-      
+
       if (!data || !data.data || !data.data.label) {
         console.warn(`No label found for (${lat}, ${lng})`);
         return null;
@@ -163,7 +213,7 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
     log(`Resolving ${savedRoutes.length} saved routes...`);
     setResolvingLoading(true);
     setResolvingProgress({ current: 0, total: savedRoutes.length });
-    
+
     const next = {};
     let processed = 0;
 
@@ -172,7 +222,10 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
         let startLabel = "Unknown";
         if (item.start_point) {
           try {
-            const result = await reverseGeocodePoint(item.start_point.lat, item.start_point.lng);
+            const result = await reverseGeocodePoint(
+              item.start_point.lat,
+              item.start_point.lng
+            );
             startLabel = result?.label || "Unknown location";
           } catch (error) {
             console.error(`Failed to resolve start for route ${item.id}:`, error);
@@ -182,7 +235,6 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
 
         const stopLabels = [];
         if (item.stops && Array.isArray(item.stops) && item.stops.length > 0) {
-          // Resolve each stop
           for (let i = 0; i < item.stops.length; i++) {
             const stop = item.stops[i];
             try {
@@ -190,24 +242,36 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
               if (result?.label) {
                 stopLabels.push(result.label);
               } else {
-                stopLabels.push(`Stop ${i + 1} (${stop.lat.toFixed(4)}, ${stop.lng.toFixed(4)})`);
+                stopLabels.push(
+                  `Stop ${i + 1} (${stop.lat.toFixed(4)}, ${stop.lng.toFixed(4)})`
+                );
               }
             } catch (error) {
-              console.error(`Failed to resolve stop ${i} for route ${item.id}:`, error);
+              console.error(
+                `Failed to resolve stop ${i} for route ${item.id}:`,
+                error
+              );
               stopLabels.push(`Stop ${i + 1} (unresolved)`);
             }
           }
-        } 
-        else if (item.end_point) {
+        } else if (item.end_point) {
           try {
-            const result = await reverseGeocodePoint(item.end_point.lat, item.end_point.lng);
+            const result = await reverseGeocodePoint(
+              item.end_point.lat,
+              item.end_point.lng
+            );
             if (result?.label) {
               stopLabels.push(result.label);
             } else {
-              stopLabels.push(`Destination (${item.end_point.lat.toFixed(4)}, ${item.end_point.lng.toFixed(4)})`);
+              stopLabels.push(
+                `Destination (${item.end_point.lat.toFixed(4)}, ${item.end_point.lng.toFixed(4)})`
+              );
             }
           } catch (error) {
-            console.error(`Failed to resolve end point for route ${item.id}:`, error);
+            console.error(
+              `Failed to resolve end point for route ${item.id}:`,
+              error
+            );
             stopLabels.push("Destination (unresolved)");
           }
         }
@@ -216,18 +280,26 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
           start: startLabel,
           stops: stopLabels.length > 0 ? stopLabels : ["No stops"],
         };
-        
+
         processed++;
-        setResolvingProgress({ current: processed, total: savedRoutes.length });
-        
+        setResolvingProgress({
+          current: processed,
+          total: savedRoutes.length,
+        });
       } catch (error) {
-        console.error(`[RouteOptimisationForm] Failed resolving route ${item.id}:`, error);
+        console.error(
+          `[RouteOptimisationForm] Failed resolving route ${item.id}:`,
+          error
+        );
         next[item.id] = {
           start: "Error resolving",
           stops: ["Error resolving"],
         };
         processed++;
-        setResolvingProgress({ current: processed, total: savedRoutes.length });
+        setResolvingProgress({
+          current: processed,
+          total: savedRoutes.length,
+        });
       }
     }
 
@@ -415,10 +487,6 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
           ) : null}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          {/* vehicle type and load inputs intentionally kept commented out */}
-        </div>
-
         <div>
           <label className="text-sm text-gray-600 block mb-1">Assign to Vehicle</label>
           <select
@@ -462,8 +530,8 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
         <div className="pt-3">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold text-gray-900">Saved Optimized Routes</h3>
-            <button 
-              onClick={loadSavedRoutes} 
+            <button
+              onClick={loadSavedRoutes}
               disabled={historyLoading}
               className="text-sm text-blue-600 hover:text-blue-700 disabled:opacity-50"
             >
@@ -484,14 +552,15 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
                   </p>
                 </div>
               </div>
-              {/* Progress bar */}
               <div className="mt-2 w-full bg-blue-200 rounded-full h-1.5">
-                <div 
+                <div
                   className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
-                  style={{ 
-                    width: `${resolvingProgress.total > 0 
-                      ? (resolvingProgress.current / resolvingProgress.total) * 100 
-                      : 0}%` 
+                  style={{
+                    width: `${
+                      resolvingProgress.total > 0
+                        ? (resolvingProgress.current / resolvingProgress.total) * 100
+                        : 0
+                    }%`,
                   }}
                 />
               </div>
@@ -510,7 +579,7 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
               {savedRoutes.map((item) => {
                 const labels = resolvedRouteLabels[item.id];
                 const isResolving = resolvingLoading && !labels;
-                
+
                 return (
                   <div
                     key={item.id}
@@ -544,7 +613,9 @@ const RouteOptimisationForm = ({ onGenerateRoutes }) => {
                               <Loader2 className="w-3 h-3 animate-spin" />
                               Resolving...
                             </span>
-                          ) : labels?.start || "Unknown"}
+                          ) : (
+                            labels?.start || "Unknown"
+                          )}
                         </p>
                       </div>
 
