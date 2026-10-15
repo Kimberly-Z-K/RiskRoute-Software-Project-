@@ -35,20 +35,37 @@ const ALLOWED_ORIGINS = [
   'http://localhost:5174',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
-  'https://riskroute-software-project-2.onrender.com/',
-  'https://web-jl4vmr8sr-asce15.vercel.app/',
 ];
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin) return callback(null, true); // curl, server-to-server
+      // Allow server-to-server calls (no Origin header)
+      if (!origin) return callback(null, true);
+
+      // Local dev
       if (
-        ALLOWED_ORIGINS.includes(origin) ||
-        process.env.NODE_ENV !== 'production'
+        origin.startsWith('http://localhost') ||
+        origin.startsWith('http://127.0.0.1')
       ) {
         return callback(null, true);
       }
+
+      // Any Vercel deployment
+      if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      // Any Render deployment
+      if (/^https:\/\/[a-z0-9-]+\.onrender\.com$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      // Explicitly listed origins
+      if (ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
       return callback(new Error(`CORS blocked: ${origin}`));
     },
     credentials: true,
