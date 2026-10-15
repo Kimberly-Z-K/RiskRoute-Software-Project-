@@ -6,7 +6,6 @@ import {
   Text,
   ActivityIndicator,
   ScrollView,
-  SafeAreaView,
   Alert,
   Modal,
   FlatList,
@@ -16,7 +15,10 @@ import {
   TextInput,
   Vibration,
   Linking,
+  Platform,
+  StatusBar,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { Marker, Polyline, Callout } from "react-native-maps";
 import * as ExpoLocation from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
@@ -247,6 +249,7 @@ const buildReportText = (eventType, metadata = {}) => {
 
 export default function LocationScreen({ route }) {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const tripId = route?.params?.tripId;
 
   const [state, setState] = useState({
@@ -1890,7 +1893,11 @@ export default function LocationScreen({ route }) {
       return (
         <View
           pointerEvents="none"
-          style={[styles.pauseTimerPill, styles.pauseTimerPillResumed]}
+          style={[
+            styles.pauseTimerPill,
+            styles.pauseTimerPillResumed,
+            { top: topPadding + 8 },
+          ]}
         >
           <View style={[styles.pauseTimerIconWrap, styles.pauseTimerIconWrapResumed]}>
             <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
@@ -1911,7 +1918,11 @@ export default function LocationScreen({ route }) {
       return (
         <View
           pointerEvents="none"
-          style={[styles.pauseTimerPill, styles.pauseTimerPillResumed]}
+          style={[
+            styles.pauseTimerPill,
+            styles.pauseTimerPillResumed,
+            { top: topPadding + 8 },
+          ]}
         >
           <View style={[styles.pauseTimerIconWrap, styles.pauseTimerIconWrapResumed]}>
             <Ionicons name="play-outline" size={16} color="#fff" />
@@ -1940,6 +1951,7 @@ export default function LocationScreen({ route }) {
         style={[
           styles.pauseTimerPill,
           urgent && styles.pauseTimerPillUrgent,
+          { top: topPadding + 8 },
         ]}
       >
         <View
@@ -2050,14 +2062,14 @@ export default function LocationScreen({ route }) {
       </MapView>
 
       {routeLoading && (
-        <View style={styles.mapOverlay}>
+        <View style={[styles.mapOverlay, { top: topPadding + 16 }]}>
           <ActivityIndicator size="small" color="#007bff" />
           <Text style={styles.overlayText}>Building route...</Text>
         </View>
       )}
 
       {searchingStations && (
-        <View style={styles.mapOverlay}>
+        <View style={[styles.mapOverlay, { top: topPadding + 8 }]}>
           <ActivityIndicator size="small" color="#007bff" />
           <Text style={styles.overlayText}>
             {routeCoords.length > 1
@@ -2077,7 +2089,7 @@ export default function LocationScreen({ route }) {
       {fullMap && (
         <>
           <TouchableOpacity
-            style={styles.backButton}
+            style={[styles.backButton, { top: topPadding + 8 }]}
             onPress={() => updateState({ fullMap: false })}
           >
             <Ionicons name="arrow-back-outline" size={24} color="#fff" />
@@ -2725,13 +2737,33 @@ export default function LocationScreen({ route }) {
     </ScrollView>
   );
 
+  const topPadding =
+    insets?.top > 0
+      ? insets.top
+      : Platform.OS === "android"
+      ? StatusBar.currentHeight || 24
+      : 44;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      <StatusBar
+        barStyle="dark-content"
+        backgroundColor="transparent"
+        translucent={true}
+      />
+
       {renderMap()}
       {renderPauseTimerOverlay()}
+
       {!fullMap && (
         <View
-          style={styles.infoAreaContainer}
+          style={[
+            styles.infoAreaContainer,
+            {
+              paddingTop: topPadding,
+              paddingBottom: insets?.bottom || 0,
+            },
+          ]}
           onLayout={(e) => {
             const h = e.nativeEvent.layout.height;
             if (h > 0 && Math.abs(h - infoAreaHeight) > 1) {
@@ -2743,9 +2775,10 @@ export default function LocationScreen({ route }) {
           {renderButtonSheet()}
         </View>
       )}
+
       {renderFuelModal()}
       {renderPauseModal()}
-    </SafeAreaView>
+    </View>
   );
 }
 

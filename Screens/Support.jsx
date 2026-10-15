@@ -16,7 +16,9 @@ import {
   UIManager,
   Dimensions,
   KeyboardAvoidingView,
+  StatusBar,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
 import { auditLog } from "../utils/auditlogger";
@@ -108,6 +110,7 @@ const FAQS = [
 
 const SupportScreen = ({ navigation }) => {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const [openFaq, setOpenFaq] = useState(null);
   const [tickets, setTickets] = useState([]);
@@ -398,12 +401,53 @@ const SupportScreen = ({ navigation }) => {
     );
   };
 
+  // Top padding: use safe area inset, fall back to status bar height
+  const topPadding =
+    insets?.top > 0
+      ? insets.top
+      : Platform.OS === "android"
+      ? StatusBar.currentHeight || 24
+      : 44;
+
   return (
-    <>
+    <View style={styles.container}>
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor="transparent"
+        translucent={true}
+      />
+
+      {/* FIXED HEADER (does not scroll) */}
+      <View style={[styles.header, { paddingTop: topPadding + 16 }]}>
+        <Text style={styles.headerTitle}>Help &amp; Support</Text>
+        <Text style={styles.headerSubtitle}>
+          We're here 24/7 for you and your fleet
+        </Text>
+
+        {/* Emergency Card */}
+        <TouchableOpacity
+          style={styles.emergencyCard}
+          onPress={openEmergency}
+          activeOpacity={0.9}
+        >
+          <View style={styles.emergencyIconWrap}>
+            <Ionicons name="warning" size={22} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.emergencyTitle}>Emergency Line</Text>
+            <Text style={styles.emergencySubtitle}>
+              Immediate assistance 24/7
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={22} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      {/* SCROLLABLE BODY */}
       <ScrollView
         ref={scrollRef}
-        style={styles.container}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        style={styles.scrollArea}
+        contentContainerStyle={{ paddingBottom: 120 + (insets?.bottom || 0) }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -413,33 +457,6 @@ const SupportScreen = ({ navigation }) => {
           />
         }
       >
-        {/* HEADER */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Help &amp; Support</Text>
-          <Text style={styles.headerSubtitle}>
-            We're here 24/7 for you and your fleet
-          </Text>
-
-          {/* Emergency Card */}
-          <TouchableOpacity
-            style={styles.emergencyCard}
-            onPress={openEmergency}
-            activeOpacity={0.9}
-          >
-            <View style={styles.emergencyIconWrap}>
-              <Ionicons name="warning" size={22} color="#fff" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.emergencyTitle}>Emergency Line</Text>
-              <Text style={styles.emergencySubtitle}>
-                Immediate assistance 24/7
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={22} color="#fff" />
-          </TouchableOpacity>
-        </View>
-
-        {/* BODY */}
         <View style={styles.body}>
 
           {/* QUICK CONTACT */}
@@ -627,7 +644,12 @@ const SupportScreen = ({ navigation }) => {
           style={{ flex: 1 }}
         >
           <View style={styles.modalOverlay}>
-            <View style={styles.modalSheet}>
+            <View
+              style={[
+                styles.modalSheet,
+                { paddingBottom: insets?.bottom || 0 },
+              ]}
+            >
               <View style={styles.modalHandleWrap}>
                 <View style={styles.modalHandle} />
               </View>
@@ -759,7 +781,7 @@ const SupportScreen = ({ navigation }) => {
           </View>
         </KeyboardAvoidingView>
       </Modal>
-    </>
+    </View>
   );
 };
 
@@ -769,10 +791,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#ebf2ff",
   },
 
+  scrollArea: {
+    flex: 1,
+    backgroundColor: "#ebf2ff",
+  },
+
   // ---------- Header ----------
   header: {
     backgroundColor: "#0A1F44",
-    paddingTop: 70,
     paddingHorizontal: 20,
     paddingBottom: 24,
     borderBottomLeftRadius: 28,

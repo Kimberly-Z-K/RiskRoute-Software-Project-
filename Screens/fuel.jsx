@@ -12,7 +12,10 @@ import {
   Alert,
   TextInput,
   Dimensions,
+  Platform,
+  StatusBar,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -121,6 +124,7 @@ const getBudgetStatus = (spent, limit) => {
 
 const FuelScreen = ({ navigation }) => {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const [receipts, setReceipts] = useState([]);
   const [receiptUrls, setReceiptUrls] = useState({});
@@ -132,6 +136,7 @@ const FuelScreen = ({ navigation }) => {
 
   const [vehicle, setVehicle] = useState(null);
   const [vehicleLoading, setVehicleLoading] = useState(true);
+  const [driverName, setDriverName] = useState("");
 
   const [allocation, setAllocation] = useState(null);
   const [allocationLoading, setAllocationLoading] = useState(true);
@@ -182,6 +187,7 @@ const FuelScreen = ({ navigation }) => {
 
     try {
       let driverId = null;
+      let driverRow = null;
 
       const { data: byUser, error: byUserErr } = await supabase
         .from("drivers")
@@ -196,6 +202,7 @@ const FuelScreen = ({ navigation }) => {
       });
 
       driverId = byUser?.driver_id ?? null;
+      driverRow = byUser ?? null;
 
       if (!driverId && user.email) {
         const { data: byEmail, error: byEmailErr } = await supabase
@@ -211,7 +218,10 @@ const FuelScreen = ({ navigation }) => {
         });
 
         driverId = byEmail?.driver_id ?? null;
+        driverRow = byEmail ?? driverRow;
       }
+
+      setDriverName(driverRow?.driver_username || "");
 
       if (!driverId) {
         setVehicle(null);
@@ -458,10 +468,6 @@ const FuelScreen = ({ navigation }) => {
 
   // ============================================
   // Upload receipt to Supabase Storage
-  // - Normalizes content:// or ph:// URIs to file://
-  // - Reads the file as bytes and uploads the bytes (FormData file uploads
-  //   are not supported by the current Expo runtime)
-  // - Validates the file exists with a real size
   // ============================================
   const uploadReceiptToSupabase = useCallback(async (uri, userId) => {
     let normalizedUri = uri;
@@ -471,7 +477,6 @@ const FuelScreen = ({ navigation }) => {
       console.log('[FuelScreen] raw uri:', uri);
       console.log('[FuelScreen] uri starts with:', uri?.substring(0, 40));
 
-      // Normalize content:// (Android) or ph:// (iOS) to file://
       if (!uri.startsWith('file://')) {
         const stamp = Date.now();
         const target = `${FileSystem.cacheDirectory}receipt-${stamp}.jpg`;
@@ -484,7 +489,6 @@ const FuelScreen = ({ navigation }) => {
         console.log('[FuelScreen] normalized uri:', normalizedUri);
       }
 
-      // Verify the file really exists and has bytes
       const info = await FileSystem.getInfoAsync(normalizedUri);
       console.log('[FuelScreen] file info:', info);
 
@@ -498,9 +502,6 @@ const FuelScreen = ({ navigation }) => {
         return null;
       }
 
-      // Upload the raw bytes of the image. Uploading a React Native FormData
-      // object fails with "unsupported FormData implementation" on the current
-      // Expo runtime (and can store an unreadable file).
       const base64 = await FileSystem.readAsStringAsync(normalizedUri, {
         encoding: 'base64',
       });
@@ -540,7 +541,6 @@ const FuelScreen = ({ navigation }) => {
       Alert.alert('Error', `Failed to upload receipt: ${e.message}`);
       return null;
     } finally {
-      // Clean up the temp file if we copied it
       if (copiedToCache) {
         try {
           await FileSystem.deleteAsync(normalizedUri, { idempotent: true });
@@ -799,7 +799,6 @@ const FuelScreen = ({ navigation }) => {
   // ============================================
   // Open scan options
   // ============================================
-// Open receipt type options first, then camera/gallery options
 const openScanOptions = useCallback(() => {
   auditLog({
     action: 'SCAN_RECEIPT_OPEN',
@@ -904,7 +903,6 @@ const openScanOptions = useCallback(() => {
   const refillCount = fuelReceipts.length;
   const tollCount = tollReceipts.length;
   const costPerRefill = refillCount > 0 ? fuelSpend / refillCount : 0;
-  const avgLPer100 = 11.2;
 
   // ---- Allocation-driven budget ----
   const allocatedAmount = Number(allocation?.allocated_amount || 0);
@@ -947,16 +945,80 @@ const openScanOptions = useCallback(() => {
   }, []);
 
   // ---- Vehicle display helpers ----
-  const vehicleTitle = vehicle?.registration_number || "No vehicle assigned";
-  const vehicleSubtitle = vehicle?.current_location || null;
-  const vehicleStatus = vehicle?.status || null;
-  const showVehicleStatusBadge = !!vehicleStatus;
+  const vehicleRegistration = vehicle?.registration_number || "—";
+  const driverDisplayName = driverName || "—";
+
+  // Top padding: use safe area inset, fall back to status bar height
+  const topPadding =
+    insets?.top > 0
+      ? insets.top
+      : Platform.OS === "android"
+      ? StatusBar.currentHeight || 24
+      : 44;
 
   return (
-    <>
+    <View style={styles.container}>
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor="transparent"
+        translucent={true}
+      />
+
+      {/* FIXED HEADER (does not scroll) */}
+      <View style={[styles.header, { paddingTop: topPadding + 16 }]}>
+        <Text style={styles.headerTitle}>Fuel &amp; Expenses</Text>
+        <Text style={styles.headerSubtitle}>
+          {MONTHS_SHORT[selectedMonth]} {selectedYear}
+        </Text>
+
+        <View style={styles.heroCard}>
+          <Text style={styles.heroLabel}>TOTAL SPEND</Text>
+          <Text style={styles.heroAmount}>{formatZAR(totalSpend)}</Text>
+          <View style={styles.heroMetaRow}>
+            <Ionicons name="receipt-outline" size={14} color="#aebbd3" />
+            <Text style={styles.heroMetaText}>
+              {refillCount} {refillCount === 1 ? "refill" : "refills"} · {tollCount} {tollCount === 1 ? "toll" : "tolls"} this month
+            </Text>
+          </View>
+          <View style={styles.heroMetaRow}>
+            <Ionicons name="pie-chart-outline" size={14} color="#aebbd3" />
+            <Text style={styles.heroMetaText}>
+              Fuel {formatZAR(fuelSpend)} · Tolls {formatZAR(tollSpend)}
+            </Text>
+          </View>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.monthContainer}
+        >
+          {MONTHS_SHORT.map((m, i) => {
+            const active = i === selectedMonth;
+            return (
+              <TouchableOpacity
+                key={m}
+                style={active ? styles.activeMonth : styles.monthButton}
+                onPress={() => setSelectedMonth(i)}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={
+                    active ? styles.activeMonthText : styles.monthButtonText
+                  }
+                >
+                  {m}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* SCROLLABLE BODY */}
       <ScrollView
-        style={styles.container}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        style={styles.scrollArea}
+        contentContainerStyle={{ paddingBottom: 120 + (insets?.bottom || 0) }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -966,58 +1028,6 @@ const openScanOptions = useCallback(() => {
           />
         }
       >
-        {/* HEADER */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Fuel &amp; Expenses</Text>
-          <Text style={styles.headerSubtitle}>
-            {MONTHS_SHORT[selectedMonth]} {selectedYear}
-          </Text>
-
-          <View style={styles.heroCard}>
-            <Text style={styles.heroLabel}>TOTAL SPEND</Text>
-            <Text style={styles.heroAmount}>{formatZAR(totalSpend)}</Text>
-            <View style={styles.heroMetaRow}>
-              <Ionicons name="receipt-outline" size={14} color="#aebbd3" />
-              <Text style={styles.heroMetaText}>
-                {refillCount} {refillCount === 1 ? "refill" : "refills"} · {tollCount} {tollCount === 1 ? "toll" : "tolls"} this month
-              </Text>
-            </View>
-            <View style={styles.heroMetaRow}>
-              <Ionicons name="pie-chart-outline" size={14} color="#aebbd3" />
-              <Text style={styles.heroMetaText}>
-                Fuel {formatZAR(fuelSpend)} · Tolls {formatZAR(tollSpend)}
-              </Text>
-            </View>
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.monthContainer}
-          >
-            {MONTHS_SHORT.map((m, i) => {
-              const active = i === selectedMonth;
-              return (
-                <TouchableOpacity
-                  key={m}
-                  style={active ? styles.activeMonth : styles.monthButton}
-                  onPress={() => setSelectedMonth(i)}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={
-                      active ? styles.activeMonthText : styles.monthButtonText
-                    }
-                  >
-                    {m}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        {/* BODY */}
         <View style={styles.body}>
 
           {/* Scan Receipt CTA */}
@@ -1196,15 +1206,6 @@ const openScanOptions = useCallback(() => {
           <View style={styles.statsContainer}>
             <View style={styles.statCard}>
               <View style={styles.statIconWrap}>
-                <Ionicons name="water-outline" size={20} color="#007bff" />
-              </View>
-              <Text style={styles.statTitle}>LITRES USED</Text>
-              <Text style={styles.statValue}>{totalLitres.toFixed(1)} L</Text>
-              <Text style={styles.statSub}>{avgLPer100} L/100km</Text>
-            </View>
-
-            <View style={styles.statCard}>
-              <View style={styles.statIconWrap}>
                 <Ionicons name="cash-outline" size={20} color="#007bff" />
               </View>
               <Text style={styles.statTitle}>COST / REFILL</Text>
@@ -1220,23 +1221,10 @@ const openScanOptions = useCallback(() => {
               <Text style={styles.statValue}>{refillCount}</Text>
               <Text style={styles.statSub}>this month</Text>
             </View>
-
-            <View style={styles.statCard}>
-              <View style={styles.statIconWrap}>
-                <Ionicons
-                  name="speedometer-outline"
-                  size={20}
-                  color="#007bff"
-                />
-              </View>
-              <Text style={styles.statTitle}>EFFICIENCY</Text>
-              <Text style={styles.statValue}>B+</Text>
-              <Text style={styles.statSub}>fleet avg: B</Text>
-            </View>
           </View>
 
-          {/* Vehicle efficiency */}
-          <Text style={styles.sectionTitle}>Vehicle Efficiency</Text>
+          {/* Vehicle Details */}
+          <Text style={styles.sectionTitle}>Vehicle Details</Text>
 
           <View style={styles.efficiencyCard}>
             {vehicleLoading ? (
@@ -1253,8 +1241,7 @@ const openScanOptions = useCallback(() => {
                   No vehicle assigned
                 </Text>
                 <Text style={styles.vehicleEmptySubtitle}>
-                  Ask your dispatcher to assign a vehicle to your profile to
-                  track efficiency here.
+                  Ask your dispatcher to assign a vehicle to your profile.
                 </Text>
               </View>
             ) : (
@@ -1265,33 +1252,26 @@ const openScanOptions = useCallback(() => {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.vehicleName} numberOfLines={1}>
-                      {vehicleTitle}
+                      {vehicleRegistration}
                     </Text>
-                    {vehicleSubtitle ? (
-                      <Text style={styles.vehicleSubtitle} numberOfLines={1}>
-                        {vehicleSubtitle}
-                      </Text>
-                    ) : null}
                   </View>
-                  {showVehicleStatusBadge && (
-                    <View style={styles.goodBadge}>
-                      <Text style={styles.goodText}>{vehicleStatus}</Text>
-                    </View>
-                  )}
                 </View>
 
-                <View style={styles.progressBackground}>
-                  <View style={styles.progressFill} />
+                <View style={styles.vehicleDetailRow}>
+                  <Ionicons name="person-outline" size={16} color="#7a8699" />
+                  <Text style={styles.vehicleDetailLabel}>Driver</Text>
+                  <Text style={styles.vehicleDetailValue} numberOfLines={1}>
+                    {driverDisplayName}
+                  </Text>
                 </View>
 
-                <View style={styles.scoreRow}>
-                  <Text style={styles.score}>Score 74/100</Text>
-                  <Text style={styles.actual}>11.2 L/100km</Text>
+                <View style={styles.vehicleDetailRow}>
+                  <Ionicons name="card-outline" size={16} color="#7a8699" />
+                  <Text style={styles.vehicleDetailLabel}>Registration</Text>
+                  <Text style={styles.vehicleDetailValue} numberOfLines={1}>
+                    {vehicleRegistration}
+                  </Text>
                 </View>
-
-                <Text style={styles.target}>
-                  Fleet target: 10.4 L/100km
-                </Text>
               </>
             )}
           </View>
@@ -1425,7 +1405,12 @@ const openScanOptions = useCallback(() => {
         }}
       >
         <View style={styles.receiptModalOverlay}>
-          <View style={styles.receiptModalSheet}>
+          <View
+            style={[
+              styles.receiptModalSheet,
+              { paddingBottom: insets?.bottom || 0 },
+            ]}
+          >
             <View style={styles.receiptModalHandleWrap}>
               <View style={styles.receiptModalHandle} />
             </View>
@@ -1529,7 +1514,12 @@ const openScanOptions = useCallback(() => {
         onRequestClose={closePreview}
       >
         <View style={styles.previewOverlay}>
-          <View style={styles.previewSheet}>
+          <View
+            style={[
+              styles.previewSheet,
+              { paddingBottom: insets?.bottom || 0 },
+            ]}
+          >
             <View style={styles.previewHandleWrap}>
               <View style={styles.previewHandle} />
             </View>
@@ -1635,7 +1625,7 @@ const openScanOptions = useCallback(() => {
           </View>
         </View>
       </Modal>
-    </>
+    </View>
   );
 };
 
@@ -1645,9 +1635,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#ebf2ff",
   },
 
+  scrollArea: {
+    flex: 1,
+    backgroundColor: "#ebf2ff",
+  },
+
   header: {
     backgroundColor: "#0A1F44",
-    paddingTop: 70,
     paddingHorizontal: 20,
     paddingBottom: 24,
     borderBottomLeftRadius: 28,
@@ -1964,6 +1958,10 @@ const styles = StyleSheet.create({
   vehicleHeader: {
     flexDirection: "row",
     alignItems: "center",
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eef1f6",
+    marginBottom: 14,
   },
   vehicleIconWrap: {
     width: 40,
@@ -1976,62 +1974,30 @@ const styles = StyleSheet.create({
   },
   vehicleName: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: "800",
     color: "#0A1F44",
   },
-  vehicleSubtitle: {
-    fontSize: 12,
-    color: "#7a8699",
-    marginTop: 2,
-    fontWeight: "600",
-  },
-  goodBadge: {
-    backgroundColor: "#DFF7E5",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 20,
-    marginLeft: 8,
-  },
-  goodText: {
-    color: "#1b8634",
-    fontWeight: "800",
-    fontSize: 11,
-    textTransform: "capitalize",
-  },
-  progressBackground: {
-    height: 10,
-    backgroundColor: "#eef1f6",
-    borderRadius: 6,
-    marginTop: 18,
-    overflow: "hidden",
-  },
-  progressFill: {
-    width: "74%",
-    height: "100%",
-    backgroundColor: "#28A745",
-    borderRadius: 6,
-  },
-  scoreRow: {
+  vehicleDetailRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 14,
+    alignItems: "center",
+    paddingVertical: 8,
   },
-  score: {
-    fontWeight: "800",
-    color: "#0A1F44",
+  vehicleDetailLabel: {
     fontSize: 13,
-  },
-  actual: {
     color: "#7a8699",
-    fontSize: 13,
     fontWeight: "600",
+    marginLeft: 10,
+    flex: 1,
   },
-  target: {
-    color: "#7a8699",
-    marginTop: 6,
-    fontSize: 12,
+  vehicleDetailValue: {
+    fontSize: 14,
+    color: "#0A1F44",
+    fontWeight: "800",
+    maxWidth: "55%",
+    textAlign: "right",
   },
+
   vehicleLoadingWrap: {
     flexDirection: "row",
     alignItems: "center",

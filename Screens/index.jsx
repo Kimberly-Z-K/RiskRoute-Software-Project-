@@ -6,16 +6,18 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  SafeAreaView,
+  Platform,
+  StatusBar,
+  RefreshControl,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { Marker, Polyline } from "react-native-maps";
-import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ExpoLocation from "expo-location";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
 
-// ---------- Helpers (same as LocationScreen) ----------
+// ---------- Helpers ----------
 const toCoord = (p) => {
   if (!p || p.lat == null || p.lng == null) return null;
   return { latitude: Number(p.lat), longitude: Number(p.lng) };
@@ -71,6 +73,7 @@ const fetchOSRMRoute = async (points) => {
 
 const RiskRouteScreen = ({ navigation, route }) => {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const tripId = route?.params?.tripId;
   const mapRef = useRef(null);
 
@@ -87,24 +90,26 @@ const RiskRouteScreen = ({ navigation, route }) => {
     routeLoading: false,
   });
 
-  // ---------- Driver + Vehicle ----------
-  const [driver, setDriver] = useState(null);
+  // ---------- Vehicle + Driver ----------
   const [vehicle, setVehicle] = useState(null);
   const [vehicleLoading, setVehicleLoading] = useState(true);
+  const [driverName, setDriverName] = useState("");
 
   // ---------- User location (fallback map center when no trip) ----------
   const [userLocation, setUserLocation] = useState(null);
+
+  // ---------- Pull to refresh ----------
+  const [refreshing, setRefreshing] = useState(false);
 
   const updateTrip = useCallback((updates) => {
     setTrip((prev) => ({ ...prev, ...updates }));
   }, []);
 
-  // ---------- Load trip via vehicle assignment (same logic as LocationScreen) ----------
+  // ---------- Load trip via vehicle assignment ----------
   const loadTrip = useCallback(async () => {
     try {
       updateTrip({ loading: true, error: "" });
 
-      // 1. Current auth user
       const {
         data: { user: authUser },
         error: userError,
@@ -115,8 +120,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
         return;
       }
 
-      // 2. Find the vehicle assigned to this driver WITH an active route.
-      //    vehicles.driver_id matches auth.uid() directly.
       const { data: veh, error: vehErr } = await supabase
         .from("vehicles")
         .select("vehicle_id, route_id, status")
@@ -127,7 +130,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
       if (vehErr) throw vehErr;
 
       if (!veh?.route_id) {
-        // No active trip → clear the trip state and stop the spinner.
         updateTrip({
           loading: false,
           start: null,
@@ -141,7 +143,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
         return;
       }
 
-      // 3. Load the trip the vehicle points at.
       const { data: loadedTrip, error: tripErr } = await supabase
         .from("optimized_routes")
         .select("id, start_point, stops")
@@ -169,14 +170,12 @@ const RiskRouteScreen = ({ navigation, route }) => {
 
       if (!startCoord) throw new Error("Invalid start_point data");
 
-      // Show map markers as soon as we have coords — don't wait for geocoding
       updateTrip({
         start: startCoord,
         stops: stopCoords,
         loading: false,
       });
 
-      // Reverse geocode start + stops (doesn't block UI)
       try {
         const startRes = await ExpoLocation.reverseGeocodeAsync(startCoord);
         const startAddr = startRes?.[0];
@@ -216,7 +215,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
         console.warn("[RiskRoute] reverse geocode failed:", e?.message);
       }
 
-      // Fetch route (doesn't block UI)
       if (stopCoords.length > 0) {
         updateTrip({ routeLoading: true });
         try {
@@ -266,113 +264,90 @@ const RiskRouteScreen = ({ navigation, route }) => {
     }
   }, [updateTrip]);
 
-  // ---------- Load driver + vehicle (exactly like ProfileScreen) ----------
-  const loadDriverAndVehicle = useCallback(async () => {
+  // ---------- Load vehicle + driver ----------
+  const loadVehicle = useCallback(async () => {
     if (!user?.id) return;
     setVehicleLoading(true);
     try {
-      // 1. Find the driver row via user_id (with fallback to auth uid)
       let driverId = null;
+      let driverRow = null;
 
-      const { data: byUser, error: byUserErr } = await supabase
+      const { data: byUser } = await supabase
         .from("drivers")
-        .select("driver_id")
+        .select("driver_id, driver_username")
         .eq("user_id", user.id)
         .maybeSingle();
 
-      console.log("[RiskRoute] driver by user_id:", {
-        driverId: byUser?.driver_id,
-        error: byUserErr?.message,
-        code: byUserErr?.code,
-      });
+      driverId = byUser?.driver_id ?? user.id;
+      driverRow = byUser ?? null;
 
-      driverId = byUser?.driver_id ?? null;
-
-      // Fallback: driver_id already equals auth uid in some setups
-      if (!driverId) {
-        driverId = user.id;
-      }
-
-      // Best-effort: fetch driver profile details for display
-      if (byUser?.driver_id) {
-        const { data: driverRow } = await supabase
+      if (!driverRow && user.email) {
+        const { data: byEmail } = await supabase
           .from("drivers")
-          .select("driver_id, driver_username, phone, license_number")
-          .eq("driver_id", byUser.driver_id)
-          .maybeSingle();
-        if (driverRow) setDriver(driverRow);
-      } else if (user.email) {
-        const { data: driverByEmail } = await supabase
-          .from("drivers")
-          .select("driver_id, driver_username, phone, license_number")
+          .select("driver_id, driver_username")
           .eq("email", user.email)
           .maybeSingle();
-        if (driverByEmail) setDriver(driverByEmail);
+        driverRow = byEmail ?? null;
+        driverId = byEmail?.driver_id ?? driverId;
       }
 
-      console.log("[RiskRoute] resolved driverId:", driverId);
+      setDriverName(driverRow?.driver_username || "");
 
-      // 2. Look up the vehicle by driver_id — same columns as ProfileScreen
-      const { data: veh, error: vehErr } = await supabase
+      const { data: veh } = await supabase
         .from("vehicles")
-        .select(
-          "vehicle_id, registration_number, status, current_location, route_id"
-        )
+        .select("vehicle_id, registration_number")
         .eq("driver_id", driverId)
         .maybeSingle();
 
-      console.log("[RiskRoute] vehicle lookup:", {
-        vehicleId: veh?.vehicle_id,
-        registration: veh?.registration_number,
-        error: vehErr?.message,
-        code: vehErr?.code,
-        details: vehErr?.details,
-        hint: vehErr?.hint,
-      });
-
       setVehicle(veh ?? null);
     } catch (e) {
-      console.warn("[RiskRoute] driver/vehicle fetch exception:", e?.message);
+      console.warn("[RiskRoute] vehicle fetch exception:", e?.message);
       setVehicle(null);
+      setDriverName("");
     } finally {
       setVehicleLoading(false);
     }
   }, [user?.id, user?.email]);
 
-  // Kick off both loads in parallel immediately on mount
-  useEffect(() => {
-    loadDriverAndVehicle();
-    loadTrip();
-  }, [loadDriverAndVehicle, loadTrip]);
+  // ---------- Fetch user location (used to center map when no trip) ----------
+  const loadUserLocation = useCallback(async () => {
+    try {
+      const { status } =
+        await ExpoLocation.requestForegroundPermissionsAsync();
+      if (status !== "granted") return;
 
-  // Fetch user location once, for the fallback map center when there's no trip
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { status } =
-          await ExpoLocation.requestForegroundPermissionsAsync();
-        if (status !== "granted") return;
-
-        const loc = await ExpoLocation.getCurrentPositionAsync({
-          accuracy: ExpoLocation.Accuracy.Balanced,
-        });
-        if (!cancelled) {
-          setUserLocation({
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-          });
-        }
-      } catch (e) {
-        console.warn("[RiskRoute] user location failed:", e?.message);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      const loc = await ExpoLocation.getCurrentPositionAsync({
+        accuracy: ExpoLocation.Accuracy.Balanced,
+      });
+      setUserLocation({
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      });
+    } catch (e) {
+      console.warn("[RiskRoute] user location failed:", e?.message);
+    }
   }, []);
 
-  // Fit map to route whenever routeCoords change
+  useEffect(() => {
+    loadVehicle();
+    loadTrip();
+    loadUserLocation();
+  }, [loadVehicle, loadTrip, loadUserLocation]);
+
+  // ---------- Pull to refresh handler ----------
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadVehicle(),
+        loadTrip(),
+        loadUserLocation(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [loadVehicle, loadTrip, loadUserLocation]);
+
   useEffect(() => {
     if (mapRef.current && trip.routeCoords.length > 1) {
       mapRef.current.fitToCoordinates(trip.routeCoords, {
@@ -394,27 +369,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
         return "#2e7d32";
     }
   };
-  const getRiskIcon = () => {
-    switch (riskLevel) {
-      case "High":
-        return "alert-circle";
-      case "Medium":
-        return "warning";
-      default:
-        return "shield-checkmark";
-    }
-  };
-
-  const getInitials = (name) => {
-    if (!name) return "DR";
-    return name
-      .split(" ")
-      .filter(Boolean)
-      .map((p) => p[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase();
-  };
 
   const etaText = trip.routeInfo
     ? formatDuration(Math.round(trip.routeInfo.duration * 60))
@@ -424,20 +378,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
     trip.stopAddresses[0]?.split(",").slice(-2).join(", ") || "Destination";
 
   // ---------- Small components ----------
-  const ProgressBar = ({ value, color }) => (
-    <View style={styles.barBackground}>
-      <View
-        style={[
-          styles.barFill,
-          {
-            width: `${Math.max(0, Math.min(100, value))}%`,
-            backgroundColor: color,
-          },
-        ]}
-      />
-    </View>
-  );
-
   const DetailRow = ({ icon, label, value, iconColor = "#007bff" }) => (
     <View style={styles.detailRow}>
       <View
@@ -452,11 +392,26 @@ const RiskRouteScreen = ({ navigation, route }) => {
     </View>
   );
 
-  // ---------- Render (no full-screen blocking spinner) ----------
+  const vehicleRegistration = vehicle?.registration_number || "—";
+  const driverDisplayName = driverName || "—";
+
+  const topPadding =
+    insets?.top > 0
+      ? insets.top
+      : Platform.OS === "android"
+      ? StatusBar.currentHeight || 24
+      : 44;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor="transparent"
+        translucent={true}
+      />
+
       {/* Header */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: topPadding + 12 }]}>
         <View style={styles.headerLeft}>
           <View style={styles.headerIconWrap}>
             <Ionicons name="shield-checkmark-outline" size={22} color="#fff" />
@@ -475,8 +430,18 @@ const RiskRouteScreen = ({ navigation, route }) => {
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: 100 + (insets?.bottom || 0) },
+        ]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#0A1F44"
+          />
+        }
       >
         {/* Quick Actions */}
         <View style={styles.overviewCard}>
@@ -524,7 +489,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
             </TouchableOpacity>
           </View>
 
-          {/* Stats Grid — trip-dependent values show "—" until loaded */}
           <View style={styles.statsGrid}>
             <View style={styles.statBox}>
               <View style={styles.statIconRow}>
@@ -720,7 +684,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
               <Text style={styles.mapLoadingText}>Loading map...</Text>
             </View>
           ) : (
-            // No active trip → show a plain map centered on the user (fallback to JHB)
             <MapView
               style={styles.miniMap}
               initialRegion={{
@@ -757,52 +720,6 @@ const RiskRouteScreen = ({ navigation, route }) => {
           )}
         </View>
 
-        {/* Driver Details */}
-        <Text style={styles.sectionTitle}>Driver Details</Text>
-
-        <View style={styles.card}>
-          <View style={styles.profileHeader}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {getInitials(driver?.driver_username || user?.email)}
-              </Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.profileName}>
-                {driver?.driver_username || "Driver"}
-              </Text>
-              <Text style={styles.profileSub}>
-                {driver?.driver_id
-                  ? `ID ${driver.driver_id}`
-                  : "Driver profile"}
-              </Text>
-              <View style={styles.ratingRow}>
-                <Ionicons name="star" size={14} color="#f59e0b" />
-                <Text style={styles.ratingText}>4.8 · 128 trips</Text>
-                <View style={styles.statusPill}>
-                  <View style={styles.statusDot} />
-                  <Text style={styles.statusText}>On Duty</Text>
-                </View>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.tripDivider} />
-
-          <DetailRow icon="call-outline" label="Phone" value={driver?.phone} />
-          <DetailRow
-            icon="mail-outline"
-            label="Email"
-            value={driver?.email || user?.email}
-          />
-          <DetailRow
-            icon="card-outline"
-            label="License"
-            value={driver?.license_number}
-            iconColor="#7c3aed"
-          />
-        </View>
-
         {/* Vehicle Details */}
         <Text style={styles.sectionTitle}>Vehicle Details</Text>
 
@@ -830,76 +747,34 @@ const RiskRouteScreen = ({ navigation, route }) => {
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.vehicleName}>
-                    {vehicle.registration_number || "Assigned Vehicle"}
-                  </Text>
-                  <Text style={styles.vehicleSub}>
-                    {vehicle.status
-                      ? `Status: ${vehicle.status}`
-                      : "GPS Active"}
+                  <Text style={styles.vehicleName} numberOfLines={1}>
+                    {vehicleRegistration}
                   </Text>
                 </View>
-                {vehicle.status && (
-                  <View style={styles.vehicleStatusBadge}>
-                    <Text style={styles.vehicleStatusText}>
-                      {vehicle.status}
-                    </Text>
-                  </View>
-                )}
               </View>
 
-              {/* Number Plate */}
-              <View style={styles.plateOuter}>
-                <Text style={styles.plateText}>
-                  {vehicle.registration_number || "—"}
+              <View style={styles.vehicleDetailRow}>
+                <Ionicons name="person-outline" size={16} color="#7a8699" />
+                <Text style={styles.vehicleDetailLabel}>Driver</Text>
+                <Text style={styles.vehicleDetailValue} numberOfLines={1}>
+                  {driverDisplayName}
                 </Text>
               </View>
 
-              {/* Health bars */}
-              <View style={styles.healthBlock}>
-                <View style={styles.healthRow}>
-                  <Text style={styles.label}>Fuel</Text>
-                  <Text style={styles.percentText}>38%</Text>
-                </View>
-                <ProgressBar value={38} color="#f4a300" />
+              <View style={styles.vehicleDetailRow}>
+                <Ionicons name="card-outline" size={16} color="#7a8699" />
+                <Text style={styles.vehicleDetailLabel}>Registration</Text>
+                <Text style={styles.vehicleDetailValue} numberOfLines={1}>
+                  {vehicleRegistration}
+                </Text>
               </View>
-
-              <View style={styles.healthBlock}>
-                <View style={styles.healthRow}>
-                  <Text style={styles.label}>Engine</Text>
-                  <Text style={styles.percentText}>90%</Text>
-                </View>
-                <ProgressBar value={90} color="#2ecc71" />
-              </View>
-
-              <View style={styles.healthBlock}>
-                <View style={styles.healthRow}>
-                  <Text style={styles.label}>Tyres</Text>
-                  <Text style={styles.percentText}>75%</Text>
-                </View>
-                <ProgressBar value={75} color="#3498db" />
-              </View>
-
-              <View style={styles.tripDivider} />
-
-              <DetailRow
-                icon="location-outline"
-                label="Current Location"
-                value={vehicle.current_location}
-              />
-              <DetailRow
-                icon="git-branch-outline"
-                label="Route"
-                value={vehicle.route_id}
-                iconColor="#7c3aed"
-              />
             </>
           )}
         </View>
 
         <View style={{ height: 100 }} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 
@@ -914,7 +789,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: "#0A1F44",
-    paddingTop: 16,
     paddingBottom: 18,
     paddingHorizontal: 18,
     borderBottomLeftRadius: 24,
@@ -950,39 +824,6 @@ const styles = StyleSheet.create({
     marginTop: 18,
     marginBottom: 10,
   },
-
-  // ---------- Risk Banner ----------
-  riskBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderRadius: 20,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 6,
-  },
-  riskBannerLeft: { flexDirection: "row", alignItems: "center" },
-  riskIconWrap: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-  riskBannerLabel: { color: "#aebbd3", fontSize: 12, fontWeight: "600" },
-  riskBannerValue: { fontSize: 24, fontWeight: "800", marginTop: 2 },
-  riskBadge: {
-    backgroundColor: "rgba(255,255,255,0.15)",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-  },
-  riskBadgeText: { color: "#fff", fontSize: 11, fontWeight: "700" },
 
   // ---------- Overview ----------
   overviewCard: {
@@ -1185,45 +1026,6 @@ const styles = StyleSheet.create({
     color: "#0A1F44",
   },
 
-  // ---------- Driver Profile ----------
-  profileHeader: { flexDirection: "row", alignItems: "center" },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#0A1F44",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-  avatarText: {
-    color: "#fff",
-    fontSize: 20,
-    fontWeight: "800",
-    letterSpacing: 1,
-  },
-  profileName: { fontSize: 17, fontWeight: "800", color: "#0A1F44" },
-  profileSub: { fontSize: 12, color: "#7a8699", marginTop: 2 },
-  ratingRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
-  ratingText: { marginLeft: 5, fontSize: 12, color: "#333", fontWeight: "600" },
-  statusPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginLeft: 10,
-    backgroundColor: "#e8f5e9",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#2e7d32",
-    marginRight: 4,
-  },
-  statusText: { fontSize: 10, color: "#2e7d32", fontWeight: "700" },
-
   // ---------- Detail Row ----------
   detailRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8 },
   detailIconWrap: {
@@ -1253,6 +1055,9 @@ const styles = StyleSheet.create({
   vehicleHeader: {
     flexDirection: "row",
     alignItems: "center",
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eef2f7",
     marginBottom: 14,
   },
   vehicleIconWrap: {
@@ -1265,53 +1070,25 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   vehicleName: { fontSize: 17, fontWeight: "800", color: "#0A1F44" },
-  vehicleSub: { fontSize: 12, color: "#7a8699", marginTop: 2 },
-  vehicleStatusBadge: {
-    backgroundColor: "#DFF7E5",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 12,
-    marginLeft: 8,
-  },
-  vehicleStatusText: {
-    color: "#1b8634",
-    fontWeight: "700",
-    fontSize: 10,
-    textTransform: "capitalize",
-  },
-  plateOuter: {
-    borderWidth: 2,
-    borderColor: "#0b60f4",
-    backgroundColor: "#fff",
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    alignSelf: "flex-start",
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  plateText: {
-    color: "#0b60f4",
-    fontWeight: "800",
-    letterSpacing: 1.5,
-    fontSize: 14,
-  },
-  healthBlock: { marginBottom: 12 },
-  healthRow: {
+  vehicleDetailRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 6,
+    paddingVertical: 8,
   },
-  label: { color: "#0B1F3A", fontSize: 12, fontWeight: "700" },
-  percentText: { fontSize: 12, color: "#555", fontWeight: "700" },
-  barBackground: {
-    height: 8,
-    width: "100%",
-    backgroundColor: "#E6EAF0",
-    borderRadius: 10,
-    overflow: "hidden",
+  vehicleDetailLabel: {
+    fontSize: 13,
+    color: "#7a8699",
+    fontWeight: "600",
+    marginLeft: 10,
+    flex: 1,
   },
-  barFill: { height: "100%", borderRadius: 10 },
+  vehicleDetailValue: {
+    fontSize: 14,
+    color: "#0A1F44",
+    fontWeight: "800",
+    maxWidth: "55%",
+    textAlign: "right",
+  },
 
   vehicleLoadingRow: {
     flexDirection: "row",

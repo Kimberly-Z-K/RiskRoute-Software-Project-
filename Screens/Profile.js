@@ -3,7 +3,6 @@ import {
   View,
   Text,
   TextInput,
-  Image,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
@@ -18,12 +17,14 @@ import {
   Feather,
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { auditLog } from "../utils/auditlogger";
 
 export default function Profile() {
   const { user, signOut } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -34,9 +35,6 @@ export default function Profile() {
   const [phone, setPhone] = useState("");
   const [licenseNumber, setLicenseNumber] = useState("");
   const [email, setEmail] = useState("");
-
-  const [rating, setRating] = useState("4.8");
-  const [trips, setTrips] = useState(128);
 
   // Vehicle assigned to this driver
   const [vehicle, setVehicle] = useState(null);
@@ -93,7 +91,6 @@ export default function Profile() {
   const loadVehicle = async () => {
     setVehicleLoading(true);
     try {
-      // 1. Find the driver row via user_id (with email fallback)
       let driverId = null;
 
       const { data: byUser, error: byUserErr } = await supabase
@@ -102,34 +99,17 @@ export default function Profile() {
         .eq("user_id", user.id)
         .maybeSingle();
 
-      console.log("[Profile] driver by user_id:", {
-        driverId: byUser?.driver_id,
-        error: byUserErr?.message,
-        code: byUserErr?.code,
-      });
-
       driverId = byUser?.driver_id ?? null;
 
-      // Fallback: driver_id already equals auth uid in some setups
       if (!driverId) {
         driverId = user.id;
       }
 
-      // 2. Look up the vehicle by driver_id
       const { data: veh, error: vehErr } = await supabase
         .from("vehicles")
-        .select(
-          "vehicle_id, registration_number, status, current_location, route_id"
-        )
+        .select("vehicle_id, registration_number")
         .eq("driver_id", driverId)
         .maybeSingle();
-
-      console.log("[Profile] vehicle lookup:", {
-        vehicleId: veh?.vehicle_id,
-        registration: veh?.registration_number,
-        error: vehErr?.message,
-        code: vehErr?.code,
-      });
 
       setVehicle(veh ?? null);
     } catch (e) {
@@ -261,8 +241,13 @@ export default function Profile() {
   }
 
   const vehicleTitle = vehicle?.registration_number || "No vehicle assigned";
-  const vehicleLocation = vehicle?.current_location || null;
-  const vehicleStatus = vehicle?.status || null;
+
+  const topPadding =
+    insets?.top > 0
+      ? insets.top
+      : Platform.OS === "android"
+      ? StatusBar.currentHeight || 24
+      : 44;
 
   return (
     <View style={styles.container}>
@@ -274,14 +259,16 @@ export default function Profile() {
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{
+          paddingBottom: 40 + (insets?.bottom || 0),
+        }}
         showsVerticalScrollIndicator={false}
       >
         <LinearGradient
           colors={["#0A1F44", "#0A1F44"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.headerGradient}
+          style={[styles.headerGradient, { paddingTop: topPadding + 16 }]}
         >
           <View style={styles.headerContent}>
             <View style={styles.profileCard}>
@@ -300,25 +287,8 @@ export default function Profile() {
                 </Text>
                 <View style={styles.statusContainer}>
                   <View style={styles.statusDot} />
-                  <Text style={styles.statusText}>Active · Route DR-2241</Text>
+                  <Text style={styles.statusText}>Active</Text>
                 </View>
-              </View>
-            </View>
-
-            <View style={styles.quickStats}>
-              <View style={styles.quickStat}>
-                <Text style={styles.quickStatValue}>{saved ? "4" : "0"}</Text>
-                <Text style={styles.quickStatLabel}>TRIPS TODAY</Text>
-              </View>
-              <View style={styles.quickStatDivider} />
-              <View style={styles.quickStat}>
-                <Text style={styles.quickStatValue}>{saved ? "127" : "0"}</Text>
-                <Text style={styles.quickStatLabel}>KM TODAY</Text>
-              </View>
-              <View style={styles.quickStatDivider} />
-              <View style={styles.quickStat}>
-                <Text style={styles.quickStatValue}>{saved ? "R412" : "R0"}</Text>
-                <Text style={styles.quickStatLabel}>FUEL TODAY</Text>
               </View>
             </View>
           </View>
@@ -399,14 +369,6 @@ export default function Profile() {
             </>
           ) : (
             <>
-              <View style={styles.profileHeader}>
-                <Text style={styles.name}>{saved?.userName}</Text>
-                <View style={styles.ratingContainer}>
-                  <Ionicons name="star" size={16} color="#F59E0B" />
-                  <Text style={styles.rating}>{rating} ⭐</Text>
-                </View>
-              </View>
-
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Feather name="user" size={18} color="#3B82F6" />
@@ -477,57 +439,15 @@ export default function Profile() {
                     </Text>
                   </View>
                 ) : (
-                  <>
-                    <View style={styles.vehicleHeaderRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.label}>Registration</Text>
-                        <Text style={styles.vehicleReg}>
-                          {vehicleTitle}
-                        </Text>
-                      </View>
-                      {vehicleStatus && (
-                        <View style={styles.vehicleStatusBadge}>
-                          <Text style={styles.vehicleStatusText}>
-                            {vehicleStatus}
-                          </Text>
-                        </View>
-                      )}
+                  <View style={styles.vehicleHeaderRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.label}>Registration</Text>
+                      <Text style={styles.vehicleReg}>
+                        {vehicleTitle}
+                      </Text>
                     </View>
-
-                    <View style={[styles.infoRow, { marginTop: 14 }]}>
-                      <View style={styles.infoItem}>
-                        <Text style={styles.label}>Current Location</Text>
-                        <Text style={styles.value}>
-                          {vehicleLocation || "—"}
-                        </Text>
-                      </View>
-                      <View style={styles.infoItem}>
-                        <Text style={styles.label}>Route</Text>
-                        <Text style={styles.value}>
-                          {vehicle.route_id ?? "—"}
-                        </Text>
-                      </View>
-                    </View>
-                  </>
+                  </View>
                 )}
-              </View>
-
-              <View style={styles.section}>
-                <View style={styles.sectionHeader}>
-                  <Feather name="bar-chart-2" size={18} color="#3B82F6" />
-                  <Text style={styles.sectionTitle}>Performance</Text>
-                </View>
-
-                <View style={styles.infoRow}>
-                  <View style={styles.infoItem}>
-                    <Text style={styles.label}>Total Trips</Text>
-                    <Text style={styles.value}>{trips}</Text>
-                  </View>
-                  <View style={styles.infoItem}>
-                    <Text style={styles.label}>Rating</Text>
-                    <Text style={styles.value}>{rating} ⭐</Text>
-                  </View>
-                </View>
               </View>
 
               <TouchableOpacity style={styles.editButton} onPress={handleEdit}>
@@ -561,8 +481,7 @@ const styles = StyleSheet.create({
     marginBottom: 70,
   },
   headerGradient: {
-    paddingTop: Platform.OS === "ios" ? 50 : StatusBar.currentHeight + 10,
-    paddingBottom: 24,
+    paddingBottom: 40,
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
   },
@@ -572,7 +491,6 @@ const styles = StyleSheet.create({
   profileCard: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 20,
   },
   profileImageContainer: {
     position: "relative",
@@ -627,35 +545,6 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 13,
     opacity: 0.9,
-  },
-  quickStats: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    backgroundColor: "rgba(255, 255, 255, 0.15)",
-    borderRadius: 16,
-    paddingVertical: 12,
-  },
-  quickStat: {
-    alignItems: "center",
-    flex: 1,
-  },
-  quickStatValue: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-  quickStatLabel: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#FFFFFF",
-    opacity: 0.8,
-    marginTop: 2,
-    letterSpacing: 0.5,
-  },
-  quickStatDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: "rgba(255, 255, 255, 0.3)",
   },
   card: {
     backgroundColor: "#FFFFFF",
@@ -729,26 +618,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  profileHeader: {
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  name: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#111827",
-  },
-  ratingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 4,
-    gap: 4,
-  },
-  rating: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#F59E0B",
-  },
   section: {
     width: "100%",
     marginTop: 16,
@@ -819,19 +688,6 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontWeight: "700",
     marginTop: 4,
-  },
-  vehicleStatusBadge: {
-    backgroundColor: "#DFF7E5",
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 20,
-    marginLeft: 8,
-  },
-  vehicleStatusText: {
-    color: "#1b8634",
-    fontWeight: "700",
-    fontSize: 11,
-    textTransform: "capitalize",
   },
 
   editButton: {
