@@ -36,6 +36,7 @@ import {
   metresBetween,
 } from "../utils/tripProgress";
 import useSpeedFromLocation from "../utils/useSpeedFromLocation";
+import useHardBraking from "../utils/useHardBraking";
 
 const { width, height } = Dimensions.get("window");
 const INFO_AREA_HEIGHT_PX = height * 0.65;
@@ -525,10 +526,9 @@ export default function LocationScreen({ route }) {
         description: "User granted location permission",
       });
 
-      const current =
-        await ExpoLocation.getCurrentPositionAsync({
-          accuracy: ExpoLocation.Accuracy.High,
-        });
+      const current = await ExpoLocation.getCurrentPositionAsync({
+        accuracy: ExpoLocation.Accuracy.High,
+      });
       updateState({
         location: {
           latitude: current.coords.latitude,
@@ -539,13 +539,15 @@ export default function LocationScreen({ route }) {
         locationReady: true,
       });
 
-      // Keep the position up to date so the map shows where the driver is now.
+      // Fast, high-accuracy watcher so speed + hard-braking detection react
+      // quickly. distanceInterval is intentionally small so stops and sudden
+      // decelerations still produce samples.
       if (!locationSubRef.current) {
         locationSubRef.current = await ExpoLocation.watchPositionAsync(
           {
-            accuracy: ExpoLocation.Accuracy.Balanced,
-            distanceInterval: 25,
-            timeInterval: 5000,
+            accuracy: ExpoLocation.Accuracy.High,
+            timeInterval: 1000,
+            distanceInterval: 3,
           },
           (pos) =>
             updateState({
@@ -633,8 +635,6 @@ export default function LocationScreen({ route }) {
     try {
       updateState({ searchingStations: true, stationSearchFailed: false });
 
-      // One request for the whole assigned route. Stations are ordered in the
-      // order the driver will reach them, and ones already passed are dropped.
       const sortedStations = await findStationsAlongRoute(routePoints, {
         corridorKm: CONFIG.STATION_CORRIDOR_KM,
         maxResults: CONFIG.STATIONS_ALONG_ROUTE,
@@ -683,15 +683,12 @@ export default function LocationScreen({ route }) {
     }
   }, [updateState]);
 
-  // Look up stations as soon as the assigned route is known, so the list is
-  // ready when the driver opens it (or when the low-fuel prompt appears).
   useEffect(() => {
     if (routeCoords.length > 1) {
       findFuelStationsAlongRoute(routeCoords);
     }
   }, [routeCoords, findFuelStationsAlongRoute]);
 
-  // No assigned route: look for stations around the driver's own position.
   const findFuelStationsNearMe = useCallback(async () => {
     const loc = stateRef.current.location;
     if (!loc) return [];
@@ -705,7 +702,6 @@ export default function LocationScreen({ route }) {
         maxResults: CONFIG.STATIONS_ALONG_ROUTE,
       });
 
-      // A route arrived while we were searching: its results take priority.
       if (stateRef.current.routeCoords.length > 1) return stations;
 
       updateState({
@@ -726,7 +722,6 @@ export default function LocationScreen({ route }) {
     }
   }, [updateState]);
 
-  // Along the assigned route when there is one, otherwise near the driver.
   const loadFuelStations = useCallback(() => {
     const current = stateRef.current;
     if (current.routeCoords.length > 1) {
@@ -735,8 +730,6 @@ export default function LocationScreen({ route }) {
     return findFuelStationsNearMe();
   }, [findFuelStationsAlongRoute, findFuelStationsNearMe]);
 
-  // Automatically search near the driver when there is no route, and again
-  // after they have moved a few km.
   const nearSearchRef = useRef(null);
   useEffect(() => {
     if (routeCoords.length > 1) {
@@ -760,7 +753,6 @@ export default function LocationScreen({ route }) {
     findFuelStationsNearMe();
   }, [routeCoords, location, tripResolved, routeLoading, findFuelStationsNearMe]);
 
-  // With no route to show, centre the map on the driver once their position is known.
   const centeredOnUserRef = useRef(false);
   useEffect(() => {
     if (
@@ -819,7 +811,6 @@ export default function LocationScreen({ route }) {
               );
             }
 
-            // ---- Critical part: unassign from vehicle and VERIFY it worked ----
             try {
               const {
                 data: { user: authUser },
@@ -872,7 +863,6 @@ export default function LocationScreen({ route }) {
               return;
             }
 
-            // ---- Success: show green pill + reset state ----
             pauseExpiredRef.current = false;
             if (resumedFlashTimeoutRef.current) {
               clearTimeout(resumedFlashTimeoutRef.current);
@@ -1090,17 +1080,12 @@ export default function LocationScreen({ route }) {
     }
   }, []);
 
-  // ============================================
-  // TRIP PROGRESS (stop by stop) + LIVE TRAFFIC
-  // ============================================
   const currentStopIndex = useMemo(
     () => nextStopIndex(stops, stopProgress),
     [stops, stopProgress]
   );
   const doneStops = useMemo(() => countDone(stops, stopProgress), [stops, stopProgress]);
 
-  // Draw the route for one leg: previous stop (or the start) -> this stop.
-  // index -1 means every stop is finished, so there is no route to draw.
   const routeToStop = useCallback(
     (index) => {
       const s = stateRef.current;
@@ -1214,7 +1199,7 @@ export default function LocationScreen({ route }) {
             5000
           );
         }
-        routeToStop(next); // -1 clears the route
+        routeToStop(next);
       }
     },
     [updateState, showNotification, logTripEvent, routeToStop, tripId]
@@ -1250,7 +1235,6 @@ export default function LocationScreen({ route }) {
     [markStop]
   );
 
-  // Automatically mark "arrived" when the driver gets within range of the next stop.
   useEffect(() => {
     if (!hasTrip || !location || currentStopIndex === -1) return;
     if (stopProgress[currentStopIndex]?.status === 'arrived') return;
@@ -1261,7 +1245,6 @@ export default function LocationScreen({ route }) {
     }
   }, [location, hasTrip, stops, stopProgress, currentStopIndex, markStop]);
 
-  // Live traffic for the part of the route still ahead.
   const refreshTraffic = useCallback(async () => {
     const s = stateRef.current;
     if (!s.hasTrip || s.stops.length === 0) return;
@@ -1395,7 +1378,6 @@ export default function LocationScreen({ route }) {
         console.warn("[loadTrip] reverse geocode failed:", e?.message)
       );
 
-      // Pick up where the driver left off (stops already done are remembered).
       const progress = await loadStopProgress(loadedTrip.id, authUser.id);
       const next = nextStopIndex(stopCoords, progress);
       updateState({
@@ -1596,6 +1578,23 @@ export default function LocationScreen({ route }) {
 
   // ---------- Live speed (derived from existing location stream) ----------
   const currentSpeedKmh = useSpeedFromLocation(location);
+
+  // ---------- Hard braking detection ----------
+  const { event: hardBrakeEvent, clear: clearHardBrake } = useHardBraking({
+    speedKmh: currentSpeedKmh,
+    timestamp: location?.timestamp,
+    enabled: true,
+  });
+
+  // Hard-braking feedback: vibrate once + show pill for 3 s
+  useEffect(() => {
+    if (!hardBrakeEvent) return;
+
+    Vibration.vibrate([0, 400, 150, 400]);
+
+    const t = setTimeout(() => clearHardBrake(), 3000);
+    return () => clearTimeout(t);
+  }, [hardBrakeEvent, clearHardBrake]);
 
   const renderNotification = () => {
     if (!notification) return null;
@@ -2043,6 +2042,28 @@ export default function LocationScreen({ route }) {
             ]}
           >
             {currentSpeedKmh} km/h
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
+  // ---------- Hard braking warning pill (top, centered) ----------
+  const renderHardBrakePill = () => {
+    if (!hardBrakeEvent) return null;
+
+    return (
+      <View
+        pointerEvents="none"
+        style={[styles.hardBrakePill, { top: topPadding + 8 }]}
+      >
+        <View style={styles.hardBrakeIconWrap}>
+          <Ionicons name="warning-outline" size={16} color="#fff" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.hardBrakeLabel}>Hard braking</Text>
+          <Text style={styles.hardBrakeValue}>
+            {hardBrakeEvent.fromKmh} → {hardBrakeEvent.toKmh} km/h
           </Text>
         </View>
       </View>
@@ -2606,33 +2627,6 @@ export default function LocationScreen({ route }) {
           <Text style={styles.routeSheetSectionTitle}>Fuel Status</Text>
 
           <View style={[styles.fuelStatusCard, fuelWarning ? styles.fuelStatusWarning : null]}>
-            <View style={styles.fuelStatusHeader}>
-              <View style={styles.fuelStatusIcon}>
-                <Ionicons name="flame" size={22} color="#fff" />
-              </View>
-              <View>
-                <Text style={styles.fuelStatusTitle}>Fuel Level</Text>
-                <Text style={styles.fuelPercentage}>{fuelPercent.toFixed(1)}%</Text>
-              </View>
-            </View>
-
-            <View style={styles.fuelProgressBackground}>
-              <View
-                style={[
-                  styles.fuelProgress,
-                  { width: `${Math.max(0, Math.min(100, fuelPercent))}%` },
-                ]}
-              />
-            </View>
-
-            <View style={styles.fuelRangeRow}>
-              <View>
-                <Text style={styles.fuelRangeLabel}>Estimated Range</Text>
-                <Text style={styles.fuelRangeValue}>{calculateRemainingRange().toFixed(1)} km</Text>
-              </View>
-              <Ionicons name="speedometer-outline" size={24} color="#007bff" />
-            </View>
-
             {fuelWarning && (
               <View style={styles.lowFuelWarning}>
                 <Ionicons name="warning-outline" size={18} color="#fff" />
@@ -2812,6 +2806,7 @@ export default function LocationScreen({ route }) {
       {renderMap()}
       {renderPauseTimerOverlay()}
       {renderSpeedPill()}
+      {renderHardBrakePill()}
 
       {!fullMap && (
         <View
@@ -3162,6 +3157,50 @@ const styles = StyleSheet.create({
   },
   speedValueSpeeding: {
     color: '#7f1d1d',
+  },
+
+  // ---------- Hard braking pill ----------
+  hardBrakePill: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fee2e2",
+    borderWidth: 1,
+    borderColor: "#fca5a5",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 6,
+    zIndex: 60,
+  },
+  hardBrakeIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "#dc2626",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  hardBrakeLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#7f1d1d",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
+  },
+  hardBrakeValue: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#7f1d1d",
+    marginTop: 1,
+    fontVariant: ["tabular-nums"],
   },
 
   currentLocationMarker: { alignItems: "center", justifyContent: "center" },

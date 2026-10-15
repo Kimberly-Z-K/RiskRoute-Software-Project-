@@ -1,9 +1,8 @@
-// hooks/useSpeedFromLocation.js
 import { useEffect, useRef, useState } from "react";
 
 const MS_TO_KMH = 3.6;
 const SPIKE_FILTER_KMH = 200;
-const MIN_DT_SEC = 0.5;
+const MIN_DT_SEC = 0.2;
 
 const metresBetween = (a, b) => {
   const R = 6371000;
