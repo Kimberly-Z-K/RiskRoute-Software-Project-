@@ -1,7 +1,9 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const API_BASE_URL = 'https://riskroute-server2.onrender.com';
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  'https://riskroute-software-project-2.onrender.com';
 
 export const useRoutes = () => {
   const [routes, setRoutes] = useState([]);
