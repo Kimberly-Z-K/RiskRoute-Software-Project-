@@ -35,6 +35,7 @@ import {
   stopPinColor,
   metresBetween,
 } from "../utils/tripProgress";
+import useSpeedFromLocation from "../utils/useSpeedFromLocation";
 
 const { width, height } = Dimensions.get("window");
 const INFO_AREA_HEIGHT_PX = height * 0.65;
@@ -532,6 +533,8 @@ export default function LocationScreen({ route }) {
         location: {
           latitude: current.coords.latitude,
           longitude: current.coords.longitude,
+          speed: current.coords.speed ?? null,
+          timestamp: current.timestamp ?? Date.now(),
         },
         locationReady: true,
       });
@@ -549,6 +552,8 @@ export default function LocationScreen({ route }) {
               location: {
                 latitude: pos.coords.latitude,
                 longitude: pos.coords.longitude,
+                speed: pos.coords.speed ?? null,
+                timestamp: pos.timestamp ?? Date.now(),
               },
             })
         );
@@ -1589,6 +1594,9 @@ export default function LocationScreen({ route }) {
     return () => clearInterval(interval);
   }, [isPaused, pauseEndsAt, updateState]);
 
+  // ---------- Live speed (derived from existing location stream) ----------
+  const currentSpeedKmh = useSpeedFromLocation(location);
+
   const renderNotification = () => {
     if (!notification) return null;
     const bg =
@@ -1992,6 +2000,55 @@ export default function LocationScreen({ route }) {
     );
   };
 
+  // ---------- Live speed pill (top-right) ----------
+  const renderSpeedPill = () => {
+    if (!location) return null;
+
+    const speeding = currentSpeedKmh >= 120;
+
+    return (
+      <View
+        pointerEvents="none"
+        style={[
+          styles.speedPill,
+          { top: topPadding + 8 },
+          speeding && styles.speedPillSpeeding,
+        ]}
+      >
+        <View
+          style={[
+            styles.speedIconWrap,
+            speeding && styles.speedIconWrapSpeeding,
+          ]}
+        >
+          <Ionicons
+            name="speedometer-outline"
+            size={16}
+            color={speeding ? "#fff" : "#0A1F44"}
+          />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[
+              styles.speedLabel,
+              speeding && styles.speedLabelSpeeding,
+            ]}
+          >
+            {speeding ? "Speeding" : "Speed"}
+          </Text>
+          <Text
+            style={[
+              styles.speedValue,
+              speeding && styles.speedValueSpeeding,
+            ]}
+          >
+            {currentSpeedKmh} km/h
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
   const renderMap = () => (
     <View style={fullMap ? styles.mapContainerFull : styles.mapContainer}>
       <MapView
@@ -2062,7 +2119,7 @@ export default function LocationScreen({ route }) {
       </MapView>
 
       {routeLoading && (
-        <View style={[styles.mapOverlay, { top: topPadding + 16 }]}>
+        <View style={[styles.mapOverlay, { top: topPadding + 8 }]}>
           <ActivityIndicator size="small" color="#007bff" />
           <Text style={styles.overlayText}>Building route...</Text>
         </View>
@@ -2080,7 +2137,7 @@ export default function LocationScreen({ route }) {
       )}
 
       {fuelWarning && (
-        <View style={styles.fuelWarningOverlay}>
+        <View style={[styles.fuelWarningOverlay, { top: topPadding + 60 }]}>
           <Ionicons name="warning-outline" size={24} color="#fff" />
           <Text style={styles.fuelWarningText}>Low Fuel</Text>
         </View>
@@ -2754,6 +2811,7 @@ export default function LocationScreen({ route }) {
 
       {renderMap()}
       {renderPauseTimerOverlay()}
+      {renderSpeedPill()}
 
       {!fullMap && (
         <View
@@ -2944,9 +3002,11 @@ const styles = StyleSheet.create({
   mapOverlay: {
     position: "absolute",
     top: 16,
-    alignSelf: "center",
+    left: 20,
+    right: 20,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.92)",
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -3045,6 +3105,63 @@ const styles = StyleSheet.create({
   },
   pauseTimerValueResumed: {
     color: '#1b5e20',
+  },
+
+  // ---------- Live speed pill ----------
+  speedPill: {
+    position: 'absolute',
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: '#dbe3ee',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 22,
+    minWidth: 140,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 5,
+    elevation: 6,
+    zIndex: 50,
+  },
+  speedPillSpeeding: {
+    backgroundColor: '#fee2e2',
+    borderColor: '#fca5a5',
+  },
+  speedIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#eef6ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  speedIconWrapSpeeding: {
+    backgroundColor: '#dc2626',
+  },
+  speedLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0A1F44',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  speedLabelSpeeding: {
+    color: '#7f1d1d',
+  },
+  speedValue: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#0A1F44',
+    marginTop: 1,
+    fontVariant: ['tabular-nums'],
+  },
+  speedValueSpeeding: {
+    color: '#7f1d1d',
   },
 
   currentLocationMarker: { alignItems: "center", justifyContent: "center" },
