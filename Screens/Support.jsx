@@ -137,7 +137,7 @@ const SupportScreen = ({ navigation }) => {
   }, [user]);
 
   // ============================================
-  // FETCH USER TICKETS
+  // FETCH USER TICKETS (app_tickets)
   // ============================================
   const fetchTickets = useCallback(async () => {
     if (!user) {
@@ -147,7 +147,7 @@ const SupportScreen = ({ navigation }) => {
 
     try {
       const { data, error } = await supabase
-        .from("support_tickets")
+        .from("app_tickets")
         .select(
           "id, category, subject, description, status, priority, created_at, resolved_at"
         )
@@ -291,11 +291,16 @@ const SupportScreen = ({ navigation }) => {
       return;
     }
 
+    if (!user?.id) {
+      Alert.alert("Error", "You must be signed in to submit a ticket.");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
       const { data, error } = await supabase
-        .from("support_tickets")
+        .from("app_tickets")
         .insert({
           user_id: user.id,
           category: ticketCategory,
