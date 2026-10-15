@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,8 @@ import {
   Platform,
   Alert,
   ActivityIndicator,
+  Image,
+  Modal,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import {
@@ -18,9 +20,14 @@ import {
   MaterialCommunityIcons,
 } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as ImagePicker from "expo-image-picker";
+import * as FileSystem from "expo-file-system/legacy";
+import { base64ToBytes, detectImageType } from "../utils/base64";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../context/AuthContext";
 import { auditLog } from "../utils/auditlogger";
+
+const AVATAR_BUCKET = "avatars";
 
 export default function Profile() {
   const { user, signOut } = useAuth();
@@ -40,6 +47,11 @@ export default function Profile() {
   const [vehicle, setVehicle] = useState(null);
   const [vehicleLoading, setVehicleLoading] = useState(true);
 
+  // Avatar
+  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [avatarLoading, setAvatarLoading] = useState(false);
+  const [showAvatarModal, setShowAvatarModal] = useState(false);
+
   useEffect(() => {
     if (!user?.id) return;
     loadProfile();
@@ -54,7 +66,7 @@ export default function Profile() {
 
       const { data: userRow, error: userError } = await supabase
         .from("users")
-        .select("user_id, user_name, email")
+        .select("user_id, user_name, email, avatar_url")
         .eq("user_id", userId)
         .single();
 
@@ -80,6 +92,25 @@ export default function Profile() {
       setEmail(profileData.email);
       setPhone(profileData.phone);
       setLicenseNumber(profileData.licenseNumber);
+
+      // Resolve avatar URL (signed URL if the bucket is private)
+      if (userRow.avatar_url) {
+        try {
+          const { data: signed } = await supabase.storage
+            .from(AVATAR_BUCKET)
+            .createSignedUrl(userRow.avatar_url, 3600);
+          if (signed?.signedUrl) {
+            setAvatarUrl(signed.signedUrl);
+          } else {
+            const { data: pub } = supabase.storage
+              .from(AVATAR_BUCKET)
+              .getPublicUrl(userRow.avatar_url);
+            setAvatarUrl(pub?.publicUrl || null);
+          }
+        } catch (e) {
+          console.warn("[Profile] avatar url resolve failed:", e?.message);
+        }
+      }
     } catch (err) {
       Alert.alert("Error", err.message);
     } finally {
@@ -93,7 +124,7 @@ export default function Profile() {
     try {
       let driverId = null;
 
-      const { data: byUser, error: byUserErr } = await supabase
+      const { data: byUser } = await supabase
         .from("drivers")
         .select("driver_id")
         .eq("user_id", user.id)
@@ -105,7 +136,7 @@ export default function Profile() {
         driverId = user.id;
       }
 
-      const { data: veh, error: vehErr } = await supabase
+      const { data: veh } = await supabase
         .from("vehicles")
         .select("vehicle_id, registration_number")
         .eq("driver_id", driverId)
@@ -120,6 +151,195 @@ export default function Profile() {
     }
   };
 
+  // ============================================
+  // AVATAR UPLOAD
+  // ============================================
+  const uploadAvatarToSupabase = useCallback(async (uri, userId) => {
+    let normalizedUri = uri;
+    let copiedToCache = false;
+
+    try {
+      if (!uri.startsWith("file://")) {
+        const stamp = Date.now();
+        const target = `${FileSystem.cacheDirectory}avatar-${stamp}.jpg`;
+        await FileSystem.copyAsync({ from: uri, to: target });
+        normalizedUri = target;
+        copiedToCache = true;
+      }
+
+      const info = await FileSystem.getInfoAsync(normalizedUri);
+      if (!info.exists) {
+        Alert.alert("Error", "Image file not found.");
+        return null;
+      }
+      if (info.size != null && info.size < 100) {
+        Alert.alert("Error", "Image file appears empty.");
+        return null;
+      }
+
+      const base64 = await FileSystem.readAsStringAsync(normalizedUri, {
+        encoding: "base64",
+      });
+      const bytes = base64ToBytes(base64);
+      if (bytes.length < 100) {
+        Alert.alert("Error", "Image file appears empty.");
+        return null;
+      }
+
+      const { contentType, ext } = detectImageType(bytes);
+      const fileName = `${userId}/avatar-${Date.now()}.${ext}`;
+
+      const { data, error } = await supabase.storage
+        .from(AVATAR_BUCKET)
+        .upload(fileName, bytes, { contentType, upsert: true });
+
+      if (error) {
+        console.error("[Profile] avatar upload failed:", error);
+        Alert.alert("Upload Error", error.message);
+        return null;
+      }
+
+      return data.path;
+    } catch (e) {
+      console.error("[Profile] avatar upload exception:", e);
+      Alert.alert("Error", `Failed to upload image: ${e.message}`);
+      return null;
+    } finally {
+      if (copiedToCache) {
+        try {
+          await FileSystem.deleteAsync(normalizedUri, { idempotent: true });
+        } catch {}
+      }
+    }
+  }, []);
+
+  const saveAvatarPath = useCallback(
+    async (path, localUriForPreview) => {
+      try {
+        const userId = user.id;
+
+        const { error: userErr } = await supabase
+          .from("users")
+          .update({ avatar_url: path })
+          .eq("user_id", userId);
+
+        if (userErr) throw userErr;
+
+        // Best-effort: also mirror onto the drivers row if the column exists
+        try {
+          await supabase
+            .from("drivers")
+            .update({ avatar_url: path })
+            .eq("driver_id", userId);
+        } catch {}
+
+        // Refresh the signed URL so the new image displays
+        try {
+          const { data: signed } = await supabase.storage
+            .from(AVATAR_BUCKET)
+            .createSignedUrl(path, 3600);
+          if (signed?.signedUrl) {
+            setAvatarUrl(signed.signedUrl);
+          } else {
+            const { data: pub } = supabase.storage
+              .from(AVATAR_BUCKET)
+              .getPublicUrl(path);
+            setAvatarUrl(pub?.publicUrl || localUriForPreview);
+          }
+        } catch {
+          setAvatarUrl(localUriForPreview);
+        }
+
+        await auditLog({
+          action: "PROFILE_AVATAR_UPDATED",
+          page: "Mobile Profile",
+          description: "User updated their profile picture",
+          details: { path },
+        });
+      } catch (e) {
+        console.error("[Profile] save avatar path failed:", e);
+        Alert.alert("Error", "Image uploaded but profile could not be updated.");
+      }
+    },
+    [user]
+  );
+
+  const handlePickedAsset = useCallback(
+    async (asset) => {
+      setShowAvatarModal(false);
+      if (!asset?.uri) return;
+
+      setAvatarLoading(true);
+      try {
+        const path = await uploadAvatarToSupabase(asset.uri, user.id);
+        if (!path) return;
+        await saveAvatarPath(path, asset.uri);
+        Alert.alert("Success", "Profile picture updated!");
+      } finally {
+        setAvatarLoading(false);
+      }
+    },
+    [user, uploadAvatarToSupabase, saveAvatarPath]
+  );
+
+  const pickAvatarFromLibrary = useCallback(async () => {
+    const { status } =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert(
+        "Permission Required",
+        "Gallery access is required to pick a profile picture."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets?.[0]) {
+      await handlePickedAsset(result.assets[0]);
+    }
+  }, [handlePickedAsset]);
+
+  const takeAvatarWithCamera = useCallback(async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert(
+        "Permission Required",
+        "Camera access is required to take a profile picture."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets?.[0]) {
+      await handlePickedAsset(result.assets[0]);
+    }
+  }, [handlePickedAsset]);
+
+  const openAvatarOptions = useCallback(() => {
+    setShowAvatarModal(true);
+
+    auditLog({
+      action: "PROFILE_AVATAR_OPEN",
+      page: "Mobile Profile",
+      description: "User opened the profile picture picker",
+    });
+  }, []);
+
+  // ============================================
+  // SAVE PROFILE
+  // ============================================
   const handleSave = async () => {
     if (
       !userName.trim() ||
@@ -169,12 +389,7 @@ export default function Profile() {
         page: "Mobile Profile",
         description: "User updated their profile information",
         details: {
-          updated_fields: [
-            "user_name",
-            "email",
-            "phone",
-            "license_number",
-          ],
+          updated_fields: ["user_name", "email", "phone", "license_number"],
         },
       });
 
@@ -232,14 +447,6 @@ export default function Profile() {
     return "DR";
   };
 
-  if (loading) {
-    return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color="#3B82F6" />
-      </View>
-    );
-  }
-
   const vehicleTitle = vehicle?.registration_number || "No vehicle assigned";
 
   const topPadding =
@@ -248,6 +455,20 @@ export default function Profile() {
       : Platform.OS === "android"
       ? StatusBar.currentHeight || 24
       : 44;
+
+  // ---------- Small skeleton helper ----------
+  const Skeleton = ({ w = "60%", h = 14, mt = 0, mb = 0, r = 7 }) => (
+    <View
+      style={{
+        width: w,
+        height: h,
+        borderRadius: r,
+        backgroundColor: "#E5E9F0",
+        marginTop: mt,
+        marginBottom: mb,
+      }}
+    />
+  );
 
   return (
     <View style={styles.container}>
@@ -273,18 +494,45 @@ export default function Profile() {
           <View style={styles.headerContent}>
             <View style={styles.profileCard}>
               <View style={styles.profileImageContainer}>
-                <View style={styles.profileImage}>
-                  <Text style={styles.initials}>{getInitials()}</Text>
-                </View>
-                <TouchableOpacity style={styles.editIcon}>
-                  <Feather name="edit-2" size={14} color="#FFFFFF" />
+                <TouchableOpacity
+                  onPress={openAvatarOptions}
+                  activeOpacity={0.85}
+                  disabled={avatarLoading}
+                >
+                  <View style={styles.profileImage}>
+                    {avatarUrl ? (
+                      <Image
+                        source={{ uri: avatarUrl }}
+                        style={styles.profileImageImg}
+                      />
+                    ) : (
+                      <Text style={styles.initials}>{getInitials()}</Text>
+                    )}
+                    {avatarLoading && (
+                      <View style={styles.profileImageOverlay}>
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.editIcon}
+                  onPress={openAvatarOptions}
+                  disabled={avatarLoading}
+                >
+                  <Feather name="camera" size={14} color="#FFFFFF" />
                 </TouchableOpacity>
               </View>
 
               <View style={styles.profileInfo}>
-                <Text style={styles.profileName}>
-                  {saved?.userName || "Driver"}
-                </Text>
+                {loading && !saved?.userName ? (
+                  <Skeleton w="55%" h={20} mb={8} />
+                ) : (
+                  <Text style={styles.profileName}>
+                    {saved?.userName || "Driver"}
+                  </Text>
+                )}
                 <View style={styles.statusContainer}>
                   <View style={styles.statusDot} />
                   <Text style={styles.statusText}>Active</Text>
@@ -378,11 +626,19 @@ export default function Profile() {
                 <View style={styles.infoRow}>
                   <View style={styles.infoItem}>
                     <Text style={styles.label}>Username</Text>
-                    <Text style={styles.value}>{saved?.userName}</Text>
+                    {loading && !saved?.userName ? (
+                      <Skeleton w="70%" mt={6} />
+                    ) : (
+                      <Text style={styles.value}>{saved?.userName || "—"}</Text>
+                    )}
                   </View>
                   <View style={styles.infoItem}>
                     <Text style={styles.label}>Email</Text>
-                    <Text style={styles.value}>{saved?.email}</Text>
+                    {loading && !saved?.email ? (
+                      <Skeleton w="80%" mt={6} />
+                    ) : (
+                      <Text style={styles.value}>{saved?.email || "—"}</Text>
+                    )}
                   </View>
                 </View>
               </View>
@@ -400,11 +656,19 @@ export default function Profile() {
                 <View style={styles.infoRow}>
                   <View style={styles.infoItem}>
                     <Text style={styles.label}>Phone</Text>
-                    <Text style={styles.value}>{saved?.phone}</Text>
+                    {loading && !saved?.phone ? (
+                      <Skeleton w="70%" mt={6} />
+                    ) : (
+                      <Text style={styles.value}>{saved?.phone || "—"}</Text>
+                    )}
                   </View>
                   <View style={styles.infoItem}>
                     <Text style={styles.label}>License Number</Text>
-                    <Text style={styles.value}>{saved?.licenseNumber}</Text>
+                    {loading && !saved?.licenseNumber ? (
+                      <Skeleton w="70%" mt={6} />
+                    ) : (
+                      <Text style={styles.value}>{saved?.licenseNumber || "—"}</Text>
+                    )}
                   </View>
                 </View>
               </View>
@@ -421,19 +685,15 @@ export default function Profile() {
                 </View>
 
                 {vehicleLoading ? (
-                  <View style={styles.vehicleLoadingRow}>
-                    <ActivityIndicator size="small" color="#3B82F6" />
-                    <Text style={styles.vehicleLoadingText}>
-                      Loading vehicle...
-                    </Text>
+                  <View style={styles.vehicleHeaderRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.label}>Registration</Text>
+                      <Skeleton w="55%" h={16} mt={6} />
+                    </View>
                   </View>
                 ) : !vehicle ? (
                   <View style={styles.vehicleEmptyRow}>
-                    <Ionicons
-                      name="car-outline"
-                      size={22}
-                      color="#9CA3AF"
-                    />
+                    <Ionicons name="car-outline" size={22} color="#9CA3AF" />
                     <Text style={styles.vehicleEmptyText}>
                       No vehicle assigned to your profile yet.
                     </Text>
@@ -442,9 +702,7 @@ export default function Profile() {
                   <View style={styles.vehicleHeaderRow}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.label}>Registration</Text>
-                      <Text style={styles.vehicleReg}>
-                        {vehicleTitle}
-                      </Text>
+                      <Text style={styles.vehicleReg}>{vehicleTitle}</Text>
                     </View>
                   </View>
                 )}
@@ -463,6 +721,91 @@ export default function Profile() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* AVATAR PICKER MODAL */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={showAvatarModal}
+        onRequestClose={() => setShowAvatarModal(false)}
+      >
+        <View style={styles.avatarModalOverlay}>
+          <View
+            style={[
+              styles.avatarModalSheet,
+              { paddingBottom: insets?.bottom || 0 },
+            ]}
+          >
+            <View style={styles.avatarModalHandleWrap}>
+              <View style={styles.avatarModalHandle} />
+            </View>
+
+            <View style={styles.avatarModalHeader}>
+              <View style={styles.avatarModalHeaderIcon}>
+                <Feather name="camera" size={22} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.avatarModalTitle}>Profile Picture</Text>
+                <Text style={styles.avatarModalSubtitle}>
+                  Choose how to update your photo
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.avatarModalBody}>
+              <TouchableOpacity
+                style={styles.avatarOption}
+                onPress={takeAvatarWithCamera}
+                activeOpacity={0.85}
+              >
+                <View style={[styles.avatarOptionIcon, { backgroundColor: "#e0f2fe" }]}>
+                  <Ionicons name="camera" size={22} color="#0369a1" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.avatarOptionTitle}>Take Photo</Text>
+                  <Text style={styles.avatarOptionHint}>
+                    Use your camera right now
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.avatarOption}
+                onPress={pickAvatarFromLibrary}
+                activeOpacity={0.85}
+              >
+                <View style={[styles.avatarOptionIcon, { backgroundColor: "#ede9fe" }]}>
+                  <Ionicons name="images" size={22} color="#6d28d9" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.avatarOptionTitle}>
+                    Choose from Gallery
+                  </Text>
+                  <Text style={styles.avatarOptionHint}>
+                    Pick an existing photo
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.avatarOption, { marginTop: 4 }]}
+                onPress={() => setShowAvatarModal(false)}
+                activeOpacity={0.85}
+              >
+                <View style={[styles.avatarOptionIcon, { backgroundColor: "#fee2e2" }]}>
+                  <Ionicons name="close" size={22} color="#b91c1c" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.avatarOptionTitle}>Cancel</Text>
+                  <Text style={styles.avatarOptionHint}>Keep current photo</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -505,6 +848,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 3,
     borderColor: "#FFFFFF",
+    overflow: "hidden",
+  },
+  profileImageImg: {
+    width: "100%",
+    height: "100%",
+  },
+  profileImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   initials: {
     fontSize: 28,
@@ -719,5 +1073,101 @@ const styles = StyleSheet.create({
     color: "#DC2626",
     fontSize: 16,
     fontWeight: "600",
+  },
+
+  // ---- Avatar modal ----
+  avatarModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(10, 31, 68, 0.55)",
+    justifyContent: "flex-end",
+  },
+  avatarModalSheet: {
+    backgroundColor: "#ebf2ff",
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
+  },
+  avatarModalHandleWrap: {
+    paddingTop: 10,
+    paddingBottom: 4,
+    alignItems: "center",
+    backgroundColor: "#ebf2ff",
+  },
+  avatarModalHandle: {
+    width: 45,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: "#c9c9c9",
+  },
+  avatarModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0A1F44",
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 18,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    marginTop: 8,
+  },
+  avatarModalHeaderIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.15)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  avatarModalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#fff",
+  },
+  avatarModalSubtitle: {
+    fontSize: 12,
+    color: "#aebbd3",
+    marginTop: 3,
+  },
+  avatarModalBody: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
+  avatarOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    padding: 14,
+    borderRadius: 16,
+    marginBottom: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  avatarOptionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  avatarOptionTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0A1F44",
+  },
+  avatarOptionHint: {
+    fontSize: 12,
+    color: "#7a8699",
+    marginTop: 2,
   },
 });
