@@ -11,15 +11,19 @@ import FuelScreen from "../../Screens/fuel";
 import SupportScreen from "../../Screens/Support";
 
 import { PanicProvider } from "../../context/PanicButtonContext";
+import {
+  AdminNotificationsProvider,
+  useAdminNotifications,
+} from "../../context/AdminNotificationsContext";
 import { BatteryProvider } from "../../context/BatteryLevelContext";
 import PanicButton from "../../components/panicbutton";
 
 const Tab = createBottomTabNavigator();
 
-export default function TabNavigator() {
+function Tabs() {
+  const { unreadCount } = useAdminNotifications();
+
   return (
-    <BatteryProvider>
-      <PanicProvider>
         <View style={{ flex: 1 }}>
           <Tab.Navigator
             screenOptions={{
@@ -85,6 +89,7 @@ export default function TabNavigator() {
               name="Notifications"
               component={Notifications}
               options={{
+                tabBarBadge: unreadCount > 0 ? unreadCount : undefined,
                 tabBarIcon: ({ focused }) => (
                   <Ionicons
                     name={focused ? "notifications" : "notifications-outline"}
@@ -128,6 +133,16 @@ export default function TabNavigator() {
 
           <PanicButton />
         </View>
+  );
+}
+
+export default function TabNavigator() {
+  return (
+    <BatteryProvider>
+      <PanicProvider>
+        <AdminNotificationsProvider>
+          <Tabs />
+        </AdminNotificationsProvider>
       </PanicProvider>
     </BatteryProvider>
   );

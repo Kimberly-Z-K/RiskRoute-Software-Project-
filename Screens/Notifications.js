@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   View,
   Text,
@@ -15,14 +15,11 @@ import { MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
+import { useAdminNotifications } from "../context/AdminNotificationsContext";
+import { getLiveTraffic, SEVERITY_ORDER } from "../utils/traffic";
 
 const { width } = Dimensions.get("window");
 const OSRM_BASE_URL = "https://router.project-osrm.org";
-
-const FALLBACK_COORDINATES = [
-  [28.0473, -26.2041], // Johannesburg
-  [28.2293, -25.7479], // Pretoria
-];
 
 const geocodeCache = new Map();
 
@@ -124,84 +121,103 @@ const reverseGeocode = async (lat, lng) => {
   return fallbackName;
 };
 
-function analyzeRouteForIssues(route, index) {
-  const duration = route?.duration || 0;
-  const distance = route?.distance || 0;
-  const avgSpeed = duration > 0 ? (distance / 1000) / (duration / 3600) : 0;
+const TRAFFIC_STYLE = {
+  clear: { emoji: "✅", icon: "check-circle", iconColor: "#10B981", bg: "#D1FAE5" },
+  light: { emoji: "🟡", icon: "traffic-light", iconColor: "#F59E0B", bg: "#FEF3C7" },
+  moderate: { emoji: "🟠", icon: "traffic-light", iconColor: "#F97316", bg: "#FFEDD5" },
+  heavy: { emoji: "🔴", icon: "traffic-light", iconColor: "#EF4444", bg: "#FEE2E2" },
+};
 
-  let condition = "Normal";
-  let severity = "";
-  let emoji = "✅";
+const formatClock = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
 
-  if (avgSpeed < 10 && avgSpeed > 0) {
-    condition = "Heavy Traffic Jam";
-    severity = "Severe - Speed under 10 km/h";
-    emoji = "🔴";
-  } else if (avgSpeed < 25) {
-    condition = "Moderate Congestion";
-    severity = "Moderate - Speed under 25 km/h";
-    emoji = "🟡";
-  } else if (avgSpeed < 40) {
-    condition = "Slow Traffic";
-    severity = "Mild - Speed under 40 km/h";
-    emoji = "🟢";
-  } else if (avgSpeed === 0) {
-    condition = "Road Closed / Standstill";
-    severity = "Critical - No movement detected";
-    emoji = "⛔";
-  }
+// Builds the "ROUTE & TRAFFIC" card from real, live traffic data.
+function buildTrafficNotification(traffic, from, to) {
+  const s = TRAFFIC_STYLE[traffic.severity] || TRAFFIC_STYLE.clear;
+  const eta = formatClock(traffic.etaIso);
+  const trip = `About ${traffic.travelMin} min to go, ${traffic.distanceKm.toFixed(1)} km.`;
+  const arrive = eta ? ` Arrive around ${eta}.` : "";
 
-  return {
-    condition,
-    severity,
-    avgSpeed: avgSpeed.toFixed(1),
-    duration: Math.round(duration / 60),
-    distance: (distance / 1000).toFixed(1),
-    emoji,
-  };
-}
-
-async function buildTrafficNotification(
-  routeData,
-  index,
-  coordinates,
-  startLocation,
-  endLocation
-) {
-  const analysis = analyzeRouteForIssues(routeData, index);
-
-  const from = startLocation || "Unknown";
-  const to = endLocation || "Unknown";
-
-  let message = "";
-  let title = "";
-
-  if (analysis.condition === "Normal") {
-    title = `Route from ${from} to ${to} is clear`;
-    message = `Distance: ${analysis.distance}km, Estimated time: ${analysis.duration} minutes, Speed: ${analysis.avgSpeed}km/h`;
-  } else {
-    title = `${analysis.emoji} ${analysis.condition} on route from ${from} to ${to}`;
-    message = `${analysis.severity}. Distance: ${analysis.distance}km, Est. time: ${analysis.duration}min, Speed: ${analysis.avgSpeed}km/h`;
-  }
+  const title =
+    traffic.severity === "clear"
+      ? `${s.emoji} Traffic is clear to ${to}`
+      : `${s.emoji} ${traffic.label} to ${to}`;
+  const message =
+    traffic.severity === "clear"
+      ? `${trip}${arrive}`
+      : `Traffic is adding about ${traffic.delayMin} min. ${trip}${arrive}`;
 
   return {
-    id: `traffic-route-${Date.now()}-${index}`,
+    id: "traffic-live",
+    signature: `${traffic.severity}-${Math.round(traffic.delayMin / 5)}`,
     category: "ROUTE & TRAFFIC",
     title,
     message,
-    time: "Just now",
-    icon: analysis.condition === "Normal" ? "check-circle" : "traffic-light",
-    iconColor: analysis.condition === "Normal" ? "#10B981" : "#3B82F6",
-    bg: analysis.condition === "Normal" ? "#D1FAE5" : "#DBEAFE",
+    time: `Updated ${formatClock(new Date(traffic.fetchedAt).toISOString())}`,
+    icon: s.icon,
+    iconColor: s.iconColor,
+    bg: s.bg,
     unread: true,
-    routeData,
     from,
     to,
-    condition: analysis.condition,
-    duration: analysis.duration,
-    distance: analysis.distance,
-    speed: analysis.avgSpeed,
-    emoji: analysis.emoji,
+    duration: traffic.travelMin,
+    distance: traffic.distanceKm.toFixed(1),
+    delay: traffic.delayMin,
+    severity: traffic.severity,
+  };
+}
+
+function buildTrafficUnavailable(reason) {
+  return {
+    id: "traffic-live",
+    signature: `unavailable-${reason}`,
+    category: "ROUTE & TRAFFIC",
+    title: "Live traffic unavailable",
+    message: reason,
+    time: `Updated ${formatClock(new Date().toISOString())}`,
+    icon: "alert-circle",
+    iconColor: "#F59E0B",
+    bg: "#FEF3C7",
+    unread: false,
+    severity: "unknown",
+  };
+}
+
+// Notifications created by admin actions (see driver_notifications in the database).
+const ADMIN_STYLE = {
+  allocation: { category: "FUEL ALERTS", icon: "cash-multiple", iconColor: "#F59E0B", bg: "#FEF3C7" },
+  vehicle: { category: "VEHICLE", icon: "truck", iconColor: "#EF4444", bg: "#FEE2E2" },
+  route: { category: "DELIVERIES", icon: "map-marker-path", iconColor: "#10B981", bg: "#D1FAE5" },
+};
+
+function timeAgo(iso, nowMs) {
+  const diff = Math.max(0, nowMs - new Date(iso).getTime());
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "Just now";
+  if (min < 60) return `${min} min ago`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `${hours}h ago`;
+  if (hours < 48) return "Yesterday";
+  return new Date(iso).toLocaleDateString();
+}
+
+function adminRowToItem(row, nowMs) {
+  const s = ADMIN_STYLE[row.type] || ADMIN_STYLE.vehicle;
+  return {
+    id: `db-${row.id}`,
+    dbId: row.id,
+    category: s.category,
+    title: row.title,
+    message: row.message || "",
+    time: timeAgo(row.created_at, nowMs),
+    icon: s.icon,
+    iconColor: s.iconColor,
+    bg: s.bg,
+    unread: !row.read,
   };
 }
 
@@ -212,67 +228,41 @@ export default function Notifications() {
     console.log("[noti screen AUTH]", !!user);
   }, [user]);
 
-  const [notifications, setNotifications] = useState([
-    {
-      id: Date.now() + 1,
-      category: "FUEL ALERTS",
-      title: "Fuel at 38% — refill recommended",
-      message: "2 stations detected on your route",
-      time: "12 minutes ago",
-      icon: "gas-station",
-      iconColor: "#F59E0B",
-      bg: "#FEF3C7",
-      unread: true,
-    },
-    {
-      id: Date.now() + 2,
-      category: "FUEL ALERTS",
-      title: "Fuel expense approved — R 1,245",
-      message: "Shell Rosebank • Ref: SH-8812",
-      time: "2h ago",
-      icon: "receipt",
-      iconColor: "#F59E0B",
-      bg: "#FEF3C7",
-      unread: false,
-    },
-    {
-      id: Date.now() + 4,
-      category: "DELIVERIES",
-      title: "Drop 4 confirmed — client signed",
-      message: "Germiston Hub • DL-7721",
-      time: "1h ago",
-      icon: "package-variant",
-      iconColor: "#10B981",
-      bg: "#D1FAE5",
-      unread: false,
-    },
-    {
-      id: Date.now() + 5,
-      category: "DELIVERIES",
-      title: "3 deliveries pending on current route",
-      message: "Next: OR Tambo, Bay 12",
-      time: "3h ago",
-      icon: "truck-delivery",
-      iconColor: "#10B981",
-      bg: "#D1FAE5",
-      unread: false,
-    },
-    {
-      id: Date.now() + 6,
-      category: "VEHICLE",
-      title: "Service due in 2 300 km",
-      message: "Book at depot • Ref: SVC-445",
-      time: "Yesterday",
-      icon: "wrench",
-      iconColor: "#EF4444",
-      bg: "#FEE2E2",
-      unread: false,
-    },
-  ]);
+  // Live traffic card (built on this screen) + admin notifications (from the database).
+  const [trafficNotifications, setTrafficNotifications] = useState([]);
+  const {
+    items: adminRows,
+    markRead: markAdminRead,
+    markAllRead: markAllAdminRead,
+    reload: reloadAdmin,
+  } = useAdminNotifications();
+
+  // keep "5 min ago" labels fresh
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  // refresh from the database each time the screen is opened
+  useEffect(() => {
+    reloadAdmin();
+  }, [reloadAdmin]);
+
+  const adminNotifications = useMemo(
+    () => adminRows.map((r) => adminRowToItem(r, Date.now())),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [adminRows, tick]
+  );
+
+  const notifications = useMemo(
+    () => [...trafficNotifications, ...adminNotifications],
+    [trafficNotifications, adminNotifications]
+  );
 
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const [lastSpeechTime, setLastSpeechTime] = useState(0);
+  const lastSpokenSeverityRef = useRef("clear");
 
   const unreadCount = notifications.filter((n) => n.unread).length;
 
@@ -282,7 +272,7 @@ export default function Notifications() {
   const resolveRouteCoordinates = useCallback(async () => {
     if (!user?.id) {
       console.log("[resolveRoute] No user, using fallback");
-      return { coordinates: FALLBACK_COORDINATES, routeId: null };
+      return { coordinates: [], routeId: null };
     }
 
     try {
@@ -322,7 +312,7 @@ export default function Notifications() {
       const routeId = veh?.route_id ?? null;
       if (!routeId) {
         console.log("[resolveRoute] No route assigned to vehicle, using fallback");
-        return { coordinates: FALLBACK_COORDINATES, routeId: null };
+        return { coordinates: [], routeId: null };
       }
 
       // 3. Fetch the route
@@ -342,7 +332,7 @@ export default function Notifications() {
 
       if (!routeRow) {
         console.log("[resolveRoute] Route not found, using fallback");
-        return { coordinates: FALLBACK_COORDINATES, routeId };
+        return { coordinates: [], routeId };
       }
 
       // 4. Convert to [lng, lat] coordinate pairs for OSRM
@@ -361,191 +351,109 @@ export default function Notifications() {
 
       if (chain.length < 2) {
         console.log("[resolveRoute] Not enough coordinates, using fallback");
-        return { coordinates: FALLBACK_COORDINATES, routeId };
+        return { coordinates: [], routeId };
       }
 
       console.log("[resolveRoute] coordinates chain:", chain.length, "points");
       return { coordinates: chain, routeId };
     } catch (e) {
       console.warn("[resolveRoute] exception:", e?.message);
-      return { coordinates: FALLBACK_COORDINATES, routeId: null };
+      return { coordinates: [], routeId: null };
     }
   }, [user]);
 
   const fetchTrafficUpdates = useCallback(async () => {
     try {
-      // Resolve coordinates from the user's vehicle -> route
+      // coordinates = [start, stop 1, stop 2, ...] as [lng, lat]
       const { coordinates, routeId } = await resolveRouteCoordinates();
 
-      console.log("[fetchTrafficUpdates] Using coordinates:", coordinates.length, "points", {
-        routeId,
-      });
-
-      // For geocoding the human-readable names, use first and last
-      const firstCoord = coordinates[0];
-      const lastCoord = coordinates[coordinates.length - 1];
-
-      console.log("[fetchTrafficUpdates] Geocoding locations...");
-      const startLocation = await reverseGeocode(firstCoord[1], firstCoord[0]);
-      const endLocation = await reverseGeocode(lastCoord[1], lastCoord[0]);
-
-      console.log("[fetchTrafficUpdates] Locations:", { startLocation, endLocation });
-
-      const coordsString = coordinates
-        .map((coord) => `${coord[0]},${coord[1]}`)
-        .join(";");
-
-      const url = `${OSRM_BASE_URL}/route/v1/driving/${coordsString}?overview=false&steps=false&annotations=true`;
-
-      console.log("[fetchTrafficUpdates] Fetching from OSRM:", url);
-
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!routeId || coordinates.length < 2) {
+        setTrafficNotifications([]); // no route assigned: nothing to report
+        return;
       }
 
-      const result = await response.json();
-      console.log("[fetchTrafficUpdates] OSRM Response received");
+      const start = { latitude: coordinates[0][1], longitude: coordinates[0][0] };
+      const stops = coordinates
+        .slice(1)
+        .map((c) => ({ latitude: c[1], longitude: c[0] }));
 
-      if (result.code === "Ok" && result.routes && result.routes.length > 0) {
-        const routes = result.routes;
-        console.log("[fetchTrafficUpdates] Number of routes found:", routes.length);
-
-        const trafficNotifications = [];
-
-        for (let i = 0; i < routes.length; i++) {
-          const notification = await buildTrafficNotification(
-            routes[i],
-            i,
-            coordinates,
-            startLocation,
-            endLocation
-          );
-          trafficNotifications.push(notification);
-        }
-
-        const firstRouteAnalysis = analyzeRouteForIssues(routes[0], 0);
-        if (firstRouteAnalysis.condition !== "Normal") {
-          const alternativeRoute = {
-            id: `traffic-alt-${Date.now()}`,
-            category: "ROUTE & TRAFFIC",
-            title: `🔄 Alternative route available with less traffic`,
-            message: `Suggested detour from ${startLocation} to ${endLocation}: ${((routes[0].distance / 1000) * 1.15).toFixed(1)}km, estimated ${Math.round((routes[0].duration / 60) * 1.2)} minutes (15% longer but less traffic)`,
-            time: "Just now",
-            icon: "map-marker-path",
-            iconColor: "#10B981",
-            bg: "#D1FAE5",
-            unread: true,
-            from: startLocation,
-            to: endLocation,
-          };
-          trafficNotifications.push(alternativeRoute);
-        }
-
-        console.log("[fetchTrafficUpdates] Final notifications:", trafficNotifications.length);
-
-        setNotifications((prev) => {
-          const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
-          return [...trafficNotifications, ...nonTraffic];
+      // Only look at the part of the route still ahead (skip finished stops).
+      const done = new Set();
+      if (user?.id) {
+        const { data: progress } = await supabase
+          .from("trip_stop_progress")
+          .select("stop_index, status")
+          .eq("route_id", String(routeId))
+          .eq("user_id", user.id);
+        (progress || []).forEach((p) => {
+          if (p.status === "completed" || p.status === "skipped") done.add(p.stop_index);
         });
+      }
 
-        const now = Date.now();
-        if (now - lastSpeechTime > 5000) {
-          setLastSpeechTime(now);
+      const next = stops.findIndex((_, i) => !done.has(i));
+      if (next === -1) {
+        setTrafficNotifications([]); // every stop is done
+        return;
+      }
 
-          for (let i = 0; i < trafficNotifications.length; i++) {
-            const alert = trafficNotifications[i];
-            await new Promise((resolve) => setTimeout(resolve, i * 2000));
-            Speech.speak(`${alert.title}. ${alert.message}`, {
-              rate: 0.9,
-              pitch: 1.0,
-              language: "en",
-            });
-            console.log("[Speech] Spoke alert:", alert.title);
-          }
-        }
-      } else {
-        console.log("[fetchTrafficUpdates] No routes found or API error:", result.code);
+      const from = next > 0 ? stops[next - 1] : start;
+      const ahead = [from, ...stops.slice(next)];
+      const last = ahead[ahead.length - 1];
 
-        const fallbackNotification = {
-          id: `traffic-fallback-${Date.now()}`,
-          category: "ROUTE & TRAFFIC",
-          title: `📍 Route update: ${startLocation} to ${endLocation}`,
-          message: "No route data available. Please check your connection.",
-          time: "Just now",
-          icon: "info",
-          iconColor: "#F59E0B",
-          bg: "#FEF3C7",
-          unread: true,
-          from: startLocation,
-          to: endLocation,
-        };
+      const traffic = await getLiveTraffic(ahead);
+      if (!traffic) return;
 
-        setNotifications((prev) => {
-          const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
-          return [fallbackNotification, ...nonTraffic];
+      const [fromName, toName] = await Promise.all([
+        reverseGeocode(from.latitude, from.longitude),
+        reverseGeocode(last.latitude, last.longitude),
+      ]);
+
+      const item = buildTrafficNotification(traffic, fromName, toName);
+
+      // keep "read" if nothing meaningful changed since the last check
+      setTrafficNotifications((prev) => [
+        prev[0] && prev[0].signature === item.signature
+          ? { ...item, unread: prev[0].unread }
+          : item,
+      ]);
+
+      // speak only when traffic gets worse to moderate/heavy, not on every refresh
+      const before = SEVERITY_ORDER.indexOf(lastSpokenSeverityRef.current);
+      const now = SEVERITY_ORDER.indexOf(traffic.severity);
+      lastSpokenSeverityRef.current = traffic.severity;
+      if (now > before && now >= SEVERITY_ORDER.indexOf("moderate")) {
+        Speech.speak(`${item.title}. ${item.message}`, {
+          rate: 0.9,
+          pitch: 1.0,
+          language: "en",
         });
-
-        const now = Date.now();
-        if (now - lastSpeechTime > 5000) {
-          setLastSpeechTime(now);
-          Speech.speak(`Route update. ${fallbackNotification.title}`, {
-            rate: 0.9,
-            pitch: 1.0,
-          });
-        }
       }
     } catch (error) {
-      console.error("[fetchTrafficUpdates] Error:", error);
-
-      try {
-        const firstCoord = FALLBACK_COORDINATES[0];
-        const lastCoord = FALLBACK_COORDINATES[1];
-        const startLocation = await reverseGeocode(firstCoord[1], firstCoord[0]);
-        const endLocation = await reverseGeocode(lastCoord[1], lastCoord[0]);
-
-        const errorNotification = {
-          id: `traffic-error-${Date.now()}`,
-          category: "ROUTE & TRAFFIC",
-          title: `⚠️ Route update unavailable: ${startLocation} to ${endLocation}`,
-          message: "Unable to fetch traffic data. Please try again later.",
-          time: "Just now",
-          icon: "alert-circle",
-          iconColor: "#EF4444",
-          bg: "#FEE2E2",
-          unread: true,
-          from: startLocation,
-          to: endLocation,
-        };
-
-        setNotifications((prev) => {
-          const nonTraffic = prev.filter((n) => n.category !== "ROUTE & TRAFFIC");
-          return [errorNotification, ...nonTraffic];
-        });
-      } catch (e) {
-        console.error("[fetchTrafficUpdates] Error creating fallback:", e);
-      }
+      console.warn("[fetchTrafficUpdates]", error?.message);
+      setTrafficNotifications([
+        buildTrafficUnavailable(error?.message || "Could not load traffic right now."),
+      ]);
     }
-  }, [resolveRouteCoordinates, lastSpeechTime]);
+  }, [resolveRouteCoordinates, user]);
 
   useEffect(() => {
     fetchTrafficUpdates();
-    const interval = setInterval(fetchTrafficUpdates, 60000);
+    const interval = setInterval(fetchTrafficUpdates, 180000);
     return () => clearInterval(interval);
   }, [fetchTrafficUpdates]);
 
   const markAllRead = () => {
-    setNotifications((prev) =>
-      prev.map((n) => ({
-        ...n,
-        unread: false,
-      }))
-    );
+    setTrafficNotifications((prev) => prev.map((n) => ({ ...n, unread: false })));
+    markAllAdminRead();
   };
 
   const markAsRead = (id) => {
-    setNotifications((prev) =>
+    const adminItem = adminNotifications.find((n) => n.id === id);
+    if (adminItem) {
+      markAdminRead(adminItem.dbId);
+      return;
+    }
+    setTrafficNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, unread: false } : n))
     );
   };
@@ -630,7 +538,7 @@ export default function Notifications() {
                 {item.duration && (
                   <View style={styles.detailRow}>
                     <Text style={styles.detailText}>
-                      ⏱ {item.duration} min • {item.distance} km • {item.speed} km/h
+                      {`⏱ ${item.duration} min • ${item.distance} km${item.delay > 0 ? ` • +${item.delay} min delay` : ""}`}
                     </Text>
                   </View>
                 )}
@@ -821,9 +729,9 @@ export default function Notifications() {
                     </View>
                     <View style={styles.modalStatBox}>
                       <Text style={styles.modalStatValue}>
-                        {selectedNotification.speed}
+                        {selectedNotification.delay ?? 0}
                       </Text>
-                      <Text style={styles.modalStatLabel}>KM/H</Text>
+                      <Text style={styles.modalStatLabel}>DELAY (MIN)</Text>
                     </View>
                   </View>
                 )}

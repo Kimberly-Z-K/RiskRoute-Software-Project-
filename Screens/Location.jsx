@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   View,
   StyleSheet,
@@ -24,6 +24,15 @@ import { useAuth } from '../context/AuthContext';
 import { supabase } from "../lib/supabase";
 import { auditLog } from "../utils/auditlogger";
 import { findStationsAlongRoute, findStationsNearPoint } from "../utils/fuelStations";
+import { getLiveTraffic } from "../utils/traffic";
+import {
+  STOP_DONE,
+  nextStopIndex,
+  countDone,
+  stopStatusLabel,
+  stopPinColor,
+  metresBetween,
+} from "../utils/tripProgress";
 
 const { width, height } = Dimensions.get("window");
 const INFO_AREA_HEIGHT_PX = height * 0.65;
@@ -42,6 +51,8 @@ const CONFIG = {
   NEARBY_RADIUS_KM: 5,
   NEARBY_MAX_RADIUS_KM: 20,
   NEARBY_REFRESH_KM: 3,
+  STOP_ARRIVAL_RADIUS_M: 150,
+  TRAFFIC_REFRESH_MS: 180000,
 };
 
 const PAUSE_CATEGORIES = [
@@ -128,6 +139,21 @@ const formatDistance = (dist) => {
   return `${dist.toFixed(1)} km`;
 };
 
+const TRAFFIC_COLOR = {
+  clear: '#2e7d32',
+  light: '#d97706',
+  moderate: '#ea580c',
+  heavy: '#dc2626',
+  unknown: '#6b7280',
+};
+
+const formatClock = (iso) => {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? ''
+    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+
 const formatDuration = (seconds) => {
   if (seconds == null) return 'unknown';
   if (seconds < 60) return `${seconds}s`;
@@ -165,6 +191,9 @@ const EVENT_TO_CATEGORY = {
   trip_paused: 'other',
   trip_resumed: 'other',
   trip_ended: 'other',
+  stop_arrived: 'other',
+  stop_completed: 'other',
+  stop_skipped: 'other',
   fuel_added: 'fuel_issue',
   receipt_issue: 'receipt_issue',
   route_issue: 'route_issue',
@@ -197,6 +226,15 @@ const buildReportText = (eventType, metadata = {}) => {
       return {
         title: 'Trip ended',
         description: `Driver ended the trip. Trip duration: ${dur}.`,
+      };
+    }
+    case 'stop_arrived':
+    case 'stop_completed':
+    case 'stop_skipped': {
+      const word = eventType.replace('stop_', '');
+      return {
+        title: `Stop ${metadata?.stop_number ?? '?'} ${word}`,
+        description: `Stop ${metadata?.stop_number ?? '?'} of ${metadata?.total_stops ?? '?'} ${word}. ${metadata?.address || ''}`.trim(),
       };
     }
     default:
@@ -262,6 +300,9 @@ export default function LocationScreen({ route }) {
     selectedFuelStation: null,
     routeInfo: null,
     error: "",
+
+    stopProgress: {},
+    liveTraffic: null,
   });
 
   const [infoAreaHeight, setInfoAreaHeight] = useState(0);
@@ -324,6 +365,8 @@ export default function LocationScreen({ route }) {
     pauseStartedAt,
     lastPauseReportId,
     lastTripReportId,
+    stopProgress,
+    liveTraffic,
   } = state;
 
   const calculateRemainingRange = useCallback(() => {
@@ -490,6 +533,7 @@ export default function LocationScreen({ route }) {
         locationReady: true,
       });
 
+      // Keep the position up to date so the map shows where the driver is now.
       if (!locationSubRef.current) {
         locationSubRef.current = await ExpoLocation.watchPositionAsync(
           {
@@ -581,6 +625,8 @@ export default function LocationScreen({ route }) {
     try {
       updateState({ searchingStations: true, stationSearchFailed: false });
 
+      // One request for the whole assigned route. Stations are ordered in the
+      // order the driver will reach them, and ones already passed are dropped.
       const sortedStations = await findStationsAlongRoute(routePoints, {
         corridorKm: CONFIG.STATION_CORRIDOR_KM,
         maxResults: CONFIG.STATIONS_ALONG_ROUTE,
@@ -629,12 +675,15 @@ export default function LocationScreen({ route }) {
     }
   }, [updateState]);
 
+  // Look up stations as soon as the assigned route is known, so the list is
+  // ready when the driver opens it (or when the low-fuel prompt appears).
   useEffect(() => {
     if (routeCoords.length > 1) {
       findFuelStationsAlongRoute(routeCoords);
     }
   }, [routeCoords, findFuelStationsAlongRoute]);
 
+  // No assigned route: look for stations around the driver's own position.
   const findFuelStationsNearMe = useCallback(async () => {
     const loc = stateRef.current.location;
     if (!loc) return [];
@@ -648,6 +697,7 @@ export default function LocationScreen({ route }) {
         maxResults: CONFIG.STATIONS_ALONG_ROUTE,
       });
 
+      // A route arrived while we were searching: its results take priority.
       if (stateRef.current.routeCoords.length > 1) return stations;
 
       updateState({
@@ -668,6 +718,7 @@ export default function LocationScreen({ route }) {
     }
   }, [updateState]);
 
+  // Along the assigned route when there is one, otherwise near the driver.
   const loadFuelStations = useCallback(() => {
     const current = stateRef.current;
     if (current.routeCoords.length > 1) {
@@ -676,6 +727,8 @@ export default function LocationScreen({ route }) {
     return findFuelStationsNearMe();
   }, [findFuelStationsAlongRoute, findFuelStationsNearMe]);
 
+  // Automatically search near the driver when there is no route, and again
+  // after they have moved a few km.
   const nearSearchRef = useRef(null);
   useEffect(() => {
     if (routeCoords.length > 1) {
@@ -699,6 +752,7 @@ export default function LocationScreen({ route }) {
     findFuelStationsNearMe();
   }, [routeCoords, location, tripResolved, routeLoading, findFuelStationsNearMe]);
 
+  // With no route to show, centre the map on the driver once their position is known.
   const centeredOnUserRef = useRef(false);
   useEffect(() => {
     if (
@@ -839,6 +893,8 @@ export default function LocationScreen({ route }) {
                 startAddress: '',
                 stopAddresses: [],
                 destination: null,
+                stopProgress: {},
+                liveTraffic: null,
                 fuelWarning: false,
                 showFuelModal: false,
                 showPauseModal: false,
@@ -1026,6 +1082,207 @@ export default function LocationScreen({ route }) {
     }
   }, []);
 
+  // ============================================
+  // TRIP PROGRESS (stop by stop) + LIVE TRAFFIC
+  // ============================================
+  const currentStopIndex = useMemo(
+    () => nextStopIndex(stops, stopProgress),
+    [stops, stopProgress]
+  );
+  const doneStops = useMemo(() => countDone(stops, stopProgress), [stops, stopProgress]);
+
+  // Draw the route for one leg: previous stop (or the start) -> this stop.
+  // index -1 means every stop is finished, so there is no route to draw.
+  const routeToStop = useCallback(
+    (index) => {
+      const s = stateRef.current;
+      const target = s.stops[index];
+      if (!target) {
+        updateState({ destination: null, routeCoords: [], routeInfo: null });
+        return;
+      }
+      const origin = index === 0 ? s.start : s.stops[index - 1];
+      updateState({ destination: target });
+      if (origin) fetchRoute(origin, target);
+    },
+    [fetchRoute, updateState]
+  );
+
+  const loadStopProgress = useCallback(async (routeId, authUserId) => {
+    const { data, error: loadError } = await supabase
+      .from('trip_stop_progress')
+      .select('stop_index, status, arrived_at, completed_at')
+      .eq('route_id', String(routeId))
+      .eq('user_id', authUserId);
+
+    if (loadError) {
+      console.warn('[loadStopProgress] failed:', loadError.message);
+      return {};
+    }
+    const map = {};
+    (data || []).forEach((r) => {
+      map[r.stop_index] = {
+        status: r.status,
+        arrivedAt: r.arrived_at,
+        completedAt: r.completed_at,
+      };
+    });
+    return map;
+  }, []);
+
+  const markStop = useCallback(
+    async (index, status) => {
+      const s = stateRef.current;
+      const routeId = s.resolvedTripId;
+      if (routeId == null || !s.stops[index]) return;
+
+      const nowIso = new Date().toISOString();
+      const prev = s.stopProgress[index] || {};
+      const finished = status === 'completed' || status === 'skipped';
+      const entry = {
+        status,
+        arrivedAt: prev.arrivedAt || (status === 'skipped' ? null : nowIso),
+        completedAt: finished ? nowIso : null,
+      };
+      const nextProgress = { ...s.stopProgress, [index]: entry };
+      updateState({ stopProgress: nextProgress });
+
+      if (status === 'arrived') {
+        showNotification('success', `You've arrived at stop ${index + 1}.`);
+      }
+
+      try {
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
+
+        if (authUser) {
+          const loc = stateRef.current.location;
+          const { error: saveError } = await supabase.from('trip_stop_progress').upsert(
+            {
+              route_id: String(routeId),
+              user_id: authUser.id,
+              stop_index: index,
+              status,
+              latitude: loc?.latitude ?? null,
+              longitude: loc?.longitude ?? null,
+              arrived_at: entry.arrivedAt,
+              completed_at: entry.completedAt,
+              updated_at: nowIso,
+            },
+            { onConflict: 'route_id,user_id,stop_index' }
+          );
+          if (saveError) {
+            console.error('[markStop] save failed:', saveError);
+            showNotification('warning', "Stop progress couldn't be saved. Check your connection.");
+          }
+        }
+      } catch (e) {
+        console.error('[markStop] exception:', e);
+      }
+
+      logTripEvent(`stop_${status}`, {
+        stop_number: index + 1,
+        total_stops: s.stops.length,
+        address: s.stopAddresses[index] || '',
+      });
+
+      auditLog({
+        action: `STOP_${status.toUpperCase()}`,
+        page: 'Location Activity',
+        description: `Driver marked stop ${index + 1} as ${status}`,
+        targetId: tripId,
+        details: { trip_id: tripId, stop_number: index + 1, total_stops: s.stops.length },
+      });
+
+      if (finished) {
+        const next = nextStopIndex(s.stops, nextProgress);
+        if (next === -1) {
+          showNotification('success', 'All stops completed. You can end the trip.', 6000);
+        } else {
+          showNotification(
+            'success',
+            `Stop ${index + 1} ${status === 'skipped' ? 'skipped' : 'completed'}. Next: stop ${next + 1}.`,
+            5000
+          );
+        }
+        routeToStop(next); // -1 clears the route
+      }
+    },
+    [updateState, showNotification, logTripEvent, routeToStop, tripId]
+  );
+
+  const confirmCompleteStop = useCallback(
+    (index) => {
+      const s = stateRef.current;
+      const meters = metresBetween(s.location, s.stops[index]);
+      if (meters != null && meters > 300) {
+        Alert.alert(
+          'Complete this stop?',
+          `You're about ${formatDistance(meters / 1000)} from stop ${index + 1}. Mark it as completed anyway?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Complete', onPress: () => markStop(index, 'completed') },
+          ]
+        );
+      } else {
+        markStop(index, 'completed');
+      }
+    },
+    [markStop]
+  );
+
+  const confirmSkipStop = useCallback(
+    (index) => {
+      Alert.alert(`Skip stop ${index + 1}?`, 'Dispatch will see this stop as skipped.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Skip stop', style: 'destructive', onPress: () => markStop(index, 'skipped') },
+      ]);
+    },
+    [markStop]
+  );
+
+  // Automatically mark "arrived" when the driver gets within range of the next stop.
+  useEffect(() => {
+    if (!hasTrip || !location || currentStopIndex === -1) return;
+    if (stopProgress[currentStopIndex]?.status === 'arrived') return;
+
+    const meters = metresBetween(location, stops[currentStopIndex]);
+    if (meters != null && meters <= CONFIG.STOP_ARRIVAL_RADIUS_M) {
+      markStop(currentStopIndex, 'arrived');
+    }
+  }, [location, hasTrip, stops, stopProgress, currentStopIndex, markStop]);
+
+  // Live traffic for the part of the route still ahead.
+  const refreshTraffic = useCallback(async () => {
+    const s = stateRef.current;
+    if (!s.hasTrip || s.stops.length === 0) return;
+
+    const next = nextStopIndex(s.stops, s.stopProgress);
+    if (next === -1) {
+      updateState({ liveTraffic: null });
+      return;
+    }
+
+    const origin = s.location || (next === 0 ? s.start : s.stops[next - 1]);
+    if (!origin) return;
+
+    try {
+      const traffic = await getLiveTraffic([origin, ...s.stops.slice(next)]);
+      updateState({ liveTraffic: traffic });
+    } catch (e) {
+      console.warn('[refreshTraffic]', e?.message);
+      updateState({ liveTraffic: { error: e?.message || 'Traffic unavailable', severity: 'unknown' } });
+    }
+  }, [updateState]);
+
+  useEffect(() => {
+    if (!hasTrip || stops.length === 0) return undefined;
+    refreshTraffic();
+    const id = setInterval(refreshTraffic, CONFIG.TRAFFIC_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [hasTrip, stops, currentStopIndex, refreshTraffic]);
+
   const resolveTripForDriver = useCallback(async () => {
     try {
       updateState({ tripLoading: true, error: "" });
@@ -1061,6 +1318,8 @@ export default function LocationScreen({ route }) {
           routeInfo: null,
           destination: null,
           resolvedTripId: null,
+          stopProgress: {},
+          liveTraffic: null,
         });
         return;
       }
@@ -1085,6 +1344,8 @@ export default function LocationScreen({ route }) {
           routeInfo: null,
           destination: null,
           resolvedTripId: null,
+          stopProgress: {},
+          liveTraffic: null,
         });
         return;
       }
@@ -1126,8 +1387,16 @@ export default function LocationScreen({ route }) {
         console.warn("[loadTrip] reverse geocode failed:", e?.message)
       );
 
-      if (stopCoords.length > 0) {
-        fetchRoute(startCoord, stopCoords[0]);
+      // Pick up where the driver left off (stops already done are remembered).
+      const progress = await loadStopProgress(loadedTrip.id, authUser.id);
+      const next = nextStopIndex(stopCoords, progress);
+      updateState({
+        stopProgress: progress,
+        destination: next === -1 ? null : stopCoords[next],
+      });
+
+      if (stopCoords.length > 0 && next !== -1) {
+        fetchRoute(next === 0 ? startCoord : stopCoords[next - 1], stopCoords[next]);
       }
 
       logTripEvent('trip_started', {
@@ -1146,7 +1415,7 @@ export default function LocationScreen({ route }) {
         hasTrip: false,
       });
     }
-  }, [updateState, fetchRoute, logTripEvent, reverseGeocodePoint]);
+  }, [updateState, fetchRoute, logTripEvent, reverseGeocodePoint, loadStopProgress]);
 
   const checkFuelAndRedirect = useCallback(async () => {
     const current = stateRef.current;
@@ -1745,9 +2014,9 @@ export default function LocationScreen({ route }) {
               latitude: Number(point.latitude),
               longitude: Number(point.longitude),
             }}
-            title={`Stop ${index + 1}`}
+            title={`Stop ${index + 1} · ${stopStatusLabel(stopProgress[index]?.status, index === currentStopIndex)}`}
             description={stopAddresses[index] || ""}
-            pinColor="orange"
+            pinColor={stopPinColor(stopProgress[index]?.status)}
           />
         ))}
 
@@ -2159,21 +2428,109 @@ export default function LocationScreen({ route }) {
         </View>
       ) : null}
 
-      {stops.map((_, i) => (
-        <View key={i} style={styles.routeInfoWhiteCard}>
-          <View style={styles.infoCardIcon}>
-            <Ionicons name="location-outline" size={20} color="#007bff" />
-          </View>
-          <View style={styles.infoCardTextContainer}>
-            <Text style={styles.infoCardLabel}>Stop {i + 1}</Text>
-            {stopAddresses[i] ? (
-              <Text style={styles.infoCardValue}>{stopAddresses[i]}</Text>
-            ) : (
-              <View style={styles.skeletonLine} />
+      {hasTrip && stops.length > 0 && (
+        <>
+          <Text style={styles.routeSheetSectionTitle}>Trip Progress</Text>
+          <View style={styles.progressCard}>
+            <View style={styles.progressHeaderRow}>
+              <Text style={styles.progressTitle}>
+                {currentStopIndex === -1
+                  ? "All stops completed"
+                  : `Heading to stop ${currentStopIndex + 1} of ${stops.length}`}
+              </Text>
+              <Text style={styles.progressCount}>
+                {doneStops}/{stops.length}
+              </Text>
+            </View>
+            <View style={styles.progressBarTrack}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  { width: `${Math.round((doneStops / stops.length) * 100)}%` },
+                ]}
+              />
+            </View>
+            {currentStopIndex === -1 && (
+              <Text style={styles.progressHint}>Every stop is done. You can end the trip.</Text>
             )}
           </View>
-        </View>
-      ))}
+        </>
+      )}
+
+      {stops.map((_, i) => {
+        const status = stopProgress[i]?.status;
+        const isCurrent = i === currentStopIndex;
+        const finished = STOP_DONE.includes(status);
+        const iconName =
+          status === 'completed'
+            ? 'checkmark-circle'
+            : status === 'skipped'
+            ? 'play-skip-forward-circle-outline'
+            : isCurrent
+            ? 'navigate-circle'
+            : 'location-outline';
+        const iconColor =
+          status === 'completed'
+            ? '#2e7d32'
+            : status === 'skipped'
+            ? '#9ca3af'
+            : isCurrent
+            ? '#ea580c'
+            : '#007bff';
+
+        return (
+          <View key={i}>
+            <View
+              style={[
+                styles.routeInfoWhiteCard,
+                isCurrent && styles.currentStopCard,
+                finished && { opacity: 0.6 },
+              ]}
+            >
+              <View style={styles.infoCardIcon}>
+                <Ionicons name={iconName} size={22} color={iconColor} />
+              </View>
+              <View style={styles.infoCardTextContainer}>
+                <Text style={styles.infoCardLabel}>
+                  Stop {i + 1} · {stopStatusLabel(status, isCurrent)}
+                </Text>
+                {stopAddresses[i] ? (
+                  <Text style={styles.infoCardValue}>{stopAddresses[i]}</Text>
+                ) : (
+                  <View style={styles.skeletonLine} />
+                )}
+              </View>
+            </View>
+
+            {isCurrent && (
+              <View style={styles.stopActionsRow}>
+                {status !== 'arrived' && (
+                  <TouchableOpacity
+                    style={styles.stopActionBtn}
+                    onPress={() => markStop(i, 'arrived')}
+                  >
+                    <Text style={styles.stopActionText}>I've arrived</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity
+                  style={[styles.stopActionBtn, styles.stopActionPrimary]}
+                  onPress={() => confirmCompleteStop(i)}
+                >
+                  <Text style={[styles.stopActionText, styles.stopActionPrimaryText]}>
+                    Complete stop
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.stopActionBtn}
+                  onPress={() => confirmSkipStop(i)}
+                >
+                  <Text style={styles.stopActionText}>Skip</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        );
+      })}
 
       {hasTrip && (
         <>
@@ -2285,6 +2642,45 @@ export default function LocationScreen({ route }) {
                     <Text style={styles.routeInfoText}>{Math.round(routeInfo.duration)} min</Text>
                   </View>
                 </View>
+
+                {liveTraffic && (
+                  <View style={styles.routeInfoRow}>
+                    <Ionicons
+                      name="car-outline"
+                      size={20}
+                      color={TRAFFIC_COLOR[liveTraffic.severity] || TRAFFIC_COLOR.unknown}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.routeInfoSmallLabel}>Live Traffic</Text>
+                      {liveTraffic.error ? (
+                        <>
+                          <Text style={[styles.routeInfoText, { color: TRAFFIC_COLOR.unknown }]}>
+                            Unavailable
+                          </Text>
+                          <Text style={styles.routeInfoSmallLabel}>{liveTraffic.error}</Text>
+                        </>
+                      ) : (
+                        <>
+                          <Text
+                            style={[
+                              styles.routeInfoText,
+                              { color: TRAFFIC_COLOR[liveTraffic.severity] },
+                            ]}
+                          >
+                            {liveTraffic.label}
+                            {liveTraffic.delayMin > 0 ? ` · +${liveTraffic.delayMin} min` : ''}
+                          </Text>
+                          <Text style={styles.routeInfoSmallLabel}>
+                            {liveTraffic.travelMin} min to your last stop
+                            {formatClock(liveTraffic.etaIso)
+                              ? ` · arrive about ${formatClock(liveTraffic.etaIso)}`
+                              : ''}
+                          </Text>
+                        </>
+                      )}
+                    </View>
+                  </View>
+                )}
               </View>
             </>
           )}
@@ -2405,6 +2801,41 @@ const styles = StyleSheet.create({
   receiptButton: { backgroundColor: "white", marginTop: 15, padding: 16 },
   buttonText: { color: "#0A1F44", marginLeft: 8, fontWeight: "bold", fontSize: 15 },
   endTripButton: { backgroundColor: 'white', marginTop: 15 },
+
+  progressCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
+  },
+  progressHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  progressTitle: { fontSize: 15, fontWeight: '700', color: '#0A1F44', flexShrink: 1 },
+  progressCount: { fontSize: 13, fontWeight: '600', color: '#6b7280' },
+  progressBarTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#e5e7eb',
+    overflow: 'hidden',
+  },
+  progressBarFill: { height: 8, borderRadius: 4, backgroundColor: '#2e7d32' },
+  progressHint: { marginTop: 8, fontSize: 13, color: '#2e7d32' },
+  currentStopCard: { borderWidth: 2, borderColor: '#ea580c' },
+  stopActionsRow: { flexDirection: 'row', gap: 8, marginTop: 2, marginBottom: 12 },
+  stopActionBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#eef2f7',
+    alignItems: 'center',
+  },
+  stopActionPrimary: { backgroundColor: '#0A1F44' },
+  stopActionText: { fontSize: 13, fontWeight: '600', color: '#0A1F44' },
+  stopActionPrimaryText: { color: '#fff' },
 
   pauseButton: { backgroundColor: 'white', marginTop: 10 },
   pauseButtonActive: {

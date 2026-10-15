@@ -15,7 +15,8 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
+import { base64ToBytes, detectImageType } from '../utils/base64';
 import { useAuth } from "../context/AuthContext";
 import { auditLog } from "../utils/auditlogger";
 import { supabase } from "../lib/supabase";
@@ -143,6 +144,7 @@ const FuelScreen = ({ navigation }) => {
   // SCAN RECEIPT STATE
   // ============================================
   const [showAmountModal, setShowAmountModal] = useState(false);
+  const [receiptType, setReceiptType] = useState('fuel'); // 'fuel' | 'toll'
   const [amountInput, setAmountInput] = useState('');
   const [pendingReceiptUri, setPendingReceiptUri] = useState(null);
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
@@ -457,7 +459,8 @@ const FuelScreen = ({ navigation }) => {
   // ============================================
   // Upload receipt to Supabase Storage
   // - Normalizes content:// or ph:// URIs to file://
-  // - Uses FormData so RN streams real file bytes
+  // - Reads the file as bytes and uploads the bytes (FormData file uploads
+  //   are not supported by the current Expo runtime)
   // - Validates the file exists with a real size
   // ============================================
   const uploadReceiptToSupabase = useCallback(async (uri, userId) => {
@@ -495,22 +498,28 @@ const FuelScreen = ({ navigation }) => {
         return null;
       }
 
-      const timestamp = Date.now();
-      const fileName = `${userId}/receipt-${timestamp}.jpg`;
-
-      const formData = new FormData();
-      formData.append('file', {
-        uri: normalizedUri,
-        name: `receipt-${timestamp}.jpg`,
-        type: 'image/jpeg',
+      // Upload the raw bytes of the image. Uploading a React Native FormData
+      // object fails with "unsupported FormData implementation" on the current
+      // Expo runtime (and can store an unreadable file).
+      const base64 = await FileSystem.readAsStringAsync(normalizedUri, {
+        encoding: 'base64',
       });
+      const bytes = base64ToBytes(base64);
 
-      console.log('[FuelScreen] uploading to bucket path:', fileName);
+      if (bytes.length < 100) {
+        Alert.alert('Error', 'Receipt file appears empty. Please try again.');
+        return null;
+      }
+
+      const { contentType, ext } = detectImageType(bytes);
+      const fileName = `${userId}/receipt-${Date.now()}.${ext}`;
+
+      console.log('[FuelScreen] uploading to bucket path:', fileName, bytes.length, 'bytes');
 
       const { data, error } = await supabase.storage
         .from('receipts')
-        .upload(fileName, formData, {
-          contentType: 'image/jpeg',
+        .upload(fileName, bytes, {
+          contentType,
           upsert: false,
         });
 
@@ -579,20 +588,24 @@ const FuelScreen = ({ navigation }) => {
       return;
     }
 
-    const litresPurchased = parsedAmount / FUEL_PRICE_PER_LITRE;
-    const fuelAdded = (litresPurchased / TANK_CAPACITY) * 100;
-    const newFuelPercent = Math.min(currentFuelPercent + fuelAdded, 100);
+    const isToll = receiptType === 'toll';
+    const litresPurchased = isToll ? null : parsedAmount / FUEL_PRICE_PER_LITRE;
+    const fuelAdded = isToll ? 0 : (litresPurchased / TANK_CAPACITY) * 100;
+    const newFuelPercent = isToll
+      ? currentFuelPercent
+      : Math.min(currentFuelPercent + fuelAdded, 100);
 
     try {
       const { error: dbError } = await supabase
         .from('receipts')
         .insert({
           user_id: user.id,
+          receipt_type: receiptType,
           receipt_amount: parsedAmount,
           fuel_purchased: litresPurchased,
           receipt_image_path: receiptPath,
-          fuel_percent_before: currentFuelPercent,
-          fuel_percent_after: newFuelPercent,
+          fuel_percent_before: isToll ? null : currentFuelPercent,
+          fuel_percent_after: isToll ? null : newFuelPercent,
         })
         .select();
 
@@ -607,29 +620,35 @@ const FuelScreen = ({ navigation }) => {
       return;
     }
 
-    setCurrentFuelPercent(newFuelPercent);
+    if (!isToll) setCurrentFuelPercent(newFuelPercent);
     resetScanState();
     fetchReceipts();
     fetchDriverContext();
 
     Alert.alert(
       'Receipt Saved',
-      `R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L) recorded successfully.`,
+      isToll
+        ? `Toll receipt of R${parsedAmount.toFixed(2)} recorded successfully.`
+        : `R${parsedAmount.toFixed(2)} (${litresPurchased.toFixed(1)}L) recorded successfully.`,
       [{ text: 'OK' }]
     );
 
     auditLog({
-      action: "FUEL_RECEIPT_SUBMITTED",
+      action: isToll ? "TOLL_RECEIPT_SUBMITTED" : "FUEL_RECEIPT_SUBMITTED",
       page: "Mobile Fuel",
-      description: "User submitted a fuel receipt from the Fuel screen",
-      details: {
-        amount: parsedAmount,
-        litres: litresPurchased,
-        fuel_percent_before: currentFuelPercent,
-        fuel_percent_after: newFuelPercent,
-      },
+      description: isToll
+        ? "User submitted a toll receipt from the Fuel screen"
+        : "User submitted a fuel receipt from the Fuel screen",
+      details: isToll
+        ? { amount: parsedAmount }
+        : {
+            amount: parsedAmount,
+            litres: litresPurchased,
+            fuel_percent_before: currentFuelPercent,
+            fuel_percent_after: newFuelPercent,
+          },
     });
-  }, [user, currentFuelPercent, uploadReceiptToSupabase, fetchReceipts, resetScanState, fetchDriverContext]);
+  }, [user, receiptType, currentFuelPercent, uploadReceiptToSupabase, fetchReceipts, resetScanState, fetchDriverContext]);
 
   // ============================================
   // Show amount input modal
@@ -805,11 +824,17 @@ const openScanOptions = useCallback(() => {
             [
               {
                 text: 'Take Photo',
-                onPress: scanReceipt,
+                onPress: () => {
+                  setReceiptType('fuel');
+                  scanReceipt();
+                },
               },
               {
                 text: 'Choose from Gallery',
-                onPress: pickReceiptImage,
+                onPress: () => {
+                  setReceiptType('fuel');
+                  pickReceiptImage();
+                },
               },
               {
                 text: 'Cancel',
@@ -829,21 +854,15 @@ const openScanOptions = useCallback(() => {
               {
                 text: 'Take Photo',
                 onPress: () => {
-                  // Add toll receipt handling here later
-                  Alert.alert(
-                    'Coming Soon',
-                    'Toll receipt processing is not available yet.',
-                  );
+                  setReceiptType('toll');
+                  scanReceipt();
                 },
               },
               {
                 text: 'Choose from Gallery',
                 onPress: () => {
-                  // Add toll receipt handling here later
-                  Alert.alert(
-                    'Coming Soon',
-                    'Toll receipt processing is not available yet.',
-                  );
+                  setReceiptType('toll');
+                  pickReceiptImage();
                 },
               },
               {
@@ -867,12 +886,24 @@ const openScanOptions = useCallback(() => {
     (sum, r) => sum + Number(r.receipt_amount || 0),
     0
   );
-  const totalLitres = receipts.reduce(
+  const isTollReceipt = (r) => r.receipt_type === 'toll';
+  const fuelReceipts = receipts.filter((r) => !isTollReceipt(r));
+  const tollReceipts = receipts.filter(isTollReceipt);
+  const fuelSpend = fuelReceipts.reduce(
+    (sum, r) => sum + Number(r.receipt_amount || 0),
+    0
+  );
+  const tollSpend = tollReceipts.reduce(
+    (sum, r) => sum + Number(r.receipt_amount || 0),
+    0
+  );
+  const totalLitres = fuelReceipts.reduce(
     (sum, r) => sum + Number(r.fuel_purchased || 0),
     0
   );
-  const refillCount = receipts.length;
-  const costPerRefill = refillCount > 0 ? totalSpend / refillCount : 0;
+  const refillCount = fuelReceipts.length;
+  const tollCount = tollReceipts.length;
+  const costPerRefill = refillCount > 0 ? fuelSpend / refillCount : 0;
   const avgLPer100 = 11.2;
 
   // ---- Allocation-driven budget ----
@@ -943,12 +974,18 @@ const openScanOptions = useCallback(() => {
           </Text>
 
           <View style={styles.heroCard}>
-            <Text style={styles.heroLabel}>TOTAL FUEL SPEND</Text>
+            <Text style={styles.heroLabel}>TOTAL SPEND</Text>
             <Text style={styles.heroAmount}>{formatZAR(totalSpend)}</Text>
             <View style={styles.heroMetaRow}>
               <Ionicons name="receipt-outline" size={14} color="#aebbd3" />
               <Text style={styles.heroMetaText}>
-                {refillCount} {refillCount === 1 ? "refill" : "refills"} this month
+                {refillCount} {refillCount === 1 ? "refill" : "refills"} · {tollCount} {tollCount === 1 ? "toll" : "tolls"} this month
+              </Text>
+            </View>
+            <View style={styles.heroMetaRow}>
+              <Ionicons name="pie-chart-outline" size={14} color="#aebbd3" />
+              <Text style={styles.heroMetaText}>
+                Fuel {formatZAR(fuelSpend)} · Tolls {formatZAR(tollSpend)}
               </Text>
             </View>
           </View>
@@ -1291,7 +1328,7 @@ const openScanOptions = useCallback(() => {
               />
               <Text style={styles.emptyTitle}>No receipts this month</Text>
               <Text style={styles.emptySubtitle}>
-                Tap "Scan Fuel Receipt" above to add your first receipt.
+                Tap "Scan Receipt" above to add your first fuel or toll receipt.
               </Text>
             </View>
           ) : (
@@ -1347,7 +1384,7 @@ const openScanOptions = useCallback(() => {
 
                     <View style={styles.receiptBottomRow}>
                       <Text style={styles.receiptMeta}>
-                        {formatLitres(r.fuel_purchased)}
+                        {isTollReceipt(r) ? "Toll" : formatLitres(r.fuel_purchased)}
                       </Text>
                       <Text style={styles.receiptMeta}>
                         {formatTime(r.created_at)}
@@ -1398,12 +1435,16 @@ const openScanOptions = useCallback(() => {
                 <Ionicons name="cash-outline" size={22} color="#fff" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.receiptModalTitle}>Enter Fuel Amount</Text>
+                <Text style={styles.receiptModalTitle}>
+                  {receiptType === 'toll' ? 'Enter Toll Amount' : 'Enter Fuel Amount'}
+                </Text>
                 <Text style={styles.receiptModalSubtitleSmall}>
                   {isProcessingOCR
                     ? "Processing receipt"
                     : autoDetectedAmount
                     ? "Confirm or adjust the detected amount"
+                    : receiptType === 'toll'
+                    ? "Enter the amount paid for the toll"
                     : "Enter the amount spent on fuel"}
                 </Text>
               </View>
@@ -1556,9 +1597,13 @@ const openScanOptions = useCallback(() => {
                     </Text>
                   </View>
                   <View style={styles.previewRow}>
-                    <Text style={styles.previewLabel}>Fuel Purchased</Text>
+                    <Text style={styles.previewLabel}>
+                      {previewReceipt.receipt_type === 'toll' ? 'Type' : 'Fuel Purchased'}
+                    </Text>
                     <Text style={styles.previewValue}>
-                      {formatLitres(previewReceipt.fuel_purchased)}
+                      {previewReceipt.receipt_type === 'toll'
+                        ? 'Toll receipt'
+                        : formatLitres(previewReceipt.fuel_purchased)}
                     </Text>
                   </View>
                   {previewReceipt.fuel_percent_before != null &&
