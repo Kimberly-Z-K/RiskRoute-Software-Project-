@@ -282,11 +282,7 @@ const PerformanceCharts = () => {
         )}
       </div>
 
-      <p className="text-xs text-gray-500 border-t pt-3">
-        Source: Supabase simulation_results. These are simulated estimates, not verified
-        real-world delivery outcomes.
-        {avgDelay !== null && ` Average recorded current-route delay: ${avgDelay.toFixed(1)} minutes.`}
-      </p>
+      
     </div>
   );
 };

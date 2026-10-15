@@ -169,7 +169,7 @@ const DriverPerformanceTable = () => {
   if (loading) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <p className="text-sm text-gray-500">Loading driver activity from Supabase…</p>
+        
       </div>
     );
   }
@@ -341,7 +341,6 @@ const DriverPerformanceTable = () => {
 
       <div className="p-3 bg-gray-50 border-t border-gray-200 text-xs text-gray-600 flex justify-between">
         <span>Showing {filteredDrivers.length} of {drivers.length} drivers</span>
-        <span>Data from Supabase</span>
       </div>
     </div>
   );
