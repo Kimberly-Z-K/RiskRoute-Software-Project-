@@ -36,6 +36,7 @@ const ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://127.0.0.1:5173',
   'https://riskroute-software-project-2.onrender.com/',
+  'https://web-jl4vmr8sr-asce15.vercel.app/',
 ];
 
 app.use(
