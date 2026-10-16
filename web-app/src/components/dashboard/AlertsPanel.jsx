@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bell, Filter, RefreshCw, Clock, MapPin } from 'lucide-react';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://riskroute-server2.onrender.com';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5050';
 
 const typeMap = {
   1: 'Accident',
