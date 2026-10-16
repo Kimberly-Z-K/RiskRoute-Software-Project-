@@ -340,9 +340,7 @@ export default function Login({ navigation }) {
               We sent a 6-digit access code to your email account. You must verify your identity to access the system.
             </Text>
 
-            <Text style={{ color: 'red', fontWeight: '900' }}>
-              AwunaChoice
-            </Text>
+           
 
             <View style={[styles.inputWrapper, { width: '80%', marginBottom: 25 }]}>
               <Ionicons name="shield-checkmark-outline" size={20} color="#9CA3AF" />

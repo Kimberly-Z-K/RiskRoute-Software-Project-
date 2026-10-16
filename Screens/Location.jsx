@@ -17,6 +17,7 @@ import {
   Linking,
   Platform,
   StatusBar,
+  AppState,                       // ⟵ NEW
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import MapView, { Marker, Polyline, Callout } from "react-native-maps";
@@ -320,6 +321,7 @@ export default function LocationScreen({ route }) {
   const pauseExpiredRef = useRef(false);
   const resumedFlashTimeoutRef = useRef(null);
   const tripEndedFlashTimeoutRef = useRef(null);
+  const realtimeResolveTimeoutRef = useRef(null);   // ⟵ NEW
 
   useEffect(() => {
     stateRef.current = state;
@@ -539,9 +541,6 @@ export default function LocationScreen({ route }) {
         locationReady: true,
       });
 
-      // Fast, high-accuracy watcher so speed + hard-braking detection react
-      // quickly. distanceInterval is intentionally small so stops and sudden
-      // decelerations still produce samples.
       if (!locationSubRef.current) {
         locationSubRef.current = await ExpoLocation.watchPositionAsync(
           {
@@ -877,41 +876,62 @@ export default function LocationScreen({ route }) {
               tripEndedFlashTimeoutRef.current = null;
             }, 3000);
 
-            setTimeout(() => {
-              updateState({
-                hasTrip: false,
-                tripResolved: true,
-                tripLoading: false,
-                routeCoords: [],
-                routeInfo: null,
-                fuelStations: [],
-                recommendedStation: null,
-                start: null,
-                stops: [],
-                startAddress: '',
-                stopAddresses: [],
-                destination: null,
-                stopProgress: {},
-                liveTraffic: null,
-                fuelWarning: false,
-                showFuelModal: false,
-                showPauseModal: false,
-                pauseCategory: null,
-                pauseSubReason: null,
-                pauseNotes: '',
-                isPaused: false,
-                pauseStartTime: null,
-                pauseEndsAt: null,
-                pauseRemainingMs: null,
-                pauseExpired: false,
-                resumedFlash: false,
-                resolvedTripId: null,
-                tripStartedAt: null,
-                pauseStartedAt: null,
-                lastPauseReportId: null,
-                lastTripReportId: null,
+            // ⟵ CHANGED: wipe route/stations/markers immediately so the map
+            // clears the instant we know the DB write succeeded. We keep the
+            // tripEndedFlash pill visible and re-centre the map on the driver.
+            updateState({
+              hasTrip: false,
+              tripResolved: true,
+              tripLoading: false,
+              routeCoords: [],
+              routeInfo: null,
+              routeDistance: 0,
+              destination: null,
+              fuelStations: [],
+              recommendedStation: null,
+              searchingStations: false,
+              stationSearchFailed: false,
+              destinationDistanceToStation: null,
+              start: null,
+              stops: [],
+              startAddress: '',
+              stopAddresses: [],
+              stopProgress: {},
+              liveTraffic: null,
+              fuelWarning: false,
+              showFuelModal: false,
+              selectedFuelStation: null,
+              showPauseModal: false,
+              pauseCategory: null,
+              pauseSubReason: null,
+              pauseNotes: '',
+              isPaused: false,
+              pauseStartTime: null,
+              pauseStartedAt: null,
+              pauseEndsAt: null,
+              pauseRemainingMs: null,
+              pauseExpired: false,
+              resumedFlash: false,
+              resolvedTripId: null,
+              tripStartedAt: null,
+              lastPauseReportId: null,
+              lastTripReportId: null,
+            });
+
+            // Re-centre map on the driver and reset zoom.
+            const loc = stateRef.current.location;
+            if (loc) {
+              mapRef.current?.animateToRegion({
+                latitude: loc.latitude,
+                longitude: loc.longitude,
+                latitudeDelta: 0.03,
+                longitudeDelta: 0.03,
               });
-            }, 1500);
+            }
+            // Allow the "centre once" effect to run again next time we get a
+            // fresh trip.
+            centeredOnUserRef.current = false;
+            nearSearchRef.current = null;
           },
         },
       ]
@@ -1305,8 +1325,9 @@ export default function LocationScreen({ route }) {
           routeLoading: false,
           start: null,
           stops: [],
-          routeCoords: [],
+          routeCoords: [],          // ⟵ ensures polyline clears on unassign
           routeInfo: null,
+          routeDistance: 0,
           destination: null,
           resolvedTripId: null,
           stopProgress: {},
@@ -1333,6 +1354,7 @@ export default function LocationScreen({ route }) {
           stops: [],
           routeCoords: [],
           routeInfo: null,
+          routeDistance: 0,
           destination: null,
           resolvedTripId: null,
           stopProgress: {},
@@ -1520,6 +1542,59 @@ export default function LocationScreen({ route }) {
     };
   }, [getLocation, resolveTripForDriver, user]);
 
+  // ---------- Realtime: watch this driver's vehicle for route assignment ----------
+  // ⟵ NEW
+  useEffect(() => {
+    if (!user?.id) return undefined;
+
+    const scheduleResolve = () => {
+      if (realtimeResolveTimeoutRef.current) {
+        clearTimeout(realtimeResolveTimeoutRef.current);
+      }
+      // Debounce: dispatch often touches several columns in quick succession.
+      realtimeResolveTimeoutRef.current = setTimeout(() => {
+        realtimeResolveTimeoutRef.current = null;
+        resolveTripForDriver();
+      }, 400);
+    };
+
+    const channel = supabase
+      .channel(`driver-vehicle-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'vehicles',
+          filter: `driver_id=eq.${user.id}`,
+        },
+        (payload) => {
+          console.log('[realtime] vehicles change for driver:', payload?.eventType);
+          scheduleResolve();
+        }
+      )
+      .subscribe((status) => {
+        console.log('[realtime] vehicles channel status:', status);
+      });
+
+    return () => {
+      if (realtimeResolveTimeoutRef.current) {
+        clearTimeout(realtimeResolveTimeoutRef.current);
+        realtimeResolveTimeoutRef.current = null;
+      }
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, resolveTripForDriver]);
+
+  // ---------- AppState: refresh route state when the app returns to foreground ----------
+  // ⟵ NEW
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') resolveTripForDriver();
+    });
+    return () => sub.remove();
+  }, [resolveTripForDriver]);
+
   useEffect(() => {
     if (hasTrip && fuelPercent <= CONFIG.FUEL_WARNING_THRESHOLD && !fuelWarning) {
       checkFuelAndRedirect();
@@ -1576,17 +1651,14 @@ export default function LocationScreen({ route }) {
     return () => clearInterval(interval);
   }, [isPaused, pauseEndsAt, updateState]);
 
-  // ---------- Live speed (derived from existing location stream) ----------
   const currentSpeedKmh = useSpeedFromLocation(location);
 
-  // ---------- Hard braking detection ----------
   const { event: hardBrakeEvent, clear: clearHardBrake } = useHardBraking({
     speedKmh: currentSpeedKmh,
     timestamp: location?.timestamp,
     enabled: true,
   });
 
-  // Hard-braking feedback: vibrate once + show pill for 3 s
   useEffect(() => {
     if (!hardBrakeEvent) return;
 
@@ -1999,7 +2071,6 @@ export default function LocationScreen({ route }) {
     );
   };
 
-  // ---------- Live speed pill (top-right) ----------
   const renderSpeedPill = () => {
     if (!location) return null;
 
@@ -2048,7 +2119,6 @@ export default function LocationScreen({ route }) {
     );
   };
 
-  // ---------- Hard braking warning pill (top, centered) ----------
   const renderHardBrakePill = () => {
     if (!hardBrakeEvent) return null;
 
@@ -2085,7 +2155,7 @@ export default function LocationScreen({ route }) {
         showsMyLocationButton={false}
         showsCompass
       >
-        {start && (
+        {start && hasTrip && (              // ⟵ CHANGED: only render start while on a trip
           <Marker
             coordinate={{
               latitude: Number(start.latitude),
@@ -2097,7 +2167,7 @@ export default function LocationScreen({ route }) {
           />
         )}
 
-        {stops.map((point, index) => (
+        {hasTrip && stops.map((point, index) => (   // ⟵ CHANGED: gate stops on hasTrip
           <Marker
             key={`stop-${index}`}
             coordinate={{
@@ -2110,7 +2180,7 @@ export default function LocationScreen({ route }) {
           />
         ))}
 
-        {routeCoords.length > 0 && (
+        {hasTrip && routeCoords.length > 0 && (     // ⟵ CHANGED: polyline only while hasTrip
           <Polyline
             coordinates={routeCoords.map(point => ({
               latitude: Number(point.latitude),
@@ -2139,7 +2209,7 @@ export default function LocationScreen({ route }) {
         ))}
       </MapView>
 
-      {routeLoading && (
+      {routeLoading && hasTrip && (       // ⟵ CHANGED: gate loading overlay on hasTrip
         <View style={[styles.mapOverlay, { top: topPadding + 8 }]}>
           <ActivityIndicator size="small" color="#007bff" />
           <Text style={styles.overlayText}>Building route...</Text>
@@ -2157,7 +2227,7 @@ export default function LocationScreen({ route }) {
         </View>
       )}
 
-      {fuelWarning && (
+      {fuelWarning && hasTrip && (        // ⟵ CHANGED: hide low-fuel banner off-trip
         <View style={[styles.fuelWarningOverlay, { top: topPadding + 60 }]}>
           <Ionicons name="warning-outline" size={24} color="#fff" />
           <Text style={styles.fuelWarningText}>Low Fuel</Text>
@@ -2189,7 +2259,7 @@ export default function LocationScreen({ route }) {
             <Ionicons name="locate-outline" size={24} color="#007bff" />
           </TouchableOpacity>
 
-          {routeInfo && (
+          {routeInfo && hasTrip && (        // ⟵ CHANGED: gate route info on hasTrip
             <View style={styles.distanceInfo}>
               <View style={styles.distanceRow}>
                 <Ionicons name="navigate-outline" size={20} color="#007bff" />
@@ -2447,7 +2517,7 @@ export default function LocationScreen({ route }) {
           <Text style={styles.emptyTripTitle}>No active trip</Text>
           <Text style={styles.emptyTripSubtitle}>
             You don't have a trip assigned to your vehicle right now.
-            It will appear here as soon as dispatch assigns one.
+            It will appear here automatically as soon as dispatch assigns one.
           </Text>
         </View>
       ) : null}
@@ -2547,7 +2617,7 @@ export default function LocationScreen({ route }) {
         </>
       )}
 
-      {stops.map((_, i) => {
+      {hasTrip && stops.map((_, i) => {          // ⟵ CHANGED: gate stop list on hasTrip
         const status = stopProgress[i]?.status;
         const isCurrent = i === currentStopIndex;
         const finished = STOP_DONE.includes(status);
@@ -2835,6 +2905,7 @@ export default function LocationScreen({ route }) {
   );
 }
 
+// ---------- styles are unchanged from your original ----------
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
 
@@ -3102,7 +3173,6 @@ const styles = StyleSheet.create({
     color: '#1b5e20',
   },
 
-  // ---------- Live speed pill ----------
   speedPill: {
     position: 'absolute',
     right: 16,
@@ -3159,7 +3229,6 @@ const styles = StyleSheet.create({
     color: '#7f1d1d',
   },
 
-  // ---------- Hard braking pill ----------
   hardBrakePill: {
     position: "absolute",
     left: 16,
